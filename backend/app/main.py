@@ -16,7 +16,7 @@ async def lifespan(app: FastAPI):
     from app.models.database import init_db
     init_db()
 
-    from app.services.cache_service import warmup_caches
+    from app.services.cache_service import warmup_bm25 as warmup_caches
     warmup_caches()
 
     yield
