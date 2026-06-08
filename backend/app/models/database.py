@@ -28,7 +28,7 @@ def init_db():
     Model classes must be imported prior so they register with Base.metadata.
     """
     # Ensure all model classes are registered with Base
-    import app.models.document  # noqa: F401
+    import app.models.document  # noqa: F401 — Document + ParentChunk
     import app.models.cache     # noqa: F401
     import app.models.synonym   # noqa: F401
 

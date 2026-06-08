@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./data")
     upload_dir: Path = Path("./data/uploads")
     db_path: Path = Path("./data/kb.db")
+    banks_config_path: Path = Path("./data/banks.json")
 
     # ── Hindsight ──
     hindsight_url: str = "http://localhost:8080"
