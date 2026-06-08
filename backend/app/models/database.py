@@ -23,5 +23,13 @@ def get_db():
 
 
 def init_db():
-    """Create all tables."""
+    """Create all tables (idempotent via CREATE TABLE IF NOT EXISTS).
+
+    Model classes must be imported prior so they register with Base.metadata.
+    """
+    # Ensure all model classes are registered with Base
+    import app.models.document  # noqa: F401
+    import app.models.cache     # noqa: F401
+    import app.models.synonym   # noqa: F401
+
     Base.metadata.create_all(bind=engine)
