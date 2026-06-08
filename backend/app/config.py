@@ -1,5 +1,4 @@
-"""
-Application configuration via Pydantic Settings.
+"""Application configuration via Pydantic Settings.
 
 All configuration is loaded from environment variables or .env file.
 No hardcoded values in business code.
@@ -29,6 +28,11 @@ class Settings(BaseSettings):
     # ── Auth ──
     admin_username: str = "admin"
     admin_password: str = ""
+
+    # ── JWT ──
+    jwt_secret: str = "CHANGE_ME_IN_PRODUCTION"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 1440  # 24 hours
 
     # ── CORS ──
     cors_origins: List[str] = ["*"]

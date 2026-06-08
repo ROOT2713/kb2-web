@@ -91,6 +91,14 @@ def client(db_session):
 
     app.dependency_overrides[require_admin] = _no_auth
 
+    # Override JWT auth to skip token validation in tests
+    from app.middleware.jwt_auth import get_current_user
+
+    async def _no_jwt():
+        return "test_user"
+
+    app.dependency_overrides[get_current_user] = _no_jwt
+
     # Pre-populate the synonym cache to avoid DB queries during tests
     from app.services import cache_service
     from app.services import retrieval

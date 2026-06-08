@@ -40,11 +40,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── API routes ──
+# ── Auth routes (NO JWT required) ──
+from app.api.auth import router as auth_router  # noqa: E402
+app.include_router(auth_router, prefix="/api/auth", tags=["认证"])
+
+# ── Protected API routes (JWT required) ──
 app.include_router(api_router, prefix="/api")
 
 
-# ── Health check ──
+# ── Health check (no auth) ──
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "2.0.0"}

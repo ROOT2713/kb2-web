@@ -4,6 +4,12 @@ const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/LoginView.vue'),
+      meta: { requiresAuth: false },
+    },
+    {
       path: '/',
       redirect: '/query',
     },
@@ -28,6 +34,19 @@ const router = createRouter({
       component: () => import('@/views/BanksView.vue'),
     },
   ],
+})
+
+// Navigation guard: redirect to /login if not authenticated
+router.beforeEach((to) => {
+  const token = localStorage.getItem('kb2_token')
+  if (to.name === 'login') {
+    // Already logged in → redirect to query
+    if (token) return { name: 'query' }
+    return true
+  }
+  // All other routes require auth
+  if (!token) return { name: 'login' }
+  return true
 })
 
 export default router

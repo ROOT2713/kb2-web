@@ -1,10 +1,15 @@
-"""Unified API router — aggregates all endpoint modules."""
+"""Unified API router — aggregates all endpoint modules.
 
-from fastapi import APIRouter
+All routes under this router require JWT authentication via
+the `get_current_user` dependency.
+"""
 
+from fastapi import APIRouter, Depends
+
+from app.middleware.jwt_auth import get_current_user
 from app.api import upload, query, documents, banks, synonyms, admin
 
-api_router = APIRouter()
+api_router = APIRouter(dependencies=[Depends(get_current_user)])
 
 api_router.include_router(upload.router,    prefix="/upload",    tags=["上传"])
 api_router.include_router(query.router,     prefix="/query",     tags=["查询"])
