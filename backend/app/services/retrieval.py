@@ -348,14 +348,14 @@ async def build_bm25_index(bank: str = "all") -> tuple:
 
         added = 0
         for row in rows:
-            text = row[1] or ""
-            if not text.strip():
+            parent_text = row[1] or ""
+            if not parent_text.strip():
                 continue
-            dedup_key = text[:80]
+            dedup_key = parent_text[:80]
             if dedup_key in seen_texts:
                 continue
             seen_texts.add(dedup_key)
-            docs.append({"text": text, "doc_id": row[0], "tags": [f"title:{row[2] or 'unknown'}"]})
+            docs.append({"text": parent_text, "doc_id": row[0], "tags": [f"title:{row[2] or 'unknown'}"]})
             added += 1
         if added:
             logger.info("BM25: +%d parent_chunks from meta.db", added)
