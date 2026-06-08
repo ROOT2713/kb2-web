@@ -54,8 +54,9 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
 
     # ── MinerU ──
-    mineru_api_url: str = ""
+    mineru_api_url: str = "https://mineru.net/api/v4"
     mineru_api_key: str = ""
+    mineru_pages_max: int = 200
 
     # ── Cache ──
     cache_l1_max: int = 2000
