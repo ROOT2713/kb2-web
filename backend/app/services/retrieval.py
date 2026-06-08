@@ -576,11 +576,18 @@ def _find_rate_table_snippet(tier_keywords: list, bank: str = "all") -> tuple:
     bank: 指定bank过滤，"all"不过滤。[HOTFIX-0606] 防止跨bank数据泄漏。"""
     try:
         _db = SessionLocal()
-        _conditions = " OR ".join([f"p.parent_text LIKE '%{kw}%'" for kw in tier_keywords if "万" in kw])
-        if not _conditions:
+        _filtered = [kw for kw in tier_keywords if "万" in kw]
+        if not _filtered:
             return None, None
-        _bank_filter = ""
+        # Use parameterized LIKE to prevent SQL injection
         _params = {}
+        _conditions_parts = []
+        for i, kw in enumerate(_filtered):
+            key = f"kw{i}"
+            _conditions_parts.append(f"p.parent_text LIKE :{key}")
+            _params[key] = f"%{kw}%"
+        _conditions = " OR ".join(_conditions_parts)
+        _bank_filter = ""
         if bank and bank != "all":
             _bank_filter = " AND d.bank = :bank"
             _params["bank"] = bank
