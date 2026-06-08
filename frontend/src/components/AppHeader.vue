@@ -1,0 +1,77 @@
+<template>
+  <header class="app-header">
+    <div class="header-brand">
+      <span class="brand-mark">KB2</span>
+      <span class="brand-sub">知识库</span>
+    </div>
+    <nav class="header-nav">
+      <RouterLink to="/query" class="nav-link">查询</RouterLink>
+      <RouterLink to="/upload" class="nav-link">上传</RouterLink>
+      <RouterLink to="/documents" class="nav-link">文档</RouterLink>
+      <RouterLink to="/banks" class="nav-link">知识库</RouterLink>
+    </nav>
+  </header>
+</template>
+
+<script setup lang="ts">
+</script>
+
+<style scoped>
+.app-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--header-h);
+  background: white;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 1.5rem;
+  z-index: 100;
+  gap: 2rem;
+}
+
+.header-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: calc(var(--sidebar-w) - 1.5rem);
+}
+
+.brand-mark {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--accent);
+  letter-spacing: -0.02em;
+}
+
+.brand-sub {
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+}
+
+.header-nav {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.nav-link {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--fg-muted);
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  text-decoration: none;
+}
+
+.nav-link:hover {
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.nav-link.router-link-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+</style>
