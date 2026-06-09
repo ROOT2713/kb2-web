@@ -348,10 +348,10 @@ async def build_bm25_index(bank: str = "all") -> tuple:
             if isinstance(results, Exception) or not results:
                 continue
             for r in results:
-                text = r.get("text", "") or ""
-                if not text.strip():
+                mem_text = r.get("text", "") or ""
+                if not mem_text.strip():
                     continue
-                dedup_key = text[:80]
+                dedup_key = mem_text[:80]
                 if dedup_key in seen_texts:
                     continue
                 seen_texts.add(dedup_key)
@@ -361,7 +361,7 @@ async def build_bm25_index(bank: str = "all") -> tuple:
                     if t.startswith("doc_id:"):
                         doc_id = t[7:]
                         break
-                docs.append({"text": text, "doc_id": doc_id or "_unknown_", "tags": tags})
+                docs.append({"text": mem_text, "doc_id": doc_id or "_unknown_", "tags": tags})
     except Exception as e:
         logger.warning("BM25 recall failed: %s", e)
 

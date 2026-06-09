@@ -6,7 +6,8 @@
     <section class="card">
       <h2 class="section-title">系统状态</h2>
       <button :disabled="statsLoading" @click="loadStats">
-        {{ statsLoading ? '加载中...' : '加载系统状态' }}
+        <LoadingSpinner v-if="statsLoading" label="加载中..." inline />
+        <span v-else>加载系统状态</span>
       </button>
       <div v-if="statsError" class="error-msg">{{ statsError }}</div>
       <div v-if="stats" class="stats-grid">
@@ -35,7 +36,8 @@
     <section class="card">
       <h2 class="section-title">质量审计</h2>
       <button :disabled="auditLoading" @click="loadAudit">
-        {{ auditLoading ? '加载中...' : '加载审计数据' }}
+        <LoadingSpinner v-if="auditLoading" label="加载中..." inline />
+        <span v-else>加载审计数据</span>
       </button>
       <div v-if="auditError" class="error-msg">{{ auditError }}</div>
       <div v-if="audit" class="audit-summary">
@@ -74,7 +76,8 @@
     <section class="card">
       <h2 class="section-title">RAG 评估</h2>
       <button :disabled="ragLoading" @click="loadRagEval">
-        {{ ragLoading ? '评估中（可能需要 1-2 分钟）...' : '运行 RAG 评估' }}
+        <LoadingSpinner v-if="ragLoading" label="评估中（可能需要 1-2 分钟）..." inline />
+        <span v-else>运行 RAG 评估</span>
       </button>
       <div v-if="ragError" class="error-msg">{{ ragError }}</div>
       <div v-if="ragEval" class="rag-result">
@@ -108,6 +111,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import {
   getStats,
   getHealth,

@@ -17,7 +17,7 @@
           <summary class="bank-summary">
             <span class="bank-icon">📁</span>
             <span class="bank-name">{{ bankName }}</span>
-            <span class="bank-count">{{ wikiData.bank_counts?.[bankName] || getBankDocCount(bank) }} 篇</span>
+            <span class="bank-count">{{ wikiData.bank_counts?.[bankName] ?? 0 }} 篇</span>
           </summary>
           <div class="bank-categories">
             <div v-for="(cat, catName) in bank" :key="catName" class="category-node">
@@ -86,9 +86,6 @@ async function loadWiki() {
   }
 }
 
-function getBankDocCount(bank: Record<string, WikiDoc[]>): number {
-  return Object.values(bank).reduce((sum, docs) => sum + docs.length, 0)
-}
 </script>
 
 <style scoped>
