@@ -9,7 +9,7 @@ def _set_admin_password(monkeypatch):
     """Ensure admin password is set for auth tests."""
     monkeypatch.setattr("app.config.settings.admin_password", "testpass123")
     monkeypatch.setattr("app.config.settings.admin_username", "admin")
-    monkeypatch.setattr("app.config.settings.jwt_secret", "test_secret_key_for_jwt")
+    monkeypatch.setattr("app.config.settings.jwt_secret", "test_secret_key_for_jwt_32_bytes_minimum")
     monkeypatch.setattr("app.config.settings.jwt_expire_minutes", 60)
 
 
