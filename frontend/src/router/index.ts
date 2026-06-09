@@ -33,6 +33,26 @@ const router = createRouter({
       name: 'banks',
       component: () => import('@/views/BanksView.vue'),
     },
+    {
+      path: '/documents/:id',
+      name: 'document-detail',
+      component: () => import('@/views/DocumentDetail.vue'),
+    },
+    {
+      path: '/synonyms',
+      name: 'synonyms',
+      component: () => import('@/views/SynonymsView.vue'),
+    },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: () => import('@/views/AdminView.vue'),
+    },
+    {
+      path: '/wiki',
+      name: 'wiki',
+      component: () => import('@/views/WikiView.vue'),
+    },
   ],
 })
 

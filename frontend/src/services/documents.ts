@@ -18,8 +18,16 @@ export interface DocumentListResponse {
 }
 
 export interface DocumentDetail {
-  id: string
+  id?: string
+  doc_id: string
   title: string
+  filename?: string
+  bank?: string
+  chunks?: number
+  searchable?: number
+  created?: string
+  coverage_pct?: number
+  text?: string
   content?: string
 }
 
@@ -31,20 +39,18 @@ export async function listDocuments(bank = 'all'): Promise<DocumentListResponse>
 }
 
 export async function getDocument(docId: string): Promise<DocumentDetail> {
-  const { data } = await api.get<DocumentDetail>(`/documents/${docId}`)
+  const { data } = await api.get<DocumentDetail>(`/documents/${encodeURIComponent(docId)}`)
   return data
 }
 
 export async function deleteDocument(docId: string): Promise<{ ok: boolean }> {
-  const { data } = await api.delete<{ ok: boolean }>(`/documents/${docId}`)
+  const { data } = await api.delete<{ ok: boolean }>(`/documents/${encodeURIComponent(docId)}`)
   return data
 }
 
 export async function reparseDocument(
   docId: string,
 ): Promise<{ ok: boolean; [key: string]: unknown }> {
-  const formData = new FormData()
-  formData.append('doc_id', docId)
-  const { data } = await api.post('/documents/reparse', formData)
+  const { data } = await api.post(`/documents/${encodeURIComponent(docId)}/reparse`)
   return data
 }

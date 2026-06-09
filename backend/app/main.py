@@ -1,12 +1,18 @@
 """FastAPI application entry point."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, RedirectResponse
 
 from app.config import settings
 from app.api.router import api_router
+from app.middleware.jwt_auth import get_current_user
+
+FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -48,7 +54,67 @@ app.include_router(auth_router, prefix="/api/auth", tags=["认证"])
 app.include_router(api_router, prefix="/api")
 
 
+# ── V1 compatibility aliases ──
+@app.get("/api/fetch-standard", include_in_schema=False)
+async def v1_compat_fetch_standard(user: str = Depends(get_current_user)):
+    return RedirectResponse(url="/api/documents/fetch-standard", status_code=307)
+
+@app.post("/api/fetch-standard", include_in_schema=False)
+async def v1_compat_fetch_standard_post(user: str = Depends(get_current_user)):
+    return RedirectResponse(url="/api/documents/fetch-standard", status_code=307)
+
+@app.get("/api/web-search", include_in_schema=False)
+async def v1_compat_web_search(user: str = Depends(get_current_user)):
+    return RedirectResponse(url="/api/query/web-search", status_code=307)
+
+@app.post("/api/web-search", include_in_schema=False)
+async def v1_compat_web_search_post(user: str = Depends(get_current_user)):
+    return RedirectResponse(url="/api/query/web-search", status_code=307)
+
+@app.get("/api/categories", include_in_schema=False)
+async def v1_compat_categories(user: str = Depends(get_current_user)):
+    return RedirectResponse(url="/api/banks/categories", status_code=307)
+
+@app.get("/api/wiki", include_in_schema=False)
+async def v1_compat_wiki(user: str = Depends(get_current_user)):
+    return RedirectResponse(url="/api/banks/wiki", status_code=307)
+
+@app.get("/api/stats", include_in_schema=False)
+async def v1_compat_stats(user: str = Depends(get_current_user)):
+    return RedirectResponse(url="/api/admin/stats", status_code=307)
+
+@app.get("/api/rag-eval", include_in_schema=False)
+async def v1_compat_rag_eval(user: str = Depends(get_current_user)):
+    return RedirectResponse(url="/api/documents/rag-eval", status_code=307)
+
+@app.get("/api/audit", include_in_schema=False)
+async def v1_compat_audit(user: str = Depends(get_current_user)):
+    return RedirectResponse(url="/api/documents/audit", status_code=307)
+
+@app.post("/api/audit/refetch", include_in_schema=False)
+async def v1_compat_refetch(user: str = Depends(get_current_user)):
+    return RedirectResponse(url="/api/documents/refetch", status_code=307)
+
+
 # ── Health check (no auth) ──
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "2.0.0"}
+
+
+# ── Frontend SPA (static files + fallback) ──
+if FRONTEND_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIR / "assets")), name="static-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve frontend SPA — return index.html for all non-API routes."""
+        # ── Path traversal protection (C1 fix) ──
+        if ".." in full_path.split("/"):
+            raise HTTPException(status_code=404)
+        file_path = (FRONTEND_DIR / full_path).resolve()
+        if not str(file_path).startswith(str(FRONTEND_DIR.resolve())):
+            raise HTTPException(status_code=404)
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(FRONTEND_DIR / "index.html"))

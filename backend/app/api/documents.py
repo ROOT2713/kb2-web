@@ -739,9 +739,14 @@ async def get_document_content(doc_id: str, db: Session = Depends(get_db)):
                     if full_text and len(full_text) > 50:
                         return {
                             "doc_id": doc_id,
+                            "id": doc_id,
                             "title": title,
                             "filename": meta.get("filename", ""),
+                            "bank": meta.get("bank", "kb"),
                             "chunks": len(recalled),
+                            "searchable": meta.get("searchable", 0),
+                            "created": meta.get("created_at", ""),
+                            "coverage_pct": meta.get("coverage_pct", 0),
                             "text": full_text,
                             "source": "recall",
                         }
@@ -758,11 +763,26 @@ async def get_document_content(doc_id: str, db: Session = Depends(get_db)):
 
     return {
         "doc_id": doc_id,
+        "id": doc_id,
         "title": meta.get("title", "unknown"),
         "filename": meta.get("filename", ""),
+        "bank": meta.get("bank", "kb"),
         "chunks": chunks_count,
+        "searchable": meta.get("searchable", 0),
+        "created": meta.get("created_at", ""),
+        "coverage_pct": meta.get("coverage_pct", 0),
         "text": full_text,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: GET /{doc_id}/content — V1 compatibility alias
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/{doc_id}/content")
+async def get_document_content_v1(doc_id: str, db: Session = Depends(get_db)):
+    """V1 compatibility alias — delegates to get_document_content."""
+    return await get_document_content(doc_id, db)
 
 
 # ═══════════════════════════════════════════════════════════════════

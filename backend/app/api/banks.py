@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.database import get_db, SessionLocal
 from app.services.retrieval import (
-    BANKS, _hindsight_request, get_bank_config,
+    BANKS, _active_hs_banks_cache, _hindsight_request, get_bank_config, reload_bank_config,
 )
 
 from app.middleware.auth import require_admin
@@ -77,6 +77,15 @@ def _load_banks_config() -> dict:
     return dict(BANKS)
 
 
+def _refresh_banks():
+    return reload_bank_config()
+
+
+def _invalidate_bank_caches():
+    _active_hs_banks_cache["banks"] = None
+    _active_hs_banks_cache["ts"] = 0
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Route: GET /wiki — knowledge base wiki tree
 # ═══════════════════════════════════════════════════════════════════
@@ -119,7 +128,8 @@ async def wiki_tree(bank: str = Query("all"), db: Session = Depends(get_db)):
             "created": str(r[5]) if r[5] else "",
         })
 
-    bank_names = {k: v["name"] for k, v in BANKS.items() if k != "all"}
+    banks_cfg = _refresh_banks()
+    bank_names = {k: v["name"] for k, v in banks_cfg.items() if k != "all"}
 
     return {
         "tree": tree,
@@ -160,6 +170,7 @@ async def list_categories(db: Session = Depends(get_db)):
 @router.get("")
 async def list_banks(db: Session = Depends(get_db)):
     """List all banks with document statistics (v1 L4152-L4179)."""
+    banks_cfg = _refresh_banks()
     bank_stats = {}
     searchable_stats = {}
     try:
@@ -173,11 +184,10 @@ async def list_banks(db: Session = Depends(get_db)):
         searchable_stats = {r[0]: r[2] for r in rows}
     except Exception:
         pass
-
-    total = sum(bank_stats.get(key, 0) for key in BANKS if key != "all")
-    total_searchable = sum(searchable_stats.get(key, 0) for key in BANKS if key != "all")
+    total = sum(bank_stats.get(key, 0) for key in banks_cfg if key != "all")
+    total_searchable = sum(searchable_stats.get(key, 0) for key in banks_cfg if key != "all")
     banks = []
-    for key, cfg in BANKS.items():
+    for key, cfg in banks_cfg.items():
         if key == "all":
             banks.append({
                 "key": key, "name": cfg["name"], "count": total, "searchable": total_searchable,
@@ -204,32 +214,27 @@ async def create_bank_api(
     prompt: str = Form(""),
 ):
     """Create a new knowledge base bank (v1 L4180-L4216)."""
-    if key in BANKS or key == "all":
-        raise HTTPException(400, f"bank '{key}' already exists")
+    key = key.strip()
+    label = label.strip()
+    if not label:
+        raise HTTPException(400, "bank label cannot be empty")
+    banks_cfg = _refresh_banks()
+    if key in banks_cfg or key == "all":
+        raise HTTPException(409, f"bank '{key}' already exists")
     if not re.match(r'^[a-z_]+$', key):
         raise HTTPException(400, "bank key must contain only lowercase letters and underscores")
 
     hs_bank_id = f"kb_{key}"
-
-    # 1. Create Hindsight bank
-    try:
-        await _hindsight_request("/v1/default/banks", "POST", {
-            "bank_id": hs_bank_id, "name": hs_bank_id
-        })
-    except Exception as e:
-        raise HTTPException(500, f"Failed to create Hindsight bank: {e}")
-
-    # 2. Update in-memory config
-    BANKS[key] = {
+    banks_cfg[key] = {
         "name": label,
         "hindsight": hs_bank_id,
         "prompt": prompt or f"You are an expert in the {label} domain.",
         "description": description,
     }
-
-    # 3. Persist to banks.json
+    # banks_cfg IS BANKS (same dict ref from _refresh_banks()), so no clear/update needed
     _save_banks_config(BANKS)
-
+    _invalidate_bank_caches()
+    logger.info("Created local bank config: key=%s hindsight=%s", key, hs_bank_id)
     return {"ok": True, "bank": key, "hindsight_bank": hs_bank_id}
 
 
@@ -245,7 +250,8 @@ async def delete_bank_api(
     db: Session = Depends(get_db),
 ):
     """Delete a bank (requires confirmation) (v1 L4217-L4252)."""
-    if bank_key not in BANKS or bank_key == "all":
+    banks_cfg = _refresh_banks()
+    if bank_key not in banks_cfg or bank_key == "all":
         raise HTTPException(404, f"bank '{bank_key}' not found")
 
     count_row = db.execute(
@@ -260,7 +266,7 @@ async def delete_bank_api(
             status_code=409,
         )
 
-    hs_bank_id = BANKS[bank_key].get("hindsight")
+    hs_bank_id = banks_cfg[bank_key].get("hindsight")
 
     # 1. Delete Hindsight bank
     if hs_bank_id:
@@ -278,7 +284,9 @@ async def delete_bank_api(
         db.commit()
 
     # 3. Remove from in-memory config
-    del BANKS[bank_key]
+    del banks_cfg[bank_key]
+    # banks_cfg IS BANKS (same dict ref from _refresh_banks()), so no clear/update needed
     _save_banks_config(BANKS)
+    _invalidate_bank_caches()
 
     return {"ok": True, "moved_docs_to": "general" if count > 0 else None}

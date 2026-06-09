@@ -74,6 +74,48 @@ class TestBanksEndpoints:
         assert "categories" in data
         assert isinstance(data["categories"], list)
 
+    def test_list_banks_has_checklist(self, client, mock_hindsight, mock_get_active_banks):
+        resp = client.get("/api/banks")
+        assert resp.status_code == 200
+        keys = [b["key"] for b in resp.json()["banks"]]
+        assert "checklist" in keys
+
+    def test_create_bank_does_not_call_hindsight_create(self, client, monkeypatch, tmp_path):
+        import app.api.banks as banks_api
+        import app.services.retrieval as retrieval
+
+        called = []
+
+        async def fail_on_hindsight_create(endpoint, method="GET", json_data=None, timeout=30):
+            called.append((endpoint, method))
+            if endpoint == "/v1/default/banks" and method == "POST":
+                raise AssertionError("create_bank_api must not POST /v1/default/banks")
+            return {"status": "ok"}
+
+        cfg_path = tmp_path / "banks.json"
+        monkeypatch.setattr(banks_api, "_hindsight_request", fail_on_hindsight_create)
+        monkeypatch.setattr(retrieval.settings, "banks_config_path", cfg_path)
+        monkeypatch.setattr(banks_api.settings, "banks_config_path", cfg_path)
+        retrieval.reload_bank_config()
+        try:
+            resp = client.post("/api/banks", data={"key": "test_bank", "label": "测试库"})
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["ok"] is True
+            assert data["bank"] == "test_bank"
+            assert data["hindsight_bank"] == "kb_test_bank"
+            assert ("/v1/default/banks", "POST") not in called
+            assert cfg_path.exists()
+        finally:
+            retrieval.BANKS.pop("test_bank", None)
+            if cfg_path.exists():
+                cfg_path.unlink()
+            retrieval.reload_bank_config()
+
+    def test_create_existing_bank_returns_409(self, client, mock_hindsight, mock_get_active_banks):
+        resp = client.post("/api/banks", data={"key": "general", "label": "综合文件"})
+        assert resp.status_code == 409
+
 
 # ═══════════════════════════════════════════════════════
 # Documents endpoints

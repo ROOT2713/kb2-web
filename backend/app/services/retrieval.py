@@ -37,8 +37,49 @@ _HARDCODED_BANKS = {
     "templates":     {"name": "方案模板",       "hindsight": "kb_template","prompt": "你是政务信息化项目方案编写专家。精通建设开发类和运维服务类项目方案的编写规范、章节结构、技术路线选型。回答时注重模板结构和编写要点。"},
     "tech_guides":   {"name": "技术指导书",     "hindsight": "kb_tech",    "prompt": "你是全栈技术专家。精通前端/后端/Agent/DevOps/安全/渗透测试/AI/LLM。回答注重实战经验、架构设计和攻防思路。"},
     "general":       {"name": "综合文件",       "hindsight": "kb_general", "prompt": "你是知识管理助手。擅长整理归纳各类知识，回答清晰有条理。"},
+    "checklist":    {"name": "检查标准",       "hindsight": "kb_checklist", "prompt": "你是等保测评机构检查标准专家。回答时优先引用检查项、检查要求、检查方法、核查力度等表格字段。"},
 }
-BANKS = dict(_HARDCODED_BANKS)  # 后续可扩展从 banks.json 加载
+BANKS = dict(_HARDCODED_BANKS)
+
+
+def _normalize_bank_config(raw: dict) -> dict:
+    normalized = {}
+    for key, cfg in (raw or {}).items():
+        if not isinstance(cfg, dict):
+            continue
+        item = dict(cfg)
+        if "label" in item and "name" not in item:
+            item["name"] = item.pop("label")
+        if "name" not in item:
+            item["name"] = key
+        if key != "all" and not item.get("hindsight"):
+            item["hindsight"] = f"kb_{key}"
+        if "prompt" not in item:
+            item["prompt"] = f"你是{item['name']}领域专家。"
+        normalized[key] = item
+    return normalized
+
+
+def _load_bank_overrides() -> dict:
+    cfg_path = settings.banks_config_path
+    if not cfg_path.exists():
+        return {}
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            return _normalize_bank_config(json.load(f))
+    except Exception as e:
+        logger.warning("Failed to load bank overrides from %s: %s", cfg_path, e)
+        return {}
+
+
+def reload_bank_config() -> dict:
+    BANKS.clear()
+    BANKS.update(_HARDCODED_BANKS)
+    BANKS.update(_load_bank_overrides())
+    return BANKS
+
+
+reload_bank_config()
 
 # ── Active Hindsight banks 缓存 ────────────────────────────────────
 _active_hs_banks_cache = {"banks": None, "ts": 0}

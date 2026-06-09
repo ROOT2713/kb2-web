@@ -30,7 +30,7 @@
         <span class="col-actions">操作</span>
       </div>
       <div v-for="doc in filteredDocs" :key="doc.id" class="table-row">
-        <span class="col-title" :title="doc.filename">{{ doc.title }}</span>
+        <span class="col-title" :title="doc.filename"><router-link :to="'/documents/' + doc.id" class="doc-title-link">{{ doc.title }}</router-link></span>
         <span class="col-bank">
           <span class="badge">{{ doc.bank }}</span>
         </span>
@@ -198,6 +198,14 @@ async function handleReparse(docId: string) {
   color: var(--fg-muted);
 }
 
+.doc-title-link {
+  color: var(--fg);
+  text-decoration: none;
+}
+.doc-title-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
 .col-actions {
   display: flex;
   gap: 0.35rem;

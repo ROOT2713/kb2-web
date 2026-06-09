@@ -98,6 +98,8 @@ class DocumentRepository:
             "doc_type": doc.doc_type,
             "content_hash": doc.content_hash,
             "hs_bank": doc.hs_bank,
+            "searchable": doc.searchable if doc.searchable is not None else 0,
+            "coverage_pct": doc.coverage_pct if doc.coverage_pct is not None else 0,
         }
 
     # ── get_by_hash ────────────────────────────────────────────

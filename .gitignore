@@ -36,3 +36,6 @@ frontend/dist/
 
 # Logs
 *.log
+
+# Frontend build cache
+frontend/tmp/

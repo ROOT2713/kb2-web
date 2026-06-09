@@ -9,6 +9,9 @@
       <RouterLink to="/upload" class="nav-link">上传</RouterLink>
       <RouterLink to="/documents" class="nav-link">文档</RouterLink>
       <RouterLink to="/banks" class="nav-link">知识库</RouterLink>
+      <RouterLink to="/synonyms" class="nav-link">同义词</RouterLink>
+      <RouterLink to="/admin" class="nav-link">管理</RouterLink>
+      <RouterLink to="/wiki" class="nav-link">Wiki</RouterLink>
     </nav>
   </header>
 </template>
@@ -57,8 +60,8 @@
 }
 
 .nav-link {
-  padding: 0.4rem 0.75rem;
-  font-size: 0.875rem;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
   color: var(--fg-muted);
   border-bottom: 2px solid transparent;
   transition: color 0.15s, border-color 0.15s;

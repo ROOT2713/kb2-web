@@ -23,7 +23,7 @@ export async function createBank(payload: {
   label: string
   description?: string
   prompt?: string
-}): Promise<{ ok: boolean; bank: string }> {
+}): Promise<{ ok: boolean; bank: string; hindsight_bank?: string }> {
   const formData = new FormData()
   formData.append('key', payload.key)
   formData.append('label', payload.label)
@@ -38,7 +38,7 @@ export async function deleteBank(
   confirm = false,
 ): Promise<{ ok: boolean }> {
   const { data } = await api.delete<{ ok: boolean }>(
-    `/banks/${bankKey}`,
+    `/banks/${encodeURIComponent(bankKey)}`,
     { params: { confirm } },
   )
   return data
