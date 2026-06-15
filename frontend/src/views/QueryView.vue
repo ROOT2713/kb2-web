@@ -53,6 +53,9 @@
       :content="queryStore.answer"
       :sources="queryStore.sources"
       :cache-hit="queryStore.cacheHit"
+      :suggestions="queryStore.suggestions"
+      :standard-contents="queryStore.standardContents"
+      @search-suggestion="handleSuggestionSearch"
     />
   </div>
 </template>
@@ -91,6 +94,15 @@ function handleWebSearch() {
     q: queryText.value.trim(),
     bank: selectedBank.value,
     context: queryStore.answer,
+  })
+}
+
+function handleSuggestionSearch(nextQuery: string) {
+  queryText.value = nextQuery
+  queryStore.submitQuery({
+    q: nextQuery,
+    bank: selectedBank.value,
+    rerank: useRerank.value,
   })
 }
 </script>
