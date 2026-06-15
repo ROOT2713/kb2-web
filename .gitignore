@@ -37,5 +37,9 @@ frontend/dist/
 # Logs
 *.log
 
+# Local analysis / indexes
+.codegraph/
+cc_*.md
+
 # Frontend build cache
 frontend/tmp/
