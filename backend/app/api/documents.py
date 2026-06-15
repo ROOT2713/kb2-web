@@ -835,8 +835,8 @@ async def patch_document_bank(
 @router.delete("/{doc_id}")
 async def delete_document(
     doc_id: str,
-    admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
+    admin: bool = Depends(require_admin),
 ):
     """Delete document and all its vectors (v1 L4276-L4359)."""
     repo = DocumentRepository(db)

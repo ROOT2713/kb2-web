@@ -41,6 +41,9 @@ class DocumentRepository:
         doc_type: str = "generic",
         bank: str = "general",
         hs_bank: str = "kb_general",
+        searchable: int = 0,
+        coverage_pct: float = 0.0,
+        original_text_length: int = 0,
     ) -> Document:
         """Insert or replace document metadata (matches v1 save_meta)."""
         doc = self.get(doc_id)
@@ -53,6 +56,9 @@ class DocumentRepository:
             doc.doc_type = doc_type
             doc.bank = bank
             doc.hs_bank = hs_bank
+            doc.searchable = searchable
+            doc.coverage_pct = coverage_pct
+            doc.original_text_length = original_text_length
             doc.updated_at = datetime.now(timezone.utc)
         else:
             # Insert new
@@ -65,6 +71,9 @@ class DocumentRepository:
                 doc_type=doc_type,
                 bank=bank,
                 hs_bank=hs_bank,
+                searchable=searchable,
+                coverage_pct=coverage_pct,
+                original_text_length=original_text_length,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
             )
