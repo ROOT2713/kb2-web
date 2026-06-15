@@ -55,6 +55,7 @@
       :cache-hit="queryStore.cacheHit"
       :suggestions="queryStore.suggestions"
       :standard-contents="queryStore.standardContents"
+      :bank="selectedBank"
       @search-suggestion="handleSuggestionSearch"
     />
   </div>

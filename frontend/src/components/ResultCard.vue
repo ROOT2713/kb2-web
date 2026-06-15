@@ -89,6 +89,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import type { Source, QuerySuggestions } from '@/services/query'
 import api from '@/services/api'
 
@@ -110,6 +111,7 @@ const props = withDefaults(
     cacheHit?: string
     suggestions?: QuerySuggestions | null
     standardContents?: StandardContent[]
+    bank?: string
   }>(),
   {
     label: '回答',
@@ -117,6 +119,7 @@ const props = withDefaults(
     cacheHit: '',
     suggestions: null,
     standardContents: () => [],
+    bank: 'all',
   },
 )
 
@@ -127,9 +130,9 @@ const stdTexts = ref<Record<string, string>>({})
 const renderedHtml = computed(() => {
   if (!props.content) return ''
   try {
-    return marked.parse(props.content) as string
+    return DOMPurify.sanitize(marked.parse(props.content) as string)
   } catch {
-    return props.content
+    return DOMPurify.sanitize(props.content)
   }
 })
 
@@ -161,7 +164,9 @@ async function loadStandardText(docId: string) {
 
   loadingStds.value.add(docId)
   try {
-    const { data } = await api.get(`/query/standard-full/${docId}`)
+    const { data } = await api.get(`/query/standard-full/${docId}`, {
+      params: { bank: props.bank || 'all' },
+    })
     stdTexts.value[docId] = data.full_text || ''
   } catch (e) {
     console.error('Failed to load standard text:', e)
@@ -174,9 +179,9 @@ async function loadStandardText(docId: string) {
 function renderStdText(text: string): string {
   if (!text) return ''
   try {
-    return marked.parse(text) as string
+    return DOMPurify.sanitize(marked.parse(text) as string)
   } catch {
-    return text.replace(/\n/g, '<br>')
+    return DOMPurify.sanitize(text.replace(/\n/g, '<br>'))
   }
 }
 </script>
