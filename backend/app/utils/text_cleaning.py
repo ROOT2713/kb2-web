@@ -117,6 +117,8 @@ def clean_pipeline(text: str, source_hint: str = "") -> str:
     text = clean_html_residuals(text)
     text = clean_encoding_errors(text)
     text = normalize_whitespace(text)
+    # 标准号规范化：GB／T → GB/T，确保文档和查询使用同一套格式
+    text = normalize_standard_numbers(text)
     if "video" in source_hint or "whisper" in source_hint:
         text = clean_transcript_errors(text)
     # D4: 最终空行压缩（其他清洗步骤可能引入新的连续空行）
@@ -124,14 +126,26 @@ def clean_pipeline(text: str, source_hint: str = "") -> str:
     return text.strip()
 
 
+_GENERIC_TITLES = frozenset({
+    "中华人民共和国国家标准",
+    "国家标准",
+    "行业标准",
+    "地方标准",
+    "团体标准",
+    "企业标准",
+})
+
+
 def filename_to_title(filename: str, content: str = "") -> str:
-    """从内容第一行 # 标题提取标题，失败则用文件名去扩展名"""
+    """从内容前20行提取 # 标题，跳过通用标题（如"中华人民共和国国家标准"），失败则用文件名去扩展名"""
     if content:
         for line in content.split("\n", 20)[:20]:
             line = line.strip()
             m = re.match(r'^#{1,3}\s+(.+)', line)
             if m:
-                return m.group(1).strip()
+                candidate = m.group(1).strip()
+                if candidate not in _GENERIC_TITLES:
+                    return candidate
     return Path(filename).stem or filename
 
 

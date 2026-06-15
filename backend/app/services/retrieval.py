@@ -312,60 +312,33 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
 # ═══════════════════════════════════════════════════════════════════
 
 async def build_bm25_index(bank: str = "all") -> tuple:
-    """构建 BM25 索引（多 bank 独立缓存）。来源：Hindsight recall + meta.db parent_chunks"""
+    """构建 BM25 索引（多 bank 独立缓存）。主来源：meta.db parent_chunks（原始文档文本）"""
     now = _time.time()
     cache = _get_bm25_cache(bank)
+    # ── 增量检测：TTL 未过期 + 最后更新时间未变 → 跳过重建 ──
     if cache["index"] and (now - cache["ts"]) < _BM25_TTL:
-        return cache["index"], cache["docs"]
+        try:
+            _count_db = SessionLocal()
+            if bank == "all":
+                row = _count_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1")).fetchone()
+            else:
+                row = _count_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND bank=:bank"), {"bank": bank}).fetchone()
+            _count_db.close()
+            current_ts = str(row[0]) if row and row[0] else ""
+            current_count = row[1] if row else 0
+            cached_ts = cache.get("updated_at", "")
+            if current_ts == cached_ts and current_count == cache.get("doc_count", 0):
+                return cache["index"], cache["docs"]
+            else:
+                logger.info("BM25: docs changed (ts=%s→%s, count=%d→%d), rebuilding bank=%s",
+                           cached_ts[:19], current_ts[:19], cache.get("doc_count", 0), current_count, bank)
+        except Exception:
+            pass  # 检测失败时正常走重建流程
 
     docs = []
     seen_texts = set()
 
-    # ── 来源1: Hindsight recall (LLM总结的facts) ──
-    # 搜索隔离：bank != "all" 时只查询对应的 Hindsight bank
-    recall_queries = [
-        "标准 规范", "安全 系统", "工程 技术", "设计 施工",
-        "检测 验收", "网络 安全", "信息 系统", "监控 设备",
-        "造价 费用", "收费 取费", "检测 测试",
-        "方案类 方案编制", "调查类 调查摸底", "报告类 报告编写",
-        "检查标准 测评指标", "安全管理 制度", "物理环境 机房",
-        "云计算 移动互联 物联网", "等保测评 信息安全等级保护",
-    ]
-    try:
-        # 确定要查询的 Hindsight bank 列表
-        if bank != "all":
-            bank_cfg = get_bank_config(bank)
-            hs_bank_for_bm25 = bank_cfg.get("hindsight") or "kb"
-            bm25_hs_banks = [hs_bank_for_bm25] if hs_bank_for_bm25 else []
-        else:
-            bm25_hs_banks = await _get_active_hindsight_banks()
-        tasks = []
-        for q in recall_queries:
-            for hs_bank in bm25_hs_banks:
-                tasks.append(recall(q, limit=200, bank=hs_bank, max_tokens=65536))
-        results_list = await asyncio.gather(*tasks, return_exceptions=True)
-        for results in results_list:
-            if isinstance(results, Exception) or not results:
-                continue
-            for r in results:
-                mem_text = r.get("text", "") or ""
-                if not mem_text.strip():
-                    continue
-                dedup_key = mem_text[:80]
-                if dedup_key in seen_texts:
-                    continue
-                seen_texts.add(dedup_key)
-                tags = r.get("tags", [])
-                doc_id = None
-                for t in tags:
-                    if t.startswith("doc_id:"):
-                        doc_id = t[7:]
-                        break
-                docs.append({"text": mem_text, "doc_id": doc_id or "_unknown_", "tags": tags})
-    except Exception as e:
-        logger.warning("BM25 recall failed: %s", e)
-
-    # ── 来源2: meta.db parent_chunks (原始文档分块，精确数据) ──
+    # ── 主来源: meta.db parent_chunks (原始文档文本，关键词密度高) ──
     try:
         pdb = SessionLocal()
         if bank == "all":
@@ -376,7 +349,6 @@ async def build_bm25_index(bank: str = "all") -> tuple:
                 WHERE length(p.parent_text) > 50
             """)).fetchall()
         else:
-            # 映射前端bank到Hindsight bank
             bank_cfg = get_bank_config(bank)
             rows = pdb.execute(text("""
                 SELECT p.doc_id, p.parent_text, d.title
@@ -399,9 +371,48 @@ async def build_bm25_index(bank: str = "all") -> tuple:
             docs.append({"text": parent_text, "doc_id": row[0], "tags": [f"title:{row[2] or 'unknown'}"]})
             added += 1
         if added:
-            logger.info("BM25: +%d parent_chunks from meta.db", added)
+            logger.info("BM25: +%d parent_chunks from meta.db (primary source)", added)
     except Exception as e:
         logger.warning("BM25 parent_chunks failed: %s", e)
+
+    # ── Fallback: Hindsight recall (仅当 parent_chunks 为空时) ──
+    recall_queries = []
+    if not docs:
+        try:
+            recall_queries = ["标准 规范", "安全 系统", "检测 验收"]
+            if bank != "all":
+                bank_cfg = get_bank_config(bank)
+                hs_bank_for_bm25 = bank_cfg.get("hindsight") or "kb"
+                bm25_hs_banks = [hs_bank_for_bm25] if hs_bank_for_bm25 else []
+            else:
+                bm25_hs_banks = await _get_active_hindsight_banks()
+            tasks = []
+            for q in recall_queries:
+                for hs_bank in bm25_hs_banks:
+                    tasks.append(recall(q, limit=200, bank=hs_bank, max_tokens=65536))
+            results_list = await asyncio.gather(*tasks, return_exceptions=True)
+            for results in results_list:
+                if isinstance(results, Exception) or not results:
+                    continue
+                for r in results:
+                    mem_text = r.get("text", "") or ""
+                    if not mem_text.strip():
+                        continue
+                    dedup_key = mem_text[:80]
+                    if dedup_key in seen_texts:
+                        continue
+                    seen_texts.add(dedup_key)
+                    tags = r.get("tags", [])
+                    doc_id = None
+                    for t in tags:
+                        if t.startswith("doc_id:"):
+                            doc_id = t[7:]
+                            break
+                    docs.append({"text": mem_text, "doc_id": doc_id or "_unknown_", "tags": tags})
+            if docs:
+                logger.info("BM25: fallback to Hindsight recall, got %d chunks", len(docs))
+        except Exception as e:
+            logger.warning("BM25 recall fallback failed: %s", e)
 
     if not docs:
         return None, []
@@ -409,13 +420,25 @@ async def build_bm25_index(bank: str = "all") -> tuple:
     tokenized = [tokenize(d["text"]) for d in docs]
     bm25 = BM25Okapi(tokenized)
 
-    _bm25_caches[bank] = {"index": bm25, "docs": docs, "ts": now}
+    # 获取最后更新时间用于增量检测
+    try:
+        _ts_db = SessionLocal()
+        if bank == "all":
+            _max_ts = _ts_db.execute(text("SELECT MAX(updated_at) FROM documents WHERE searchable=1")).fetchone()[0]
+        else:
+            _max_ts = _ts_db.execute(text("SELECT MAX(updated_at) FROM documents WHERE searchable=1 AND bank=:bank"), {"bank": bank}).fetchone()[0]
+        _ts_db.close()
+        _max_ts_str = str(_max_ts) if _max_ts else ""
+    except Exception:
+        _max_ts_str = ""
+
+    _bm25_caches[bank] = {"index": bm25, "docs": docs, "ts": now, "doc_count": len(docs), "updated_at": _max_ts_str}
     logger.info("BM25 index built: %d chunks for bank=%s (from %d queries + meta.db)", len(docs), bank, len(recall_queries))
     return bm25, docs
 
 
 def bm25_search(query: str, bm25, docs: list, top_k: int = 10) -> list:
-    """BM25 关键词搜索"""
+    """BM25 关键词搜索（仅在 build_bm25_index 之后调用）"""
     if not bm25 or not docs:
         return []
     query_tokens = tokenize(query)
@@ -434,6 +457,109 @@ def bm25_search(query: str, bm25, docs: list, top_k: int = 10) -> list:
                 "tags": docs[idx]["tags"], "bm25_score": s
             })
     return results[:top_k]
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 轻量级关键词密度 Reranker（零依赖，纯 Python）
+# ═══════════════════════════════════════════════════════════════════
+
+def keyword_rerank(query: str, candidates: list, top_k: int = 20) -> list:
+    """基于关键词密度的轻量级重排序。运行在 RRF 之后、LLM Rerank 之前。
+
+    该步骤只做温和重排，不做硬截断到单一词面结果：先保留原始 RRF
+    前若干名和每文档首个候选，再用关键词得分补齐，避免 dense 语义召回被
+    二次词面排序完全淘汰。
+    """
+    if not candidates or not query:
+        return candidates[:top_k]
+
+    query_tokens = tokenize(query)
+    if not query_tokens:
+        return candidates[:top_k]
+
+    def _doc_id(item: dict) -> str:
+        if item.get("doc_id"):
+            return str(item.get("doc_id"))
+        for tag in item.get("tags", []):
+            if tag.startswith("doc_id:"):
+                return tag[7:]
+        return ""
+
+    scored = []
+    for original_rank, item in enumerate(candidates):
+        text = item.get("text", "")
+        text_lower = text.lower()
+        text_len = max(len(text), 1)
+
+        # 1. 关键词覆盖率（0-1）
+        hits = sum(1 for t in query_tokens if t in text_lower)
+        coverage = hits / len(query_tokens) if query_tokens else 0
+
+        # 2. 关键词密度（归一化到 0-1）
+        total_hits = sum(text_lower.count(t) for t in query_tokens)
+        density = min(total_hits / (text_len / 100), 1.0)
+
+        # 3. 标题匹配度（梯度：命中词数/总词数 × 0.3）
+        title = ""
+        for t in item.get("tags", []):
+            if t.startswith("title:"):
+                title = t[6:].lower()
+                break
+        title_hits = sum(1 for t in query_tokens if t in title) if title else 0
+        title_boost = (title_hits / len(query_tokens) * 0.3) if query_tokens else 0
+
+        # 4. 文本长度质量（200-2000 字符最优）
+        if 200 <= text_len <= 2000:
+            length_quality = 1.0
+        elif text_len < 200:
+            length_quality = text_len / 200
+        else:
+            length_quality = max(0.5, 1.0 - (text_len - 2000) / 10000)
+
+        # 5. 原始 RRF 排名保序项，避免语义召回被词面得分完全覆盖
+        rank_prior = 1.0 / (original_rank + 1)
+
+        # 综合评分：词面信号 + RRF先验
+        score = (
+            coverage * 0.30
+            + density * 0.20
+            + title_boost
+            + length_quality * 0.10
+            + rank_prior * 0.25
+        )
+        scored.append((score, original_rank, item))
+
+    keep: list[dict] = []
+    seen_ids: set[int] = set()
+
+    def _add(item: dict) -> None:
+        ident = id(item)
+        if ident not in seen_ids:
+            seen_ids.add(ident)
+            keep.append(item)
+
+    # 保留原始 RRF 前若干名，保护 dense/RRF 多样性
+    for item in candidates[: min(8, len(candidates))]:
+        _add(item)
+
+    # 每个文档至少保留首个候选，避免单一大文档挤掉其他文档
+    seen_docs: set[str] = set()
+    for item in candidates:
+        did = _doc_id(item)
+        if did and did not in seen_docs:
+            seen_docs.add(did)
+            _add(item)
+        if len(keep) >= top_k:
+            break
+
+    # 再按关键词得分补齐
+    scored.sort(key=lambda x: x[0], reverse=True)
+    for _, _, item in scored:
+        _add(item)
+        if len(keep) >= top_k:
+            break
+
+    return keep[:top_k]
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -470,17 +596,22 @@ def rrf_merge(dense_results: list, bm25_results: list, k: int = 60, query_keywor
         if key not in chunk_data:
             chunk_data[key] = r
 
-    # BM25 结果按排名打分（含关键词加权 + Excel结构化文档加权）
+    # BM25 结果按排名打分（含关键词加权 + Excel结构化文档加权 + 标准号文档加权）
     _EXCEL_STRUCTURE_KEYWORDS = ["检查项", "检查要求", "评分要点", "核查力度", "检查内容", "评分标准", "检查标准", "核查要点"]
+    _STD_TITLE_PAT = re.compile(r'(GB|ISO|YD|SJ|GA|HJ|CJJ|JGJ|WS)\s*/?\s*T?\s*\d+')
     for rank, r in enumerate(bm25_results):
         key = _make_key(r, is_bm25=True)
         text = r.get("text", "")
+        title = r.get("title", "") or r.get("doc", "")
         keyword_boost = 1.0
         if query_keywords and any(kw in text for kw in query_keywords):
             keyword_boost = 2.0
         # Excel类结构化文档加权：包含检查项/评分要点等关键词时 1.5x
         if any(kw in text for kw in _EXCEL_STRUCTURE_KEYWORDS):
             keyword_boost *= 1.5
+        # 标准号文档加权：标题包含标准号时 1.3x
+        if _STD_TITLE_PAT.search(title):
+            keyword_boost *= 1.3
         chunk_scores[key] = chunk_scores.get(key, 0) + keyword_boost / (k + rank + 1)
         if key not in chunk_data:
             chunk_data[key] = r

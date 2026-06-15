@@ -34,8 +34,9 @@ from app.services.retrieval import (
     bm25_search,
     build_bm25_index,
     expand_query_synonyms,
-    get_bank_config,
+    keyword_rerank,
     llm_rerank,
+    get_bank_config,
     recall,
     rrf_merge,
 )
@@ -301,6 +302,10 @@ async def _build_search_context(
             key = tuple(r.get("tags", []))
             exact_bm25_hits.add(key)
 
+    # ── 轻量级关键词 Rerank（在 LLM Rerank 之前） ──
+    if len(all_results) > 3:
+        all_results = keyword_rerank(q, all_results, top_k=20)
+
     # ── LLM Rerank精排 ──
     if use_rerank and len(all_results) > 2:
         try:
@@ -400,6 +405,353 @@ async def _build_search_context(
     }
 
 
+def _keyword_suggestion_rules(q: str) -> list:
+    """返回 [(用户短语tuple, 知识库术语, 改写建议问题), ...]"""
+    q_lower = q.lower()
+    rules = [
+        (("隐私信息", "隐私数据", "个人资料"), "个人敏感信息", "个人敏感信息包括哪些类别？"),
+        (("敏感数据", "敏感信息"), "个人敏感信息", "个人敏感信息的定义和分类是什么？"),
+        (("收费", "费用", "取费"), "取费标准", "验收测评服务取费标准是什么？"),
+        (("测试依据", "测评依据", "检测依据"), "测试依据", "软件测评应依据哪些标准和规范？"),
+        (("等保", "等级保护"), "等级保护测评", "等级保护测评要求包括哪些内容？"),
+        (("密评", "密码应用"), "商用密码应用安全性评估", "商用密码应用安全性评估怎么做？"),
+    ]
+    results = []
+    for user_terms, kb_term, refined_query in rules:
+        for ut in user_terms:
+            if ut.lower() in q_lower or ut in q:
+                results.append((user_terms, kb_term, refined_query))
+                break
+    return results
+
+
+# ── 模块级标准号正则 ──
+_STD_PATTERN = re.compile(
+    r'(GB\s*/?\s*T?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
+    r'|ISO(?:\s*/\s*IEC)?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
+    r'|(?:YD|SJ|GA|HJ|CJJ|JGJ|WS)\s*/?\s*T?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
+    r'|T\s*/\s*EGAG\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
+    r'|TEGAG\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
+    r'|GDZW\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
+    r'|STC[\w\-]+'
+    r'|DB\d+[\w\-]*'
+    r'|[一-鿿]+〔\d+〕\d+号)'
+)
+
+
+def _normalize_doc_title_for_standard(title: str) -> str:
+    """标准化文档标题中 + 和 _ 分隔符。"""
+    return title.replace("+", " ").replace("_", "/").replace("∕", "/")
+
+
+def _normalize_standard_keyword(raw: str) -> str:
+    """规范化标准号关键词，统一空格和 GB/T 写法。"""
+    kw = re.sub(r"\s+", " ", raw).strip()
+    kw = re.sub(r"GB\s*/\s*T", "GB/T", kw, flags=re.IGNORECASE)
+    kw = re.sub(r"GB\s+T", "GB/T", kw, flags=re.IGNORECASE)
+    kw = re.sub(r"T\s*/\s*EGAG", "T/EGAG", kw, flags=re.IGNORECASE)
+    kw = re.sub(r"ISO\s*/\s*IEC", "ISO/IEC", kw, flags=re.IGNORECASE)
+    kw = re.sub(r"\s*([\—\-–])\s*", r"\1", kw)
+    return kw
+
+
+def _assemble_standard_contents_meta(sources: list, bank: str = "all") -> list[dict]:
+    """从 sources 中识别规范文件，查询 parent_chunks 获取元数据。
+
+    返回 [{title, doc_id, total_chars, sections_count, preview}, ...]
+    仅使用 sources 中已有 doc_id 作为锚点，避免标题模糊匹配跨 bank 泄漏。
+    """
+    results = []
+    seen_doc_ids = set()
+
+    db = SessionLocal()
+    try:
+        for src in sources:
+            title = src.get("doc") or src.get("title") or ""
+            doc_id = src.get("doc_id")
+            if not title or not doc_id or doc_id in seen_doc_ids:
+                continue
+
+            # 用正则识别是否为规范文件
+            normalized = _normalize_doc_title_for_standard(title)
+            if not _STD_PATTERN.search(normalized):
+                continue
+
+            params = {"doc_id": doc_id}
+            doc_sql = "SELECT doc_id, title FROM documents WHERE doc_id=:doc_id AND searchable=1"
+            if bank != "all":
+                doc_sql += " AND bank=:bank"
+                params["bank"] = bank
+            row = db.execute(sa_text(doc_sql), params).fetchone()
+            if not row:
+                continue
+
+            seen_doc_ids.add(doc_id)
+            chunks_row = db.execute(
+                sa_text(
+                    "SELECT COUNT(*), SUM(LENGTH(parent_text)) "
+                    "FROM parent_chunks WHERE doc_id=:doc_id"
+                ),
+                {"doc_id": doc_id},
+            ).fetchone()
+            chunks_count = chunks_row[0] if chunks_row and chunks_row[0] else 0
+            total_chars = chunks_row[1] if chunks_row and chunks_row[1] else 0
+            preview_row = db.execute(
+                sa_text(
+                    "SELECT SUBSTR(parent_text, 1, 200) "
+                    "FROM parent_chunks WHERE doc_id=:doc_id ORDER BY parent_idx LIMIT 1"
+                ),
+                {"doc_id": doc_id},
+            ).fetchone()
+            preview = preview_row[0] if preview_row else ""
+            results.append({
+                "title": row[1] or title,
+                "doc_id": doc_id,
+                "total_chars": total_chars,
+                "sections_count": chunks_count,
+                "preview": preview,
+            })
+    except Exception as e:
+        logger.warning("Failed to assemble standard meta: %s", e)
+    finally:
+        db.close()
+
+    return results
+
+
+def _build_follow_up_questions(q: str) -> list[str]:
+    """返回常驻兜底追问列表。"""
+    return [
+        f"{q} 的标准术语是什么？",
+        f"{q} 涉及哪些标准或规范？",
+        f"请按知识库中的标准名称重新检索：{q}",
+    ]
+
+
+def _extract_standard_hints_from_sources(sources: list, q: str, limit: int = 6) -> list[dict]:
+    """从 sources 中提取规范文件，生成 standard_hints 列表。
+
+    从 source 的 doc/title 字段提取 GB/T、GB、STC、DB 等规范号，
+    生成 {title, doc_id, reason, recommended_query}，去重并保持 sources 顺序。
+    """
+    standard_hints = []
+    seen_std = set()
+    for src in sources:
+        title = src.get("doc") or src.get("title") or ""
+        doc_id = src.get("doc_id")
+        normalized_title = _normalize_doc_title_for_standard(title)
+        m = _STD_PATTERN.search(normalized_title)
+        doc_keyword = _normalize_standard_keyword(m.group(1)) if m else None
+        if not doc_keyword or doc_keyword in seen_std:
+            continue
+        seen_std.add(doc_keyword)
+        recommended = f"{doc_keyword} {q[:40]}"
+        reason = f"该{doc_keyword}规范包含相关内容，建议带上规范名称搜索，结果更准确"
+        standard_hints.append({
+            "title": title,
+            "doc_id": doc_id,
+            "reason": reason,
+            "recommended_query": recommended,
+        })
+        if len(standard_hints) >= limit:
+            break
+    return standard_hints
+
+
+def _merge_persistent_suggestions(base: dict | None, persistent: dict) -> dict:
+    """合并 persistent suggestions 和 base suggestions。
+
+    standard_hints 按 (doc_id, title, recommended_query) 去重；
+    确保 follow_up_questions 存在。
+    """
+    result = dict(persistent)
+    if base:
+        # 合并 standard_hints，按 key 去重
+        def _hint_key(hint: dict):
+            title = (hint.get("title") or "").strip()
+            return title or hint.get("doc_id")
+
+        existing_keys = set()
+        merged_hints = []
+        for hint in persistent.get("standard_hints", []):
+            key = _hint_key(hint)
+            if key not in existing_keys:
+                existing_keys.add(key)
+                merged_hints.append(hint)
+        for hint in base.get("standard_hints", []):
+            key = _hint_key(hint)
+            if key not in existing_keys:
+                existing_keys.add(key)
+                merged_hints.append(hint)
+        result["standard_hints"] = merged_hints
+
+        # 合并 base 中的其他字段
+        for key in ("refined_query", "term_hints", "related_docs"):
+            if key in base and base[key]:
+                result[key] = base[key]
+
+    # 确保 follow_up_questions 存在
+    if "follow_up_questions" not in result:
+        result["follow_up_questions"] = []
+    return result
+
+
+def _build_persistent_suggestions(q: str, sources: list | None = None) -> dict:
+    """构建常驻建议：包含 standard_hints 和 follow_up_questions。"""
+    if sources is None:
+        sources = []
+    return {
+        "standard_hints": _extract_standard_hints_from_sources(sources, q),
+        "follow_up_questions": _build_follow_up_questions(q),
+    }
+
+
+def _suggestions_for_answer(q, bank, bank_prompt, title_map, sources, answer) -> dict:
+    """构建 answer 的 suggestions，始终包含常驻兜底建议。
+
+    如果 answer 包含低置信标记，额外调用 _generate_query_suggestions 获取完整建议再合并。
+    否则只返回 persistent 建议。
+    """
+    persistent = _build_persistent_suggestions(q, sources)
+
+    no_answer_markers = ("未收录", "未找到", "未直接命中", "未明确", "没有相关信息", "未涉及")
+    if any(marker in answer for marker in no_answer_markers):
+        base = _generate_query_suggestions(q, bank, bank_prompt, title_map, sources)
+        return _merge_persistent_suggestions(base, persistent)
+
+    return persistent
+
+
+def _generate_query_suggestions(
+    q: str,
+    bank: str,
+    bank_prompt: str = "",
+    title_map: dict | None = None,
+    source_docs: list | None = None,
+) -> dict:
+    """
+    基于规则和数据库真实文档生成查询改写建议。
+    不调用 LLM，避免延迟和幻觉。
+    返回: {refined_query, term_hints, related_docs, standard_hints, follow_up_questions}
+    """
+    if title_map is None:
+        title_map = {}
+    if source_docs is None:
+        source_docs = []
+
+    # ── 规则匹配 ──
+    matched_rules = _keyword_suggestion_rules(q)
+
+    # ── 提取中文关键词片段 ──
+    import jieba as _jieba_mod2
+    keywords_in_q = [w for w in _jieba_mod2.cut(q) if len(w.strip()) > 1]
+
+    # ── 从 rules 收集 kb_term ──
+    kb_terms = [kb for _, kb, _ in matched_rules]
+    if not kb_terms and keywords_in_q:
+        kb_terms = keywords_in_q[:5]
+
+    # ── 构建 term_hints ──
+    term_hints = []
+    seen_hints = set()
+    for user_terms, kb_term, _ in matched_rules:
+        for ut in user_terms:
+            if ut in q and (ut, kb_term) not in seen_hints:
+                seen_hints.add((ut, kb_term))
+                term_hints.append({"user_term": ut, "kb_term": kb_term})
+
+    # ── 查询数据库获取相关文档 ──
+    related_docs = []
+    seen_titles = set()
+    if kb_terms:
+        db = SessionLocal()
+        try:
+            like_clauses = []
+            params = {}
+            for i, kw in enumerate(kb_terms[:5]):
+                like_clauses.append(f"title LIKE :kw{i}")
+                params[f"kw{i}"] = f"%{kw}%"
+            conditions = " OR ".join(like_clauses)
+            sql = f"""SELECT doc_id, title FROM documents
+                WHERE searchable=1 AND bank != 'skip' AND ({conditions})"""
+            if bank != "all":
+                sql += " AND bank=:bank"
+                params["bank"] = bank
+            sql += " LIMIT 5"
+            rows = db.execute(sa_text(sql), params).fetchall()
+            for row in rows:
+                title_val = row[1] or ""
+                if title_val not in seen_titles:
+                    seen_titles.add(title_val)
+                    related_docs.append({"doc_id": str(row[0]), "title": title_val})
+        except Exception:
+            pass
+        finally:
+            db.close()
+
+    # ── 低质量答案场景：优先把已召回 sources 中的真实文档也作为规范提醒候选 ──
+    for src in source_docs[:5]:
+        title_val = src.get("doc") or src.get("title") or ""
+        doc_id_val = src.get("doc_id")
+        if title_val and title_val not in seen_titles:
+            seen_titles.add(title_val)
+            related_docs.append({"doc_id": str(doc_id_val) if doc_id_val else None, "title": title_val})
+
+    # ── 首选改写问题 ──
+    # 只有当匹配了规则时才生成具体改写建议；无规则匹配时不构造无意义建议
+    refined_query = None
+    if matched_rules:
+        refined_query = matched_rules[0][2]
+
+    # ── 构建 standard_hints：从 related_docs 提取规范标识，推荐带规范名搜索 ──
+    standard_hints = []
+    seen_std = set()
+
+    def _doc_priority(doc: dict) -> tuple:
+        title = doc.get("title", "")
+        normalized = _normalize_doc_title_for_standard(title)
+        has_standard_no = 0 if _STD_PATTERN.search(normalized) else 1
+        # 标准号文档优先；其次保留原顺序，避免编造相关性
+        return (has_standard_no,)
+
+    for doc in sorted(related_docs[:8], key=_doc_priority)[:5]:
+        title = doc.get("title", "")
+        normalized_title = _normalize_doc_title_for_standard(title)
+        # 尝试提取规范标识符（GB/T、STC、DB 等开头的标准号）
+        m = _STD_PATTERN.search(normalized_title)
+        doc_keyword = _normalize_standard_keyword(m.group(1)) if m else title.split("《")[0].split(" ")[0].strip()[:30] if title else ""
+        if not doc_keyword or doc_keyword in seen_std:
+            continue
+        seen_std.add(doc_keyword)
+        # 构建推荐搜索语句：规范标识符 + 改写问题（或原始问题关键词）
+        if refined_query:
+            recommended = f"{doc_keyword} {refined_query}"
+        else:
+            kb_first = kb_terms[0] if kb_terms else q[:20]
+            recommended = f"{doc_keyword} {kb_first}"
+        reason = f"该{doc_keyword}规范包含相关内容，建议带上规范名称搜索，结果更准确"
+        standard_hints.append({
+            "title": title,
+            "doc_id": doc.get("doc_id"),
+            "reason": reason,
+            "recommended_query": recommended,
+        })
+    # 如果有 standard_hints，把首选 refined_query 升级为带规范名的搜索
+    if standard_hints and refined_query:
+        refined_query = standard_hints[0]["recommended_query"]
+
+    # ── 兜底追问 ──
+    follow_up_questions = _build_follow_up_questions(q)
+
+    return {
+        "refined_query": refined_query,
+        "term_hints": term_hints,
+        "related_docs": related_docs,
+        "standard_hints": standard_hints,
+        "follow_up_questions": follow_up_questions,
+    }
+
+
 async def _generate_answer(
     q: str,
     bank: str,
@@ -423,7 +775,13 @@ async def _generate_answer(
                 doc_facts["tier_rate"] = [(_snippet, _dtitle or "费率表", _snippet[:800], None)]
                 logger.info("[T7] Early-return inject: %s (%s)", _dtitle, _tier_extra[0])
         if not doc_facts:
-            return {"answer": "知识库中未找到相关信息。", "sources": [], "validation_result": None}
+            suggestions = _generate_query_suggestions(q, bank, bank_prompt, title_map)
+            return {
+                "answer": "知识库中未找到直接匹配的内容。可以根据下面的提示换一种问法继续检索。",
+                "sources": [],
+                "validation_result": None,
+                "suggestions": suggestions,
+            }
 
     # ── 批量查询 parent 上下文 ──
     parent_text_cache = {}
@@ -604,11 +962,15 @@ async def _generate_answer(
 
     # ── 去AI味后处理 + 逻辑校验 ──
     validation_result = None
+    suggestions = None
     try:
         original_answer = answer
         answer = deai_postprocess(answer)
         if answer != original_answer:
             logger.info("[DEAI] 去AI味后处理已应用")
+
+        # 始终构建 suggestions，包含常驻兜底建议；低置信答案额外合并完整建议
+        suggestions = _suggestions_for_answer(q, bank, bank_prompt, title_map, sources, answer)
 
         if sources and context:
             validation_result = logic_validate(answer, context, sources)
@@ -617,12 +979,14 @@ async def _generate_answer(
                     logger.info("[LOGIC] %s: %s", issue["severity"].upper(), issue["detail"])
     except Exception as e:
         validation_result = None
+        suggestions = _build_persistent_suggestions(q, sources)
         logger.warning("quality-gate 后处理异常: %s", e)
 
     return {
         "answer": answer,
         "sources": sources,
         "validation_result": validation_result,
+        "suggestions": suggestions,
     }
 
 
@@ -661,6 +1025,7 @@ async def query(
                     "answer": cached["answer"],
                     "sources": cached["sources"],
                     "cache_hit": "exact",
+                    "suggestions": _build_persistent_suggestions(q, cached["sources"]),
                 }
             cached = await cache_get_semantic(q, bank)
             if cached:
@@ -670,6 +1035,7 @@ async def query(
                     "sources": cached["sources"],
                     "cache_hit": "semantic",
                     "similarity": cached.get("similarity"),
+                    "suggestions": _build_persistent_suggestions(q, cached["sources"]),
                 }
         except Exception as e:
             logger.info("[CACHE] Lookup error: %s", e)
@@ -739,9 +1105,11 @@ async def query(
     answer = gen["answer"]
     sources = gen["sources"]
     validation_result = gen["validation_result"]
+    suggestions = gen.get("suggestions")
 
     # ── 缓存写入 ──
-    if not nocache:
+    # 有文档事实的查询可缓存；空结果不缓存；缓存命中时动态重建 suggestions
+    if not nocache and ctx["doc_facts"]:
         try:
             doc_ids = set(ctx["doc_facts"].keys()) if ctx["doc_facts"] else set()
             await cache_set(q, bank, answer, sources, doc_ids)
@@ -749,10 +1117,62 @@ async def query(
         except Exception as e:
             logger.info("[CACHE] Write error: %s", e)
 
+    # ── 规范文件元数据 ──
+    standard_contents = _assemble_standard_contents_meta(sources, bank=bank)
+
     result = {"answer": answer, "sources": sources}
     if validation_result and validation_result.get("issues"):
         result["quality_check"] = validation_result
+    if suggestions:
+        result["suggestions"] = suggestions
+    if standard_contents:
+        result["standard_contents"] = standard_contents
     return result
+
+
+@router.get("/standard-full/{doc_id}")
+async def get_standard_full_text(doc_id: str, bank: str = "all"):
+    """返回规范文件的完整正文（从 parent_chunks 组装）。"""
+    db = SessionLocal()
+    try:
+        params = {"doc_id": doc_id}
+        doc_sql = "SELECT doc_id, title FROM documents WHERE doc_id=:doc_id AND searchable=1"
+        if bank != "all":
+            doc_sql += " AND bank=:bank"
+            params["bank"] = bank
+        title_row = db.execute(sa_text(doc_sql), params).fetchone()
+        if not title_row:
+            raise HTTPException(404, f"文档 {doc_id} 未找到")
+        title = title_row[1] or "未知文档"
+
+        chunks = db.execute(
+            sa_text(
+                "SELECT parent_idx, parent_text FROM parent_chunks "
+                "WHERE doc_id=:doc_id ORDER BY parent_idx"
+            ),
+            {"doc_id": doc_id},
+        ).fetchall()
+
+        if not chunks:
+            raise HTTPException(404, f"文档 {doc_id} 未找到或无内容")
+
+        full_text = "\n\n".join(text for _, text in chunks if text)
+        total_chars = len(full_text)
+
+        return {
+            "doc_id": doc_id,
+            "title": title,
+            "full_text": full_text,
+            "total_chars": total_chars,
+            "sections_count": len(chunks),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to fetch standard full text for %s: %s", doc_id, e)
+        raise HTTPException(500, f"获取规范正文失败: {e}")
+    finally:
+        db.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════

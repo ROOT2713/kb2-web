@@ -419,27 +419,47 @@ def extract_table_chunks(text: str) -> list:
     """检测并提取Markdown表格和HTML表格为独立chunks。
 
     返回 [{"child": str, "parent": str, "child_index": int, "parent_index": int, "section_hint": str}]
+
+    parent 字段包含表格前后的文字上下文，避免表格孤立。
     """
     results = []
+    lines = text.split("\n")
+
+    def _get_surrounding_context(line_idx: int) -> str:
+        """获取表格前后的文字上下文（各最近2行非表格文字）"""
+        before = []
+        for i in range(max(0, line_idx - 5), line_idx):
+            if lines[i].strip() and not re.match(r'^\s*\|', lines[i]):
+                before.append(lines[i].strip())
+        after = []
+        for i in range(line_idx + 1, min(len(lines), line_idx + 6)):
+            if lines[i].strip() and not re.match(r'^\s*\|', lines[i]):
+                after.append(lines[i].strip())
+        ctx_parts = []
+        if before:
+            ctx_parts.append("… " + " ".join(before[-2:]))
+        if after:
+            ctx_parts.append(" ".join(after[:2]) + " …")
+        return " | ".join(ctx_parts) if ctx_parts else ""
 
     # ── 1. HTML表格检测: <table>...</table> ──
     re_html_table = re.compile(r'<table>.*?</table>', re.DOTALL)
     for m in re_html_table.finditer(text):
         table_text = m.group(0)
-        # 提取表头作为hint
         re_first_row = re.compile(r'<td[^>]*>(.*?)</td>')
         first_cells = re_first_row.findall(table_text[:500])
         hint = " | ".join(c[:20] for c in first_cells[:3]) if first_cells else table_text[:80]
+        table_pos = text.find(table_text[:50])
+        surrounding = _get_surrounding_context(text[:table_pos].count("\n")) if table_pos >= 0 else ""
         results.append({
             "child": table_text,
-            "parent": table_text,
+            "parent": f"{surrounding}\n\n{table_text}" if surrounding else table_text,
             "child_index": 0,
             "parent_index": 0,
             "section_hint": f"[HTML表格] {hint}"
         })
 
     # ── 2. Markdown表格检测: |...|格式 ──
-    lines = text.split("\n")
     table_start = None
     table_lines = []
 
@@ -461,11 +481,12 @@ def extract_table_chunks(text: str) -> list:
             if table_start is not None and len(table_lines) >= 3:
                 table_text = "\n".join(table_lines)
                 if any(re_table_sep.match(l) for l in table_lines):
+                    surrounding = _get_surrounding_context(table_start)
                     results.append({
                         "child": table_text,
-                        "parent": table_text,
+                        "parent": f"{surrounding}\n\n{table_text}" if surrounding else table_text,
                         "child_index": 0,
-                        "parent_index": 0,
+                        "parent_index": table_start,
                         "section_hint": f"[表格] {table_lines[0][:80]}"
                     })
             table_start = None
@@ -475,11 +496,12 @@ def extract_table_chunks(text: str) -> list:
     if table_start is not None and len(table_lines) >= 3:
         if any(re_table_sep.match(l) for l in table_lines):
             table_text = "\n".join(table_lines)
+            surrounding = _get_surrounding_context(table_start)
             results.append({
                 "child": table_text,
-                "parent": table_text,
+                "parent": f"{surrounding}\n\n{table_text}" if surrounding else table_text,
                 "child_index": 0,
-                "parent_index": 0,
+                "parent_index": table_start,
                 "section_hint": f"[表格] {table_lines[0][:80]}"
             })
 
