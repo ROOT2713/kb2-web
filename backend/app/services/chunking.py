@@ -599,8 +599,16 @@ def excel_row_chunk(text: str, doc_title: str = "") -> list:
     return chunks
 
 
-def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 2048, overlap: int = 80) -> list:
+def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 2048, overlap: int = 80, doc_title: str = "") -> list:
     """将文本切分为父子分块。
+
+    Args:
+        text: 待切分的文本
+        child_size: 子块大小（用于向量匹配）
+        parent_size: 父块大小（用于 LLM 上下文）
+        overlap: 子块滑动窗口重叠
+        doc_title: 文档标题，作为 section_hint（CC 评审决策 4-A）。
+                   未提供时回退到 parent_text[:80]（保持兼容）。
 
     返回 list of dict:
     [
@@ -609,7 +617,7 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 2048
             "parent": "父块文本（用于LLM上下文）",
             "child_index": 0,
             "parent_index": 0,
-            "section_hint": "父块前80字符（章节提示）"
+            "section_hint": "doc_title 若提供，否则父块前80字符"
         },
         ...
     ]
@@ -636,7 +644,8 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 2048
     results = []
     child_index = 0
     for p_idx, parent_text in enumerate(parents):
-        section_hint = parent_text[:80]
+        # CC 评审决策 4-A: doc_title 若提供则用文档标题，否则回退到父段落前 80 字符
+        section_hint = doc_title.strip() if doc_title.strip() else parent_text[:80]
         # 按 child_size 滑动窗口切子块（子块可以跨段落边界）
         pos = 0
         while pos < len(parent_text):
@@ -707,6 +716,7 @@ class HeadingChunking(ChunkingStrategy):
         from app.services.quality import profile_document  # avoid circular import
         min_child_size = kwargs.get("min_child_size", 200)
         max_parent_size = kwargs.get("max_parent_size", 3000)
+        doc_title = kwargs.get("doc_title", filename)
 
         profile = profile_document(text)
         dict_results = heading_chunk(text, profile, min_child_size, max_parent_size)
@@ -716,7 +726,7 @@ class HeadingChunking(ChunkingStrategy):
             child_size = kwargs.get("child_size", settings.default_chunk_size)
             parent_size = kwargs.get("parent_size", child_size * 4)
             overlap = kwargs.get("overlap", settings.chunk_overlap)
-            dict_results = parent_child_chunk(text, child_size, parent_size, overlap)
+            dict_results = parent_child_chunk(text, child_size, parent_size, overlap, doc_title=doc_title)
 
         # Extract table chunks
         table_dicts = extract_table_chunks(text)
@@ -735,8 +745,9 @@ class ParentChildChunking(ChunkingStrategy):
         child_size = kwargs.get("child_size", settings.default_chunk_size)
         parent_size = kwargs.get("parent_size", child_size * 4)
         overlap = kwargs.get("overlap", settings.chunk_overlap)
+        doc_title = kwargs.get("doc_title", filename)
 
-        dict_results = parent_child_chunk(text, child_size, parent_size, overlap)
+        dict_results = parent_child_chunk(text, child_size, parent_size, overlap, doc_title=doc_title)
 
         # Extract table chunks
         table_dicts = extract_table_chunks(text)
@@ -760,7 +771,7 @@ class ExcelRowChunking(ChunkingStrategy):
             child_size = kwargs.get("child_size", settings.default_chunk_size)
             parent_size = kwargs.get("parent_size", child_size * 4)
             overlap = kwargs.get("overlap", settings.chunk_overlap)
-            dict_results = parent_child_chunk(text, child_size, parent_size, overlap)
+            dict_results = parent_child_chunk(text, child_size, parent_size, overlap, doc_title=doc_title)
 
         return _dicts_to_chunks(dict_results)
 
