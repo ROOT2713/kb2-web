@@ -1015,6 +1015,7 @@ async def reparse_document(doc_id: str, db: Session = Depends(get_db)):
             child_size=settings.default_chunk_size,
             parent_size=settings.default_chunk_size * 4,
             overlap=settings.chunk_overlap,
+            doc_title=doc_title,
         )
 
     new_doc_id = str(uuid.uuid4())

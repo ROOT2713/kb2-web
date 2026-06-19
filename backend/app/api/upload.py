@@ -209,6 +209,7 @@ async def upload_document(
                 child_size=settings.default_chunk_size,
                 parent_size=settings.default_chunk_size * 4,
                 overlap=settings.chunk_overlap,
+                doc_title=doc_title,
             )
             logger.info("Paragraph-based chunking: %d chunks", len(pc_chunks))
 
