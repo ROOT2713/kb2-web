@@ -236,7 +236,15 @@ async def upload_document(
         child_content = pc["child"].strip()
         if not child_content:
             continue
-        enhanced_content = f"[{pc['section_hint']}] {child_content}" if pc["section_hint"] else child_content
+        # CC 评审决策 4-A: enhanced_content 格式
+        # 优先 [文档:doc_title][章节:section_hint], 若 hint==title 则去重为 [文档:title]
+        section_hint = (pc.get("section_hint") or "").strip()
+        if section_hint and section_hint != doc_title:
+            enhanced_content = f"[文档:{doc_title}][章节:{section_hint}] {child_content}"
+        elif doc_title:
+            enhanced_content = f"[文档:{doc_title}] {child_content}"
+        else:
+            enhanced_content = child_content
 
         tags = [
             f"doc:{file.filename}",
