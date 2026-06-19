@@ -55,6 +55,25 @@ def heading_chunk(text: str, profile: dict, min_child_size: int = 200, max_paren
         return []
 
 
+def _truncate_at_sentence_boundary(text: str, max_len: int = 800) -> str:
+    """在 max_len ±20% 范围内找最近的句子结束符（。！？；\\n.!?）截断。
+
+    若搜索范围内无句末标点，回退到硬截断 text[:max_len]。
+    用于 _heading_chunk_gb 的 child_text/parent_text 截断（避免切在句子中间）。
+    """
+    if len(text) <= max_len:
+        return text
+    # 搜索范围 [max_len*0.8, max_len*1.2]，但不超过文本长度
+    search_start = int(max_len * 0.8)
+    search_end = min(int(max_len * 1.2), len(text))
+    for boundary_char in ['\n', '。', '！', '？', '；', '.', '!', '?']:
+        idx = text.rfind(boundary_char, search_start, search_end)
+        if idx > 0:
+            return text[:idx + 1]
+    # 找不到句边界，硬截断
+    return text[:max_len]
+
+
 def _parse_section_number(title: str):
     """Extract the numeric part from a heading title for level comparison.
 
@@ -285,7 +304,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
                     parent_text = parent_text + "\n\n" + next_parent_text[:max_parent_size]
 
             results.append({
-                "child": parent_text[:800],
+                "child": _truncate_at_sentence_boundary(parent_text, 800),
                 "parent": parent_text[:max_parent_size],
                 "child_index": child_index,
                 "parent_index": parent_index,
@@ -310,7 +329,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
             section_hint = s["title"][:80] if s["title"] else parent_text[:80]
 
             results.append({
-                "child": parent_text[:800],
+                "child": _truncate_at_sentence_boundary(parent_text, 800),
                 "parent": parent_text[:max_parent_size],
                 "child_index": child_index,
                 "parent_index": parent_index,
@@ -339,7 +358,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
                         pass
 
                 results.append({
-                    "child": child_text[:800],
+                    "child": _truncate_at_sentence_boundary(child_text, 800),
                     "parent": all_text[:max_parent_size],
                     "child_index": child_index,
                     "parent_index": parent_index,
