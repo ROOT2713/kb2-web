@@ -1010,7 +1010,12 @@ async def reparse_document(doc_id: str, db: Session = Depends(get_db)):
 
     if not pc_chunks:
         doc_type = "generic"
-        pc_chunks = parent_child_chunk(text, child_size=384, parent_size=2048, overlap=80)
+        pc_chunks = parent_child_chunk(
+            text,
+            child_size=settings.default_chunk_size,
+            parent_size=settings.default_chunk_size * 4,
+            overlap=settings.chunk_overlap,
+        )
 
     new_doc_id = str(uuid.uuid4())
 

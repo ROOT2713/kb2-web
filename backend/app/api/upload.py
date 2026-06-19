@@ -209,7 +209,12 @@ async def upload_document(
             logger.info("Excel row-based chunking: %d chunks", len(pc_chunks))
         else:
             doc_type = "generic"
-            pc_chunks = parent_child_chunk(text, child_size=384, parent_size=2048, overlap=80)
+            pc_chunks = parent_child_chunk(
+                text,
+                child_size=settings.default_chunk_size,
+                parent_size=settings.default_chunk_size * 4,
+                overlap=settings.chunk_overlap,
+            )
             logger.info("Paragraph-based chunking: %d chunks", len(pc_chunks))
 
     # 提取表格为独立chunks
