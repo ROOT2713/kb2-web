@@ -777,7 +777,14 @@ class ExcelRowChunking(ChunkingStrategy):
 
 
 def select_strategy(filename: str, text: str) -> ChunkingStrategy:
-    """Auto-select the best chunking strategy based on document type."""
+    """Auto-select the best chunking strategy based on document type.
+
+    NOTE (2026-06-19): 仅基于 filename 后缀分流，不调用 profile_document。
+    实际 upload.py / documents.py pipeline 不使用此函数 —— 它们直接调用
+    `_heading_chunk_gb` / `parent_child_chunk` / `excel_row_chunk`，dispatch
+    由 profile_document() 完成。本函数仅供未来批处理工具或外部 caller 使用，
+    保持轻量化（只看后缀），与主 pipeline 故意保持解耦。
+    """
     if filename.endswith((".xlsx", ".xls")):
         return ExcelRowChunking()
     # Default: heading-based with parent-child fallback
