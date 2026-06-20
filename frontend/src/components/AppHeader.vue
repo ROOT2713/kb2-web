@@ -11,6 +11,7 @@
       <RouterLink to="/banks" class="nav-link">知识库</RouterLink>
       <RouterLink to="/synonyms" class="nav-link">同义词</RouterLink>
       <RouterLink to="/admin" class="nav-link">管理</RouterLink>
+      <RouterLink to="/knowledge/data-methodology" class="nav-link">方法库</RouterLink>
       <RouterLink to="/wiki" class="nav-link">Wiki</RouterLink>
     </nav>
   </header>
