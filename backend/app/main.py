@@ -35,6 +35,7 @@ app = FastAPI(
     version="2.0.0",
     description="知识库 Web 服务 — Hindsight + LLM 驱动的智能文档检索与问答",
     lifespan=lifespan,
+    redirect_slashes=False,  # 禁止尾斜杠重定向，避免 catch-all 拦截 API POST
 )
 
 # ── CORS ──
@@ -65,7 +66,10 @@ async def v1_compat_fetch_standard_post(user: str = Depends(get_current_user)):
 
 @app.get("/api/web-search", include_in_schema=False)
 async def v1_compat_web_search(user: str = Depends(get_current_user)):
-    return RedirectResponse(url="/api/query/web-search", status_code=307)
+    raise HTTPException(
+        status_code=405,
+        detail="/api/web-search requires POST form fields: q, bank, context. Use POST /api/query/web-search or POST /api/web-search.",
+    )
 
 @app.post("/api/web-search", include_in_schema=False)
 async def v1_compat_web_search_post(user: str = Depends(get_current_user)):
@@ -109,6 +113,10 @@ if FRONTEND_DIR.is_dir():
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         """Serve frontend SPA — return index.html for all non-API routes."""
+        # ── Skip API routes — let them fall through to proper handlers ──
+        if full_path.startswith("api/"):
+            from fastapi import HTTPException as _HE
+            raise _HE(status_code=404)
         # ── Path traversal protection (C1 fix) ──
         if ".." in full_path.split("/"):
             raise HTTPException(status_code=404)

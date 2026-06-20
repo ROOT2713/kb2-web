@@ -8,7 +8,10 @@ import hashlib
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
+
+from typing import List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -35,6 +38,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
+MAX_BATCH_FILES = 20
+MAX_BATCH_TOTAL_SIZE = 500 * 1024 * 1024  # 500 MB
 
 
 def _get_doc_repo(db: Session) -> DocumentRepository:
@@ -204,7 +209,13 @@ async def upload_document(
             logger.info("Excel row-based chunking: %d chunks", len(pc_chunks))
         else:
             doc_type = "generic"
-            pc_chunks = parent_child_chunk(text, child_size=384, parent_size=2048, overlap=80)
+            pc_chunks = parent_child_chunk(
+                text,
+                child_size=settings.default_chunk_size,
+                parent_size=settings.default_chunk_size * 4,
+                overlap=settings.chunk_overlap,
+                doc_title=doc_title,
+            )
             logger.info("Paragraph-based chunking: %d chunks", len(pc_chunks))
 
     # 提取表格为独立chunks
@@ -230,7 +241,15 @@ async def upload_document(
         child_content = pc["child"].strip()
         if not child_content:
             continue
-        enhanced_content = f"[{pc['section_hint']}] {child_content}" if pc["section_hint"] else child_content
+        # CC 评审决策 4-A: enhanced_content 格式
+        # 优先 [文档:doc_title][章节:section_hint], 若 hint==title 则去重为 [文档:title]
+        section_hint = (pc.get("section_hint") or "").strip()
+        if section_hint and section_hint != doc_title:
+            enhanced_content = f"[文档:{doc_title}][章节:{section_hint}] {child_content}"
+        elif doc_title:
+            enhanced_content = f"[文档:{doc_title}] {child_content}"
+        else:
+            enhanced_content = child_content
 
         tags = [
             f"doc:{file.filename}",
@@ -372,6 +391,26 @@ async def upload_document(
     except Exception as e:
         logger.error("Upload integrity check failed for %s: %s", doc_id, e)
 
+    # ── 更新元数据到数据库 ──
+    db = SessionLocal()
+    try:
+        doc_repo = _get_doc_repo(db)
+        doc = doc_repo.get(doc_id)
+        if doc:
+            doc.original_text_length = len(text)
+            if integrity:
+                doc.coverage_pct = integrity.get("coverage_pct", 0.0)
+                if integrity.get("status") == "ok":
+                    doc.searchable = 1
+            doc.verified_at = datetime.now(timezone.utc)
+            db.commit()
+            logger.info("Updated metadata for %s: searchable=%s, coverage=%.1f%%", doc_id[:8], doc.searchable, doc.coverage_pct)
+    except Exception as e:
+        db.rollback()
+        logger.warning("Failed to update metadata for %s: %s", doc_id[:8], e)
+    finally:
+        db.close()
+
     # ── 异步验证：等 consolidation 后用标题做 recall，确认文档可被搜索 ──
     if integrity and integrity.get("status") in ("ok", "pending"):
         asyncio.create_task(_verify_searchable(doc_id, doc_title, len(text), hs_bank))
@@ -418,6 +457,104 @@ async def upload_document(
         "integrity": integrity,
         "doc_type": doc_type,
         "kg_indexed": True,
+    }
+
+
+@router.post("/batch")
+async def upload_batch(
+    files: Optional[List[UploadFile]] = File(default=None),
+    title_prefix: str = Form(""),
+    category: str = Form(""),
+    bank: str = Form("general"),
+    confirm_quality: str = Form(""),
+    source: str = Form("manual"),
+):
+    """Batch upload: receive multiple files and process them serially.
+
+    Returns a summary with per-file results.  Any single-file failure does
+    not abort the remaining files.
+    """
+    if not files:
+        raise HTTPException(400, "至少需要上传一个文件")
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(400, f"单次最多上传 {MAX_BATCH_FILES} 个文件")
+
+    total_size = 0
+    for f in files:
+        try:
+            size = getattr(f, "size", None)
+            if size is None:
+                current = f.file.tell()
+                f.file.seek(0, os.SEEK_END)
+                size = f.file.tell()
+                f.file.seek(current)
+            total_size += int(size or 0)
+        except Exception:
+            logger.debug("Unable to determine size for batch file %s", f.filename)
+    if total_size > MAX_BATCH_TOTAL_SIZE:
+        raise HTTPException(
+            400,
+            f"批量文件总大小过大（{total_size // 1024 // 1024}MB），上限 {MAX_BATCH_TOTAL_SIZE // 1024 // 1024}MB",
+        )
+
+    results: list = []
+    success_count = 0
+    failed_count = 0
+
+    for f in files:
+        try:
+            f.file.seek(0)
+            result = await upload_document(
+                file=f,
+                title=title_prefix,
+                category=category,
+                bank=bank,
+                confirm_quality=confirm_quality,
+                source=source,
+            )
+            if result.get("ok"):
+                success_count += 1
+                results.append({
+                    "filename": f.filename,
+                    "ok": True,
+                    "doc_id": result.get("doc_id"),
+                    "title": result.get("title"),
+                    "chunks": result.get("chunks"),
+                    "quality": result.get("quality"),
+                })
+            else:
+                # quality gate returned ok=False (not an exception)
+                failed_count += 1
+                results.append({
+                    "filename": f.filename,
+                    "ok": False,
+                    "detail": result.get("detail", "质量评估未通过"),
+                    "quality": result.get("quality"),
+                })
+        except HTTPException as e:
+            failed_count += 1
+            results.append({
+                "filename": f.filename,
+                "ok": False,
+                "detail": e.detail,
+                "status_code": e.status_code,
+            })
+        except Exception as e:
+            logger.exception("Batch upload failed for %s: %s", f.filename, e)
+            failed_count += 1
+            results.append({
+                "filename": f.filename,
+                "ok": False,
+                "detail": "服务器内部错误",
+                "status_code": 500,
+            })
+
+    return {
+        "ok": success_count > 0,
+        "total": len(files),
+        "success": success_count,
+        "failed": failed_count,
+        "results": results,
     }
 
 

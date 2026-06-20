@@ -263,3 +263,54 @@ class TestAPIRouter:
         assert "paths" in schema
         # Should have our endpoints
         assert "/api/banks" in schema["paths"] or "/api/banks/" in schema["paths"]
+
+
+# ═══════════════════════════════════════════════════════
+# V1 compatibility aliases
+# ═══════════════════════════════════════════════════════
+
+class TestV1CompatibilityAliases:
+    @pytest.mark.parametrize(
+        "method,path",
+        [
+            ("get", "/api/stats"),
+            ("get", "/api/wiki"),
+            ("get", "/api/categories"),
+            ("get", "/api/rag-eval"),
+            ("get", "/api/audit"),
+            ("get", "/api/fetch-standard"),
+            ("post", "/api/fetch-standard"),
+            ("get", "/api/web-search"),
+            ("post", "/api/web-search"),
+            ("post", "/api/audit/refetch"),
+        ],
+    )
+    def test_aliases_are_protected_without_token(self, client, method, path):
+        from app.main import app
+        from app.middleware.jwt_auth import get_current_user
+
+        app.dependency_overrides.pop(get_current_user, None)
+        response = getattr(client, method)(path, follow_redirects=False)
+        assert response.status_code == 401
+
+    @pytest.mark.parametrize(
+        "method,path,location",
+        [
+            ("get", "/api/stats", "/api/admin/stats"),
+            ("get", "/api/wiki", "/api/banks/wiki"),
+            ("get", "/api/categories", "/api/banks/categories"),
+            ("get", "/api/fetch-standard", "/api/documents/fetch-standard"),
+            ("post", "/api/fetch-standard", "/api/documents/fetch-standard"),
+            ("post", "/api/web-search", "/api/query/web-search"),
+            ("post", "/api/audit/refetch", "/api/documents/refetch"),
+        ],
+    )
+    def test_aliases_redirect_to_v2_routes(self, client, method, path, location):
+        response = getattr(client, method)(path, follow_redirects=False)
+        assert response.status_code == 307
+        assert response.headers["location"] == location
+
+    def test_get_web_search_alias_explains_post_requirement(self, client):
+        response = client.get("/api/web-search", follow_redirects=False)
+        assert response.status_code == 405
+        assert "requires POST" in response.json()["detail"]

@@ -55,6 +55,25 @@ def heading_chunk(text: str, profile: dict, min_child_size: int = 200, max_paren
         return []
 
 
+def _truncate_at_sentence_boundary(text: str, max_len: int = 800) -> str:
+    """在 max_len ±20% 范围内找最近的句子结束符（。！？；\\n.!?）截断。
+
+    若搜索范围内无句末标点，回退到硬截断 text[:max_len]。
+    用于 _heading_chunk_gb 的 child_text/parent_text 截断（避免切在句子中间）。
+    """
+    if len(text) <= max_len:
+        return text
+    # 搜索范围 [max_len*0.8, max_len*1.2]，但不超过文本长度
+    search_start = int(max_len * 0.8)
+    search_end = min(int(max_len * 1.2), len(text))
+    for boundary_char in ['\n', '。', '！', '？', '；', '.', '!', '?']:
+        idx = text.rfind(boundary_char, search_start, search_end)
+        if idx > 0:
+            return text[:idx + 1]
+    # 找不到句边界，硬截断
+    return text[:max_len]
+
+
 def _parse_section_number(title: str):
     """Extract the numeric part from a heading title for level comparison.
 
@@ -285,7 +304,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
                     parent_text = parent_text + "\n\n" + next_parent_text[:max_parent_size]
 
             results.append({
-                "child": parent_text[:800],
+                "child": _truncate_at_sentence_boundary(parent_text, 800),
                 "parent": parent_text[:max_parent_size],
                 "child_index": child_index,
                 "parent_index": parent_index,
@@ -310,7 +329,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
             section_hint = s["title"][:80] if s["title"] else parent_text[:80]
 
             results.append({
-                "child": parent_text[:800],
+                "child": _truncate_at_sentence_boundary(parent_text, 800),
                 "parent": parent_text[:max_parent_size],
                 "child_index": child_index,
                 "parent_index": parent_index,
@@ -339,7 +358,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
                         pass
 
                 results.append({
-                    "child": child_text[:800],
+                    "child": _truncate_at_sentence_boundary(child_text, 800),
                     "parent": all_text[:max_parent_size],
                     "child_index": child_index,
                     "parent_index": parent_index,
@@ -419,27 +438,47 @@ def extract_table_chunks(text: str) -> list:
     """检测并提取Markdown表格和HTML表格为独立chunks。
 
     返回 [{"child": str, "parent": str, "child_index": int, "parent_index": int, "section_hint": str}]
+
+    parent 字段包含表格前后的文字上下文，避免表格孤立。
     """
     results = []
+    lines = text.split("\n")
+
+    def _get_surrounding_context(line_idx: int) -> str:
+        """获取表格前后的文字上下文（各最近2行非表格文字）"""
+        before = []
+        for i in range(max(0, line_idx - 5), line_idx):
+            if lines[i].strip() and not re.match(r'^\s*\|', lines[i]):
+                before.append(lines[i].strip())
+        after = []
+        for i in range(line_idx + 1, min(len(lines), line_idx + 6)):
+            if lines[i].strip() and not re.match(r'^\s*\|', lines[i]):
+                after.append(lines[i].strip())
+        ctx_parts = []
+        if before:
+            ctx_parts.append("… " + " ".join(before[-2:]))
+        if after:
+            ctx_parts.append(" ".join(after[:2]) + " …")
+        return " | ".join(ctx_parts) if ctx_parts else ""
 
     # ── 1. HTML表格检测: <table>...</table> ──
     re_html_table = re.compile(r'<table>.*?</table>', re.DOTALL)
     for m in re_html_table.finditer(text):
         table_text = m.group(0)
-        # 提取表头作为hint
         re_first_row = re.compile(r'<td[^>]*>(.*?)</td>')
         first_cells = re_first_row.findall(table_text[:500])
         hint = " | ".join(c[:20] for c in first_cells[:3]) if first_cells else table_text[:80]
+        table_pos = text.find(table_text[:50])
+        surrounding = _get_surrounding_context(text[:table_pos].count("\n")) if table_pos >= 0 else ""
         results.append({
             "child": table_text,
-            "parent": table_text,
+            "parent": f"{surrounding}\n\n{table_text}" if surrounding else table_text,
             "child_index": 0,
             "parent_index": 0,
             "section_hint": f"[HTML表格] {hint}"
         })
 
     # ── 2. Markdown表格检测: |...|格式 ──
-    lines = text.split("\n")
     table_start = None
     table_lines = []
 
@@ -461,11 +500,12 @@ def extract_table_chunks(text: str) -> list:
             if table_start is not None and len(table_lines) >= 3:
                 table_text = "\n".join(table_lines)
                 if any(re_table_sep.match(l) for l in table_lines):
+                    surrounding = _get_surrounding_context(table_start)
                     results.append({
                         "child": table_text,
-                        "parent": table_text,
+                        "parent": f"{surrounding}\n\n{table_text}" if surrounding else table_text,
                         "child_index": 0,
-                        "parent_index": 0,
+                        "parent_index": table_start,
                         "section_hint": f"[表格] {table_lines[0][:80]}"
                     })
             table_start = None
@@ -475,11 +515,12 @@ def extract_table_chunks(text: str) -> list:
     if table_start is not None and len(table_lines) >= 3:
         if any(re_table_sep.match(l) for l in table_lines):
             table_text = "\n".join(table_lines)
+            surrounding = _get_surrounding_context(table_start)
             results.append({
                 "child": table_text,
-                "parent": table_text,
+                "parent": f"{surrounding}\n\n{table_text}" if surrounding else table_text,
                 "child_index": 0,
-                "parent_index": 0,
+                "parent_index": table_start,
                 "section_hint": f"[表格] {table_lines[0][:80]}"
             })
 
@@ -558,8 +599,16 @@ def excel_row_chunk(text: str, doc_title: str = "") -> list:
     return chunks
 
 
-def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 2048, overlap: int = 80) -> list:
+def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 2048, overlap: int = 80, doc_title: str = "") -> list:
     """将文本切分为父子分块。
+
+    Args:
+        text: 待切分的文本
+        child_size: 子块大小（用于向量匹配）
+        parent_size: 父块大小（用于 LLM 上下文）
+        overlap: 子块滑动窗口重叠
+        doc_title: 文档标题，作为 section_hint（CC 评审决策 4-A）。
+                   未提供时回退到 parent_text[:80]（保持兼容）。
 
     返回 list of dict:
     [
@@ -568,7 +617,7 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 2048
             "parent": "父块文本（用于LLM上下文）",
             "child_index": 0,
             "parent_index": 0,
-            "section_hint": "父块前80字符（章节提示）"
+            "section_hint": "doc_title 若提供，否则父块前80字符"
         },
         ...
     ]
@@ -595,7 +644,8 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 2048
     results = []
     child_index = 0
     for p_idx, parent_text in enumerate(parents):
-        section_hint = parent_text[:80]
+        # CC 评审决策 4-A: doc_title 若提供则用文档标题，否则回退到父段落前 80 字符
+        section_hint = doc_title.strip() if doc_title.strip() else parent_text[:80]
         # 按 child_size 滑动窗口切子块（子块可以跨段落边界）
         pos = 0
         while pos < len(parent_text):
@@ -666,6 +716,7 @@ class HeadingChunking(ChunkingStrategy):
         from app.services.quality import profile_document  # avoid circular import
         min_child_size = kwargs.get("min_child_size", 200)
         max_parent_size = kwargs.get("max_parent_size", 3000)
+        doc_title = kwargs.get("doc_title", filename)
 
         profile = profile_document(text)
         dict_results = heading_chunk(text, profile, min_child_size, max_parent_size)
@@ -675,7 +726,7 @@ class HeadingChunking(ChunkingStrategy):
             child_size = kwargs.get("child_size", settings.default_chunk_size)
             parent_size = kwargs.get("parent_size", child_size * 4)
             overlap = kwargs.get("overlap", settings.chunk_overlap)
-            dict_results = parent_child_chunk(text, child_size, parent_size, overlap)
+            dict_results = parent_child_chunk(text, child_size, parent_size, overlap, doc_title=doc_title)
 
         # Extract table chunks
         table_dicts = extract_table_chunks(text)
@@ -694,8 +745,9 @@ class ParentChildChunking(ChunkingStrategy):
         child_size = kwargs.get("child_size", settings.default_chunk_size)
         parent_size = kwargs.get("parent_size", child_size * 4)
         overlap = kwargs.get("overlap", settings.chunk_overlap)
+        doc_title = kwargs.get("doc_title", filename)
 
-        dict_results = parent_child_chunk(text, child_size, parent_size, overlap)
+        dict_results = parent_child_chunk(text, child_size, parent_size, overlap, doc_title=doc_title)
 
         # Extract table chunks
         table_dicts = extract_table_chunks(text)
@@ -719,13 +771,20 @@ class ExcelRowChunking(ChunkingStrategy):
             child_size = kwargs.get("child_size", settings.default_chunk_size)
             parent_size = kwargs.get("parent_size", child_size * 4)
             overlap = kwargs.get("overlap", settings.chunk_overlap)
-            dict_results = parent_child_chunk(text, child_size, parent_size, overlap)
+            dict_results = parent_child_chunk(text, child_size, parent_size, overlap, doc_title=doc_title)
 
         return _dicts_to_chunks(dict_results)
 
 
 def select_strategy(filename: str, text: str) -> ChunkingStrategy:
-    """Auto-select the best chunking strategy based on document type."""
+    """Auto-select the best chunking strategy based on document type.
+
+    NOTE (2026-06-19): 仅基于 filename 后缀分流，不调用 profile_document。
+    实际 upload.py / documents.py pipeline 不使用此函数 —— 它们直接调用
+    `_heading_chunk_gb` / `parent_child_chunk` / `excel_row_chunk`，dispatch
+    由 profile_document() 完成。本函数仅供未来批处理工具或外部 caller 使用，
+    保持轻量化（只看后缀），与主 pipeline 故意保持解耦。
+    """
     if filename.endswith((".xlsx", ".xls")):
         return ExcelRowChunking()
     # Default: heading-based with parent-child fallback

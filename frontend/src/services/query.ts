@@ -8,11 +8,47 @@ export interface Source {
   text?: string
 }
 
+export interface TermHint {
+  user_term: string
+  kb_term: string
+  doc?: string
+}
+
+export interface RelatedDoc {
+  doc_id?: string
+  title: string
+}
+
+export interface StandardHint {
+  doc_id?: string
+  title: string
+  reason?: string
+  recommended_query: string
+}
+
+export interface QuerySuggestions {
+  refined_query?: string
+  term_hints?: TermHint[]
+  related_docs?: RelatedDoc[]
+  standard_hints?: StandardHint[]
+  follow_up_questions?: string[]
+}
+
+export interface StandardContent {
+  title: string
+  doc_id: string
+  total_chars: number
+  sections_count: number
+  preview: string
+}
+
 export interface QueryResponse {
   answer: string
   sources: Source[]
   cache_hit?: string
   quality_check?: unknown
+  suggestions?: QuerySuggestions | null
+  standard_contents?: StandardContent[]
 }
 
 export interface WebSearchResponse {

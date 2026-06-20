@@ -835,8 +835,8 @@ async def patch_document_bank(
 @router.delete("/{doc_id}")
 async def delete_document(
     doc_id: str,
-    admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
+    admin: bool = Depends(require_admin),
 ):
     """Delete document and all its vectors (v1 L4276-L4359)."""
     repo = DocumentRepository(db)
@@ -1010,7 +1010,13 @@ async def reparse_document(doc_id: str, db: Session = Depends(get_db)):
 
     if not pc_chunks:
         doc_type = "generic"
-        pc_chunks = parent_child_chunk(text, child_size=384, parent_size=2048, overlap=80)
+        pc_chunks = parent_child_chunk(
+            text,
+            child_size=settings.default_chunk_size,
+            parent_size=settings.default_chunk_size * 4,
+            overlap=settings.chunk_overlap,
+            doc_title=doc_title,
+        )
 
     new_doc_id = str(uuid.uuid4())
 
@@ -1034,7 +1040,15 @@ async def reparse_document(doc_id: str, db: Session = Depends(get_db)):
         child_content = pc["child"].strip()
         if not child_content:
             continue
-        enhanced_content = f"[{pc['section_hint']}] {child_content}" if pc["section_hint"] else child_content
+        # CC 评审决策 4-A: enhanced_content 格式
+        # 优先 [文档:doc_title][章节:section_hint], 若 hint==title 则去重为 [文档:title]
+        section_hint = (pc.get("section_hint") or "").strip()
+        if section_hint and section_hint != doc_title:
+            enhanced_content = f"[文档:{doc_title}][章节:{section_hint}] {child_content}"
+        elif doc_title:
+            enhanced_content = f"[文档:{doc_title}] {child_content}"
+        else:
+            enhanced_content = child_content
         tags = [
             f"doc:{filename}",
             f"chunk:{i + 1}/{len(pc_chunks)}",

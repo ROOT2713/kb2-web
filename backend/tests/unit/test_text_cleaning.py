@@ -317,6 +317,11 @@ class TestFilenameToTitle:
         result = filename_to_title("doc.pdf", content)
         assert result == "doc"
 
+    def test_skips_generic_standard_heading(self):
+        content = "# 中华人民共和国国家标准\n\n# GB/T 22239-2019 信息安全技术 网络安全等级保护基本要求"
+        result = filename_to_title("GB_T_22239.pdf", content)
+        assert result == "GB/T 22239-2019 信息安全技术 网络安全等级保护基本要求"
+
 
 # ═══════════════════════════════════════════════════════
 # deai_postprocess

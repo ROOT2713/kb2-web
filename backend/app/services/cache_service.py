@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 # Phase2: 每个 bank 独立缓存，切换 bank 时无需重建（避免 10-30s 冷启动）
 _bm25_caches: dict = {}  # {"all": {"index": BM25, "docs": [...], "ts": float}, "standards": {...}, ...}
 _BM25_TTL = 600  # 10分钟缓存（上传后主动清除，无需长TTL）
+_BM25_DOC_COUNT_KEY = "doc_count"  # 增量检测：文档数量变化时才重建
+
 
 
 def get_exact(query: str, bank: str) -> Optional[Dict]:
@@ -168,7 +170,8 @@ def evict_lru(bank: str, max_entries: int = 1000):
 
 def _get_bm25_cache(bank: str) -> dict:
     """获取指定 bank 的 BM25 缓存，不存在则返回空壳"""
-    return _bm25_caches.get(bank, {"index": None, "docs": [], "ts": 0})
+    return _bm25_caches.get(bank, {"index": None, "docs": [], "ts": 0, "doc_count": 0})
+
 
 
 def invalidate_bm25_cache(bank: str = None):
