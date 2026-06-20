@@ -747,8 +747,9 @@ def _generate_query_suggestions(
             "reason": reason,
             "recommended_query": recommended,
         })
-    # 如果有 standard_hints，把首选 refined_query 升级为带规范名的搜索
-    if standard_hints and refined_query:
+    # 仅当规则改写不存在时，才用 standard_hints 的首项作为 refined_query 兜底；
+    # 若规则改写存在，保持规则原貌——避免被无关 standard_hints[0] 文档名污染。
+    if standard_hints and not refined_query:
         refined_query = standard_hints[0]["recommended_query"]
 
     # ── 兜底追问 ──
