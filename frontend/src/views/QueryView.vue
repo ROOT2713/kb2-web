@@ -62,13 +62,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useQueryStore } from '@/stores/query'
 import { useBanksStore } from '@/stores/banks'
 import ResultCard from '@/components/ResultCard.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import Toast from '@/components/Toast.vue'
 
+const route = useRoute()
 const queryStore = useQueryStore()
 const banksStore = useBanksStore()
 
@@ -76,9 +78,37 @@ const queryText = ref('')
 const selectedBank = ref('all')
 const useRerank = ref(false)
 
+function applyRouteQuery(autorun: boolean) {
+  // 从 URL query 接收 q/bank/rerank。供「方法库」等专题入口跳转使用。
+  const q = (route.query.q as string | undefined)?.trim()
+  const bank = route.query.bank as string | undefined
+  const rerank = route.query.rerank as string | undefined
+  if (q) queryText.value = q
+  if (bank) selectedBank.value = bank
+  if (rerank === '1' || rerank === 'true') useRerank.value = true
+  if (autorun && q) {
+    handleQuery()
+  }
+}
+
 onMounted(() => {
   banksStore.fetchBanks()
+  applyRouteQuery(route.query.autorun === '1' || route.query.autorun === 'true')
 })
+
+// 同一路由内 query 参数变化时也响应（例如方法库内多次点击不同问题）
+watch(
+  () => route.query,
+  (q, prev) => {
+    if (route.name !== 'query') return
+    // 只在 q/bank/rerank/autorun 变化时处理
+    const changed = ['q', 'bank', 'rerank', 'autorun'].some(
+      (k) => (q as Record<string, unknown>)[k] !== (prev as Record<string, unknown> | undefined)?.[k],
+    )
+    if (!changed) return
+    applyRouteQuery(q.autorun === '1' || q.autorun === 'true')
+  },
+)
 
 function handleQuery() {
   if (!queryText.value.trim()) return

@@ -53,6 +53,11 @@ const router = createRouter({
       name: 'wiki',
       component: () => import('@/views/WikiView.vue'),
     },
+    {
+      path: '/knowledge/data-methodology',
+      name: 'data-methodology',
+      component: () => import('@/views/DataMethodologyView.vue'),
+    },
   ],
 })
 
