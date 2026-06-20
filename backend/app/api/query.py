@@ -460,62 +460,73 @@ def _assemble_standard_contents_meta(sources: list, bank: str = "all") -> list[d
 
     返回 [{title, doc_id, total_chars, sections_count, preview}, ...]
     仅使用 sources 中已有 doc_id 作为锚点，避免标题模糊匹配跨 bank 泄漏。
+
+    性能优化（2026-06-20）：先 regex 过滤候选 doc_id，再用一条聚合 SQL
+    一次性拿到 documents 元数据 + parent_chunks 聚合 + preview，
+    把原来 per-source 3 次 SQL（最多 12×3=36 次）压到 1 次。
     """
-    results = []
-    seen_doc_ids = set()
+    # ── Step 1: 纯 Python 过滤，收集候选 doc_id（保持 sources 出现顺序）──
+    candidate_ids = []
+    seen = set()
+    title_fallback: dict[str, str] = {}
+    for src in sources:
+        title = src.get("doc") or src.get("title") or ""
+        doc_id = src.get("doc_id")
+        if not title or not doc_id or doc_id in seen:
+            continue
+        normalized = _normalize_doc_title_for_standard(title)
+        if not _STD_PATTERN.search(normalized):
+            continue
+        seen.add(doc_id)
+        candidate_ids.append(doc_id)
+        title_fallback[doc_id] = title
+
+    if not candidate_ids:
+        return []
+
+    # ── Step 2: 一次聚合 SQL 拿全部元数据 ──
+    # SQLite 支持 IN (:p0, :p1, ...) 用命名占位符。SUBSTR(...) 子查询
+    # 取 parent_idx 最小的那段，模拟原来的 LIMIT 1 ORDER BY preview 行为。
+    placeholders = ", ".join(f":id{i}" for i in range(len(candidate_ids)))
+    params: dict = {f"id{i}": did for i, did in enumerate(candidate_ids)}
+    sql = (
+        "SELECT d.doc_id, d.title, "
+        "       COALESCE(SUM(LENGTH(pc.parent_text)), 0) AS total_chars, "
+        "       COUNT(pc.parent_idx) AS sections_count, "
+        "       (SELECT SUBSTR(parent_text, 1, 200) FROM parent_chunks "
+        "        WHERE doc_id = d.doc_id ORDER BY parent_idx LIMIT 1) AS preview "
+        "FROM documents d "
+        "LEFT JOIN parent_chunks pc ON pc.doc_id = d.doc_id "
+        f"WHERE d.doc_id IN ({placeholders}) AND d.searchable = 1"
+    )
+    if bank != "all":
+        sql += " AND d.bank = :bank"
+        params["bank"] = bank
+    sql += " GROUP BY d.doc_id, d.title"
 
     db = SessionLocal()
     try:
-        for src in sources:
-            title = src.get("doc") or src.get("title") or ""
-            doc_id = src.get("doc_id")
-            if not title or not doc_id or doc_id in seen_doc_ids:
-                continue
-
-            # 用正则识别是否为规范文件
-            normalized = _normalize_doc_title_for_standard(title)
-            if not _STD_PATTERN.search(normalized):
-                continue
-
-            params = {"doc_id": doc_id}
-            doc_sql = "SELECT doc_id, title FROM documents WHERE doc_id=:doc_id AND searchable=1"
-            if bank != "all":
-                doc_sql += " AND bank=:bank"
-                params["bank"] = bank
-            row = db.execute(sa_text(doc_sql), params).fetchone()
-            if not row:
-                continue
-
-            seen_doc_ids.add(doc_id)
-            chunks_row = db.execute(
-                sa_text(
-                    "SELECT COUNT(*), SUM(LENGTH(parent_text)) "
-                    "FROM parent_chunks WHERE doc_id=:doc_id"
-                ),
-                {"doc_id": doc_id},
-            ).fetchone()
-            chunks_count = chunks_row[0] if chunks_row and chunks_row[0] else 0
-            total_chars = chunks_row[1] if chunks_row and chunks_row[1] else 0
-            preview_row = db.execute(
-                sa_text(
-                    "SELECT SUBSTR(parent_text, 1, 200) "
-                    "FROM parent_chunks WHERE doc_id=:doc_id ORDER BY parent_idx LIMIT 1"
-                ),
-                {"doc_id": doc_id},
-            ).fetchone()
-            preview = preview_row[0] if preview_row else ""
-            results.append({
-                "title": row[1] or title,
-                "doc_id": doc_id,
-                "total_chars": total_chars,
-                "sections_count": chunks_count,
-                "preview": preview,
-            })
+        rows = db.execute(sa_text(sql), params).fetchall()
     except Exception as e:
         logger.warning("Failed to assemble standard meta: %s", e)
+        return []
     finally:
         db.close()
 
+    # ── Step 3: 按原始 sources 顺序拼装结果 ──
+    by_id = {row[0]: row for row in rows}
+    results: list[dict] = []
+    for did in candidate_ids:
+        row = by_id.get(did)
+        if not row:
+            continue
+        results.append({
+            "title": row[1] or title_fallback.get(did, ""),
+            "doc_id": did,
+            "total_chars": row[2] or 0,
+            "sections_count": row[3] or 0,
+            "preview": row[4] or "",
+        })
     return results
 
 
