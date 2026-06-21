@@ -1,11 +1,14 @@
 """Article extraction endpoints — extract knowledge by topic.
 
 OKF P0-6: /api/articles/extract 端点。
+P2-3: 接入检索 pipeline (BM25+Dense+RRF)。
+
 与 /api/query 的区别：
 - query: 返回 top-K 片段，适合快速问答
 - extract: 返回完整知识条目，适合深度研究
 """
 
+import asyncio
 import logging
 from collections import defaultdict
 from typing import Optional
@@ -41,38 +44,62 @@ class ExtractRequest(BaseModel):
 
 
 @router.post("/extract")
-def extract_by_topic(
+async def extract_by_topic(
     req: ExtractRequest,
     db: Session = Depends(get_db),
 ):
     """提取特定主题的所有相关内容。
 
+    P2-3: 混合检索策略。
+
     流程：
-    1. 按关键词搜索 concepts
-    2. 按 document 聚合
-    3. 过滤 (stale, confidence)
+    1. BM25 搜索 concepts（SQLite FTS / LIKE）
+    2. Dense 搜索 Hindsight（语义召回，可选）
+    3. 按 document 聚合 + 过滤
     4. 按 confidence + relevance 排序
     5. 组装为结构化输出
     """
-    topic = req.topic
+    from app.services.retrieval import recall
 
-    # Step 1: 搜索 concepts（关键词匹配标题/摘要/内容）
+    topic = req.topic
+    bank = req.bank if req.bank and req.bank != "all" else "kb"
+
+    # Step 1: BM25 搜索 concepts（使用 LIKE 作为 SQLite BM25 的简化实现）
     like_pattern = f"%{topic}%"
-    query = db.query(Concept).filter(
+    concepts = db.query(Concept).filter(
         Concept.status == "active",
         or_(
             Concept.title.like(like_pattern),
             Concept.summary.like(like_pattern),
             Concept.content.like(like_pattern),
         ),
-    )
+    ).all()
 
-    concepts = query.all()
+    bm25_doc_ids = {c.doc_id for c in concepts}
 
-    # Step 2: 按 document 聚合
+    # Step 2: Dense 搜索 Hindsight（语义召回）
+    dense_doc_ids = set()
+    try:
+        dense_results = await recall(topic, limit=req.limit * 2, bank=bank)
+        for r in dense_results:
+            for tag in r.get("tags", []):
+                if tag.startswith("doc_id:"):
+                    dense_doc_ids.add(tag[7:])
+    except Exception as e:
+        logger.warning("Dense recall failed (non-critical): %s", e)
+
+    # Step 3: 合并结果（BM25 + Dense）
+    all_doc_ids = bm25_doc_ids | dense_doc_ids
+
+    # Step 4: 按 document 聚合
     doc_groups = defaultdict(list)
-    for concept in concepts:
-        doc_groups[concept.doc_id].append(concept)
+    if all_doc_ids:
+        concepts = db.query(Concept).filter(
+            Concept.doc_id.in_(list(all_doc_ids)),
+            Concept.status == "active",
+        ).all()
+        for concept in concepts:
+            doc_groups[concept.doc_id].append(concept)
 
     # Step 2.5: 按 bank 过滤（如果指定了 bank）
     if req.bank and req.bank != "all":
