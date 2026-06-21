@@ -186,3 +186,64 @@ def restore_stale(
     if not success:
         raise HTTPException(400, "Document not found or not stale")
     return {"ok": True, "doc_id": doc_id, "status": "active"}
+
+
+# ═══════════════════════════════════════════════════════
+# P1-3: Quality Gates endpoints
+# ═══════════════════════════════════════════════════════
+
+from app.services.quality_gates import check_document, check_all_documents
+
+
+@router.post("/quality/check")
+def quality_check_single(
+    doc_id: str = Query(..., description="文档 ID"),
+    gates: str = Query("G1,G2,G3", description="门禁级别"),
+    db: Session = Depends(get_db),
+):
+    """对单个文档执行质量门禁检查。"""
+    result = check_document(db, doc_id, gates)
+    if "error" in result:
+        raise HTTPException(404, result["error"])
+    db.commit()
+    return result
+
+
+@router.post("/quality/check-all")
+def quality_check_all(
+    gates: str = Query("G1,G2", description="门禁级别"),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """批量检查所有活跃文档。"""
+    result = check_all_documents(db, gates, limit)
+    db.commit()
+    return result
+
+
+@router.get("/quality/stats")
+def quality_stats(db: Session = Depends(get_db)):
+    """获取质量门禁统计。"""
+    from app.models.concept import QualityGateLog
+    import json
+
+    # 最近一次批量检查
+    recent_logs = db.query(QualityGateLog).order_by(
+        QualityGateLog.checked_at.desc()
+    ).limit(1000).all()
+
+    gate_stats = {}
+    for log in recent_logs:
+        key = log.gate_level
+        if key not in gate_stats:
+            gate_stats[key] = {"total": 0, "passed": 0, "failed": 0}
+        gate_stats[key]["total"] += 1
+        if log.passed:
+            gate_stats[key]["passed"] += 1
+        else:
+            gate_stats[key]["failed"] += 1
+
+    return {
+        "gate_stats": gate_stats,
+        "total_checks": len(recent_logs),
+    }
