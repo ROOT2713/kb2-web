@@ -236,6 +236,12 @@ async def upload_document(
 
     doc_id = str(uuid.uuid4())
 
+    # ── P1-1: 版本链检测 — 同名/同标准号文档自动 supersede ──
+    from app.services.version_chain import detect_existing_doc, mark_superseded
+    existing_doc = detect_existing_doc(
+        db=db, title=doc_title, bank=bank, doc_type=doc_type, content_hash=content_hash,
+    )
+
     # 构建 parent 映射
     parent_map = {}
     for pc in pc_chunks:
@@ -309,6 +315,18 @@ async def upload_document(
             doc_record.domain = _infer_domain(bank, doc_type)
             if doc_concept_id:
                 doc_record.concept_id = doc_concept_id
+
+        # ── P1-1: 如果检测到旧版本，标记为 superseded ──
+        if existing_doc:
+            mark_superseded(
+                db,
+                old_doc_id=existing_doc.doc_id,
+                new_doc_id=doc_id,
+                reason="new_version_upload",
+            )
+            if doc_record:
+                doc_record.supersedes = existing_doc.doc_id
+            logger.info("Version chain: %s supersedes %s", doc_id[:8], existing_doc.doc_id[:8])
 
         db.commit()
         logger.info("Saved %d parent chunks for doc %s", len(parent_map), doc_id)

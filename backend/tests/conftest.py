@@ -55,6 +55,7 @@ def _create_tables():
     from app.models.database import Base
     # Import models so they register with Base.metadata
     import app.models.document   # noqa
+    import app.models.concept    # noqa — Concept, KGTriple, QualityGateLog
     import app.models.cache      # noqa
     import app.models.synonym    # noqa
     Base.metadata.create_all(bind=_engine)

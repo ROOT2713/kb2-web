@@ -1111,3 +1111,86 @@ async def reparse_document(doc_id: str, db: Session = Depends(get_db)):
         "total_chars": len(text),
         "preview": text[:200] + ("..." if len(text) > 200 else ""),
     }
+
+
+# ═══════════════════════════════════════════════════════
+# P1-1: Version Chain endpoints
+# ═══════════════════════════════════════════════════════
+
+from app.services.version_chain import (
+    detect_existing_doc,
+    mark_superseded,
+    get_version_history,
+)
+
+
+@router.get("/{doc_id}/versions")
+def get_versions(
+    doc_id: str,
+    db: Session = Depends(get_db),
+):
+    """获取文档版本历史链。
+
+    返回当前文档、被谁替代、替代了谁，以及完整版本链。
+    """
+    result = get_version_history(db, doc_id)
+    if "error" in result:
+        raise HTTPException(404, result["error"])
+    return result
+
+
+@router.post("/{doc_id}/supersede")
+def supersede_document(
+    doc_id: str,
+    new_doc_id: str = Query(..., description="替代此文档的新版本 doc_id"),
+    reason: str = Query("new_version", description="supersede 原因"),
+    db: Session = Depends(get_db),
+):
+    """手动标记文档为 superseded。
+
+    将 doc_id 标记为被 new_doc_id 替代，建立双向链接。
+    """
+    success = mark_superseded(db, old_doc_id=doc_id, new_doc_id=new_doc_id, reason=reason)
+    if not success:
+        raise HTTPException(400, "Supersede failed — check doc_id and new_doc_id exist")
+    db.commit()
+    return {
+        "ok": True,
+        "superseded": doc_id,
+        "superseded_by": new_doc_id,
+        "reason": reason,
+    }
+
+
+@router.get("/detect-existing")
+def detect_existing(
+    title: str = Query(..., min_length=1),
+    bank: str = Query("general"),
+    doc_type: str = Query("generic"),
+    content_hash: str = Query(""),
+    db: Session = Depends(get_db),
+):
+    """检测是否已存在同名/同标准号的活跃文档。
+
+    用于上传前预检：如果返回已有文档，提示用户是否为新版本。
+    """
+    existing = detect_existing_doc(
+        db=db,
+        title=title,
+        bank=bank,
+        doc_type=doc_type,
+        content_hash=content_hash,
+    )
+    if existing:
+        return {
+            "found": True,
+            "existing": {
+                "doc_id": existing.doc_id,
+                "title": existing.title,
+                "version": existing.version,
+                "bank": existing.bank,
+                "doc_type": existing.doc_type,
+                "created_at": existing.created_at.isoformat() if existing.created_at else None,
+            },
+        }
+    return {"found": False}
