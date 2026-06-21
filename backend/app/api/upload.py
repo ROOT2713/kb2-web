@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.database import SessionLocal
 from app.models.document import ParentChunk
-from app.services.concept_gen import generate_concepts_for_doc, infer_doc_concept_id, _BANK_TO_DOMAIN
+from app.services.concept_gen import generate_concepts_for_doc, infer_doc_concept_id, infer_domain, _BANK_TO_DOMAIN
 from app.repositories.document_repo import DocumentRepository
 from app.repositories.vector_repo import HindsightStore
 from app.services.cache_service import invalidate_bm25_cache
@@ -43,13 +43,8 @@ MAX_BATCH_FILES = 20
 MAX_BATCH_TOTAL_SIZE = 500 * 1024 * 1024  # 500 MB
 
 # ── P0-3: bank → OKF domain 映射 (定义在 concept_gen.py，此处引用) ──
-def _infer_domain(bank: str, doc_type: str = "generic") -> str:
-    """从 bank 名 + doc_type 推断 OKF domain。"""
-    if bank in _BANK_TO_DOMAIN:
-        return _BANK_TO_DOMAIN[bank]
-    if doc_type in ("gb_standard", "regulation"):
-        return "standards"
-    return "methodology"
+# _infer_domain 已统一到 concept_gen.infer_domain()，此处保留别名
+_infer_domain = infer_domain
 
 
 def _get_doc_repo(db: Session) -> DocumentRepository:

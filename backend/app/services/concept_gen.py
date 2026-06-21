@@ -32,6 +32,16 @@ _BANK_TO_DOMAIN = {
 }
 
 
+def infer_domain(bank: str = "general", doc_type: str = "generic") -> str:
+    """从 bank 名 + doc_type 推断 OKF domain（统一逻辑，upload.py 共用）。
+
+    优先级：doc_type (gb_standard/regulation) > bank 映射 > 默认 methodology。
+    """
+    if doc_type in ("gb_standard", "regulation"):
+        return "standards"
+    return _BANK_TO_DOMAIN.get(bank, "methodology")
+
+
 def infer_doc_concept_id(
     title: str,
     bank: str = "general",

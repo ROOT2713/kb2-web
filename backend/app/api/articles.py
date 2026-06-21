@@ -102,10 +102,16 @@ def extract_by_topic(
     ranked = sorted(doc_groups.items(), key=_doc_score, reverse=True)
 
     # Step 5: 组装输出
+    # 批量获取文档元数据（避免 N+1 查询）
+    doc_ids = [doc_id for doc_id, _ in ranked[:req.limit]]
+    docs_map = {}
+    if doc_ids:
+        docs = db.query(Document).filter(Document.doc_id.in_(doc_ids)).all()
+        docs_map = {d.doc_id: d for d in docs}
+
     extracted = []
     for doc_id, doc_concepts in ranked[:req.limit]:
-        # 获取文档元数据
-        doc = db.query(Document).filter(Document.doc_id == doc_id).first()
+        doc = docs_map.get(doc_id)
         title = doc.title if doc else ""
         domain = doc.domain if doc else ""
 
