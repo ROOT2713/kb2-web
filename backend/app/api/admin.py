@@ -139,3 +139,50 @@ async def admin_health():
         health_status["status"] = "degraded"
 
     return health_status
+
+
+# ═══════════════════════════════════════════════════════
+# P1-2: Stale Detection endpoints
+# ═══════════════════════════════════════════════════════
+
+from app.services.stale_detection import (
+    detect_stale_documents,
+    restore_stale_document,
+    get_stale_summary,
+)
+
+
+@router.get("/stale/summary")
+def stale_summary(db: Session = Depends(get_db)):
+    """获取 stale 文档统计摘要。"""
+    return get_stale_summary(db)
+
+
+@router.post("/stale/detect")
+def run_stale_detection(
+    max_days: int = Query(90, ge=7, le=365, description="超过此天数视为 stale"),
+    dry_run: bool = Query(False, description="仅检测不修改"),
+    db: Session = Depends(get_db),
+):
+    """执行 stale 检测。
+
+    扫描所有活跃文档，将超过 max_days 未确认的标记为 stale。
+    建议通过 cron 定期调用。
+    """
+    result = detect_stale_documents(db, max_days=max_days, dry_run=dry_run)
+    return result
+
+
+@router.post("/stale/restore")
+def restore_stale(
+    doc_id: str = Query(..., description="要恢复的文档 ID"),
+    db: Session = Depends(get_db),
+):
+    """恢复 stale 文档为 active。
+
+    人工确认文档仍有效后调用。
+    """
+    success = restore_stale_document(db, doc_id)
+    if not success:
+        raise HTTPException(400, "Document not found or not stale")
+    return {"ok": True, "doc_id": doc_id, "status": "active"}
