@@ -7,7 +7,7 @@ the `get_current_user` dependency.
 from fastapi import APIRouter, Depends
 
 from app.middleware.jwt_auth import get_current_user
-from app.api import upload, query, documents, banks, synonyms, admin, concepts
+from app.api import upload, query, documents, banks, synonyms, admin, concepts, articles
 
 api_router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -18,3 +18,4 @@ api_router.include_router(banks.router,     prefix="/banks",     tags=["知识�
 api_router.include_router(synonyms.router,  prefix="/synonyms",  tags=["同义词"])
 api_router.include_router(admin.router,     prefix="/admin",     tags=["管理"])
 api_router.include_router(concepts.router,  prefix="/concepts",  tags=["概念"])
+api_router.include_router(articles.router,  prefix="/articles",  tags=["文章"])
