@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.database import SessionLocal
 from app.models.document import ParentChunk
-from app.services.concept_gen import generate_concepts_for_doc
+from app.services.concept_gen import generate_concepts_for_doc, infer_doc_concept_id, _BANK_TO_DOMAIN
 from app.repositories.document_repo import DocumentRepository
 from app.repositories.vector_repo import HindsightStore
 from app.services.cache_service import invalidate_bm25_cache
@@ -42,22 +42,7 @@ MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
 MAX_BATCH_FILES = 20
 MAX_BATCH_TOTAL_SIZE = 500 * 1024 * 1024  # 500 MB
 
-# ── P0-2: bank → OKF domain 映射 ──
-_BANK_TO_DOMAIN = {
-    "general": "methodology",
-    "business": "learning",
-    "law": "governance",
-    "methodology": "methodology",
-    "standard": "standards",
-    "tech": "operations",
-    "standards": "standards",
-    "governance": "governance",
-    "operations": "operations",
-    "learning": "learning",
-    "ephemeral": "ephemeral",
-}
-
-
+# ── P0-3: bank → OKF domain 映射 (定义在 concept_gen.py，此处引用) ──
 def _infer_domain(bank: str, doc_type: str = "generic") -> str:
     """从 bank 名 + doc_type 推断 OKF domain。"""
     if bank in _BANK_TO_DOMAIN:
@@ -308,20 +293,27 @@ async def upload_document(
             pc = ParentChunk(doc_id=doc_id, parent_idx=idx, parent_text=ptext)
             db.merge(pc)
 
+        # ── P0-3: 自动生成 doc 级 concept_id ──
+        doc_concept_id = infer_doc_concept_id(
+            title=doc_title, bank=bank, doc_type=doc_type, text=text[:2000],
+        )
+
         # ── P0-2: 生成 concept 记录 ──
         concept_pc_list = [{"parent_index": idx, "parent": ptext} for idx, ptext in parent_map.items()]
         concept_count = generate_concepts_for_doc(
-            db, doc_id, None, concept_pc_list,
+            db, doc_id, doc_concept_id, concept_pc_list,
             doc_type=doc_type, confidence=profile.get("confidence", 0.5),
         )
 
-        # ── P0-1: 写入 profile_confidence 到文档 ──
+        # ── P0-1 + P0-3: 写入 OKF 字段到文档 ──
         from app.models.document import Document
         doc_record = db.query(Document).filter(Document.doc_id == doc_id).first()
         if doc_record:
             doc_record.profile_confidence = profile.get("confidence", 0.5)
             doc_record.chunk_count = len(parent_map)
             doc_record.domain = _infer_domain(bank, doc_type)
+            if doc_concept_id:
+                doc_record.concept_id = doc_concept_id
 
         db.commit()
         logger.info("Saved %d parent chunks for doc %s", len(parent_map), doc_id)

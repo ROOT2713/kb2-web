@@ -2,6 +2,7 @@
 
 P0-2: 上传时为每个 parent section 生成一个 concept（标题+摘要+内容）。
 不依赖 LLM，纯规则提取（后续 P1 可加 LLM summary）。
+P0-3: infer_doc_concept_id() — 基于标题/标准号自动分配 doc 级 concept_id。
 """
 
 import logging
@@ -13,6 +14,91 @@ from sqlalchemy.orm import Session
 from app.models.concept import Concept
 
 logger = logging.getLogger(__name__)
+
+
+# ── P0-3: bank → OKF domain 映射（避免循环导入 upload.py）──
+_BANK_TO_DOMAIN = {
+    "general": "methodology",
+    "business": "learning",
+    "law": "governance",
+    "methodology": "methodology",
+    "standard": "standards",
+    "tech": "operations",
+    "standards": "standards",
+    "governance": "governance",
+    "operations": "operations",
+    "learning": "learning",
+    "ephemeral": "ephemeral",
+}
+
+
+def infer_doc_concept_id(
+    title: str,
+    bank: str = "general",
+    doc_type: str = "generic",
+    text: str = "",
+) -> Optional[str]:
+    """根据标题/标准号/文档类型推断文档级 concept_id。
+
+    返回格式: {domain}/{subdomain}/{slug}
+    例如: standards/security/gb-50116, governance/regulation/labor-protection
+    """
+    domain = _BANK_TO_DOMAIN.get(bank, "methodology")
+    if doc_type in ("gb_standard", "regulation"):
+        domain = "standards"
+
+    slug = ""
+    subdomain = ""
+
+    if doc_type == "gb_standard":
+        # 尝试从标题提取标准号: GB/T 50116-2013, GB 50016-2014 等
+        m = re.search(r'(GB[/]?[TSC]?\s*[\d]+(?:\.\d+)?(?:-[\d]+)?)', title)
+        if m:
+            std_num = re.sub(r'[/\s]+', '-', m.group(1)).lower()  # gb-t-50116-2013
+            std_num = re.sub(r'-{2,}', '-', std_num).strip('-')
+            slug = std_num
+        else:
+            slug = _title_to_slug(title)
+        subdomain = _infer_subdomain(title, text)
+
+    elif doc_type == "regulation":
+        slug = _title_to_slug(title)
+        subdomain = _infer_subdomain(title, text)
+
+    else:
+        slug = _title_to_slug(title)
+
+    if not slug:
+        return None
+
+    parts = [domain]
+    if subdomain:
+        parts.append(subdomain)
+    parts.append(slug)
+    return "/".join(parts)
+
+
+def _title_to_slug(title: str) -> str:
+    """将标题转为 URL-safe slug（保留中文）。"""
+    slug = re.sub(r'[^\w\u4e00-\u9fff]+', '-', title).strip('-').lower()
+    slug = re.sub(r'-{2,}', '-', slug)
+    return slug[:60] if slug else ""
+
+
+def _infer_subdomain(title: str, text: str = "") -> str:
+    """从标题或文本推断子领域（如 security, laboratory 等）。"""
+    combined = (title + " " + text[:500]).lower()
+    keywords = {
+        "security": ["安全", "消防", "安防", "信息安", "网络安", "防火", "监控", "入侵"],
+        "laboratory": ["实验室", "检测", "检验", "校准", "测试"],
+        "quality": ["质量", "认证", "审核", "评审", "验收"],
+        "environment": ["环境", "环保", "排放", "污染", "生态"],
+        "fire": ["消防", "灭火", "火灾", "防火", "报警"],
+    }
+    for subdomain, kws in keywords.items():
+        if any(kw in combined for kw in kws):
+            return subdomain
+    return ""
 
 
 def _extract_section_title(parent_text: str, doc_type: str = "generic") -> str:
@@ -33,7 +119,7 @@ def _extract_section_title(parent_text: str, doc_type: str = "generic") -> str:
         return m.group(1).strip()[:120]
 
     # Chinese chapter/section markers
-    m = re.match(r'^(第[一二三四五六七八九十\d]+[章节条款编]|[\d]+\.[\d]+[\.\d]*\s)', first_line)
+    m = re.match(r'^(第[一二三四五六七八九十\d]+[章节条款编]|[\d]+\.[\d]+[\.\\d]*\s)', first_line)
     if m:
         return first_line[:120]
 
