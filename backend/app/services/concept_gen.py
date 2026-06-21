@@ -146,16 +146,19 @@ def _generate_concept_id(
     doc_concept_id: Optional[str],
     parent_idx: int,
     title: str,
+    doc_id: str = "",
 ) -> str:
     """为单个 concept 生成唯一 ID。
 
-    格式: {doc_concept_id}/section-{parent_idx}
-    如果 doc_concept_id 未设置，用 doc_id 前 8 位。
+    格式: {doc_concept_id}/{doc_id-short}/section-{parent_idx}
+    doc_id 前缀防止不同文档生成相同 concept_id。
     """
-    base = doc_concept_id or "unknown"
+    base = (doc_concept_id or "unknown").rstrip("/")
+    # doc_id 前 8 位作为命名空间隔离
+    doc_ns = doc_id[:8] if doc_id else "unknown"
     # 清理 title 中的特殊字符用于 slug
     slug = re.sub(r'[^a-zA-Z0-9\u4e00-\u9fff]+', '-', title).strip('-').lower()[:40]
-    return f"{base}/section-{parent_idx}-{slug}" if slug else f"{base}/section-{parent_idx}"
+    return f"{base}/{doc_ns}/section-{parent_idx}-{slug}" if slug else f"{base}/{doc_ns}/section-{parent_idx}"
 
 
 def generate_concepts_for_doc(
@@ -190,7 +193,7 @@ def generate_concepts_for_doc(
             continue  # 太短的 section 不生成 concept
 
         title = _extract_section_title(text, doc_type)
-        cid = _generate_concept_id(concept_id, idx, title)
+        cid = _generate_concept_id(concept_id, idx, title, doc_id)
 
         concept = Concept(
             concept_id=cid,

@@ -157,18 +157,29 @@ class TestExtractSectionTitle:
 
 class TestGenerateConceptId:
     def test_with_doc_concept_id(self):
-        cid = _generate_concept_id("standards/gb-50116", 0, "总则")
-        assert cid.startswith("standards/gb-50116/section-0-")
+        """新版格式: {concept_id}/{doc_id-short}/section-{idx}-{slug}"""
+        cid = _generate_concept_id("standards/gb-50116", 0, "总则", "doc-abc-123")
+        assert "standards/gb-50116/" in cid
+        assert "doc-abc-" in cid
+        assert "section-0-" in cid
         assert "总则" in cid
 
     def test_without_doc_concept_id(self):
-        cid = _generate_concept_id(None, 3, "范围")
-        assert cid.startswith("unknown/section-3-")
+        """无 concept_id 时用 unknown"""
+        cid = _generate_concept_id(None, 3, "范围", "doc-xyz-456")
+        assert "unknown/" in cid
+        assert "doc-xyz-" in cid
+        assert "section-3-" in cid
         assert "范围" in cid
 
     def test_long_title_truncated(self):
         long_title = "这是一个非常非常长的标题" * 10
-        cid = _generate_concept_id("base", 0, long_title)
+        cid = _generate_concept_id("base", 0, long_title, "doc-001")
         # slug 部分应该被截断到 40 字符
         parts = cid.split("/section-0-")
         assert len(parts[1]) <= 40
+
+    def test_no_doc_id_uses_unknown(self):
+        """不传 doc_id 时用 unknown 命名空间"""
+        cid = _generate_concept_id("base", 0, "测试", "")
+        assert "/unknown/" in cid
