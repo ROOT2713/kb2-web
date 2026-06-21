@@ -247,3 +247,75 @@ def quality_stats(db: Session = Depends(get_db)):
         "gate_stats": gate_stats,
         "total_checks": len(recent_logs),
     }
+
+
+# ═══════════════════════════════════════════════════════
+# P2-1: Confidence endpoints
+# ═══════════════════════════════════════════════════════
+
+from app.services.confidence import (
+    compute_concept_confidence,
+    compute_document_confidence,
+    update_concept_confidence,
+    update_all_confidences,
+    get_confidence_summary,
+)
+
+
+@router.get("/confidence/summary")
+def confidence_summary(db: Session = Depends(get_db)):
+    """获取 confidence 统计摘要。"""
+    return get_confidence_summary(db)
+
+
+@router.post("/confidence/recalc")
+def recalculate_confidences(
+    db: Session = Depends(get_db),
+):
+    """批量重算所有 concept 的 confidence。"""
+    result = update_all_confidences(db)
+    db.commit()
+    return result
+
+
+@router.get("/confidence/{doc_id}")
+def doc_confidence(
+    doc_id: str,
+    db: Session = Depends(get_db),
+):
+    """获取单个文档的 confidence。"""
+    conf = compute_document_confidence(db, doc_id)
+    return {"doc_id": doc_id, "confidence": conf}
+
+
+# ═══════════════════════════════════════════════════════
+# P2-2: Concept Summary endpoints
+# ═══════════════════════════════════════════════════════
+
+from app.services.concept_summary import (
+    generate_summaries_batch,
+    generate_all_summaries,
+)
+
+
+@router.post("/summaries/generate")
+async def generate_doc_summaries(
+    doc_id: str = Query(..., description="文档 ID"),
+    limit: int = Query(20, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    """为单个文档的 concept 生成摘要。"""
+    count = await generate_summaries_batch(db, doc_id, limit)
+    db.commit()
+    return {"doc_id": doc_id, "generated": count}
+
+
+@router.post("/summaries/generate-all")
+async def generate_all_concept_summaries(
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """批量为所有无摘要的 concept 生成摘要。"""
+    result = await generate_all_summaries(db, limit)
+    db.commit()
+    return result
