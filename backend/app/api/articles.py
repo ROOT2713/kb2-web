@@ -74,6 +74,17 @@ def extract_by_topic(
     for concept in concepts:
         doc_groups[concept.doc_id].append(concept)
 
+    # Step 2.5: 按 bank 过滤（如果指定了 bank）
+    if req.bank and req.bank != "all":
+        doc_ids = list(doc_groups.keys())
+        if doc_ids:
+            docs = db.query(Document).filter(Document.doc_id.in_(doc_ids)).all()
+            doc_bank = {d.doc_id: d.bank for d in docs}
+            doc_groups = {
+                k: v for k, v in doc_groups.items()
+                if doc_bank.get(k) == req.bank
+            }
+
     # Step 3: 过滤
     if not req.include_stale:
         # 获取文档状态
@@ -160,9 +171,16 @@ def extract_by_concept(
     for c in concepts:
         doc_groups[c.doc_id].append(c)
 
+    # 批量获取文档元数据（避免 N+1 查询）
+    doc_ids = list(doc_groups.keys())
+    docs_map = {}
+    if doc_ids:
+        docs = db.query(Document).filter(Document.doc_id.in_(doc_ids)).all()
+        docs_map = {d.doc_id: d for d in docs}
+
     results = []
     for doc_id, doc_concepts in doc_groups.items():
-        doc = db.query(Document).filter(Document.doc_id == doc_id).first()
+        doc = docs_map.get(doc_id)
         results.append({
             "doc_id": doc_id,
             "title": doc.title if doc else "",

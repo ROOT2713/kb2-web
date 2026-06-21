@@ -104,7 +104,7 @@ def downgrade():
         op.drop_index(idx, table_name="documents")
 
     for col in [
-        "updated_at", "chunk_count", "source_url", "version",
+        "chunk_count", "source_url", "version",
         "stale_reason", "stale_at", "supersedes", "superseded_by",
         "status", "profile_confidence", "subdomain", "domain", "concept_id",
     ]:
