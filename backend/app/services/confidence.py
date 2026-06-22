@@ -202,9 +202,13 @@ def update_all_confidences(
 def _flag_doc_for_review(db: Session, concept_id: str):
     """Sync review_required on the document that owns this concept.
 
-    Phase A semantics: review_required reflects the doc-level minimum
-    concept confidence. If ANY concept on this doc has confidence < 0.7,
-    set 1; if ALL concepts are >= 0.7, clear to 0.
+    Phase C5 semantics: review_required = 1 requires BOTH
+    - doc has at least one concept with confidence < 0.7 (potential issue), AND
+    - either Crystallization Light hasn't run yet for this doc (legacy fallback)
+      or has confirmed at least one TRUE_CONTRADICTION
+
+    The combined condition reduces false positives from BGE-M3 noise
+    while preserving the original signal.
     """
     concept = db.query(Concept).filter(Concept.concept_id == concept_id).first()
     if not concept:
@@ -219,7 +223,33 @@ def _flag_doc_for_review(db: Session, concept_id: str):
         Concept.status == "active",
     ).scalar()
 
-    new_flag = 1 if (min_conf is not None and min_conf < 0.7) else 0
+    low_conf = (min_conf is not None and min_conf < 0.7)
+    if not low_conf:
+        new_flag = 0
+    else:
+        # Phase C5: if confidence is low, require LLM-confirmed contradiction
+        # before flagging. This filters out BGE-M3 false positives.
+        try:
+            from app.services.crystallization_light import has_true_contradiction
+            # Has the doc been crystallized at all?
+            from sqlalchemy import text as sa_text
+            judged_rows = db.execute(
+                sa_text("""SELECT 1 FROM concept_contradictions cc
+                    JOIN concepts c ON c.concept_id IN (cc.concept_a_id, cc.concept_b_id)
+                    WHERE c.doc_id = :did LIMIT 1"""),
+                {"did": doc.doc_id},
+            ).fetchone()
+
+            if judged_rows is None:
+                # No crystallization data yet - fall back to legacy behavior
+                new_flag = 1
+            else:
+                # Has been crystallized - flag only if true contradiction exists
+                new_flag = 1 if has_true_contradiction(db, doc.doc_id) else 0
+        except Exception as e:
+            logger.warning("Crystallization check failed for %s: %s", doc.doc_id[:8], e)
+            new_flag = 1  # fail-safe to legacy behavior
+
     if doc.review_required != new_flag:
         doc.review_required = new_flag
         db.flush()
