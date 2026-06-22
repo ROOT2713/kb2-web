@@ -119,8 +119,10 @@ class TestProfileDocument:
             "4 总则\n应遵循。\n"
         )
         result = profile_document(text)
-        assert result["doc_type"] == "gb_standard"
-        assert len(result["headings"]) >= 3
+        # Phase B post-merge: 仅 4 个编号且无 GB/JJF/... 引用 → 应降级为 generic
+        # （这是对博客误标的硬约束）
+        assert result["doc_type"] == "generic"
+        assert result["headings"] == []
 
     def test_appendix_detection(self):
         text = (
@@ -156,15 +158,15 @@ class TestProfileDocument:
             assert result_many["confidence"] >= result_few["confidence"]
 
     def test_mixed_regulation_and_standard(self):
-        """When both patterns exist, gb_standard takes priority if it has >= 3 headings."""
+        """When both patterns exist, gb_standard takes priority if it has explicit standard ref."""
         text = (
             "# 1 范围\n内容\n\n"
-            "## 5.1 安全\n内容\n\n"
+            "## 5.1 安全\n内容引用 GB/T 22239。\n\n"
             "## 5.2 管理\n内容\n\n"
             "第一条 管理规定\n内容\n\n"
             "第二条 实施细则\n内容\n\n"
             "第三条 监督检查\n内容\n"
         )
         result = profile_document(text)
-        # gb_standard has >= 3 headings, so it should win
+        # gb_standard has >= 3 headings AND text contains "GB/T", so it should win
         assert result["doc_type"] == "gb_standard"

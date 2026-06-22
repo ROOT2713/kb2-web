@@ -160,7 +160,14 @@ def profile_document(text: str) -> dict:
     headings = []
     confidence = 0.0
 
-    if total_gb >= 3:
+    # Phase B (post-merge): 引入 title-based gate 防止博客被误判为 gb_standard
+    # 仅当文档正文出现真实标准号编码（GB/JJF/JJG/GA/ISO/T/EGAG/DB**/GDZW）
+    # 或编号超过 5 个时才升级 gb_standard。这是对历史 "1. xxx 2. xxx 3. xxx" 
+    # 博客误标问题的硬约束（profile_document 仅接 text，标题验证由 caller 在 upload
+    # 流程处理）
+    has_explicit_gb_ref = bool(re.search(r"\b(GB|JJF|JJG|GA|ISO|T/?EGAG|DB\d+|GDZW)[/_\s∕]", text[:2000], re.I))
+
+    if total_gb >= 3 and (total_gb >= 5 or has_explicit_gb_ref):
         doc_type = "gb_standard"
         headings = gb_headings
         confidence = min(1.0, total_gb / 10)
