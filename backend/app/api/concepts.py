@@ -1,12 +1,14 @@
 """Concept management endpoints — get, search, list by doc.
 
 OKF P0-5: concept 级检索 API。
+Phase B #4: frontmatter format support on GET /api/concepts/get.
 """
 
 import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -67,11 +69,14 @@ def search_concepts(
 @router.get("/get")
 def get_concept(
     concept_id: str = Query(..., description="Concept ID (含斜杠，如 standards/security/gb-50116)"),
+    format: str = Query("json", description="输出格式: json 或 frontmatter"),
     db: Session = Depends(get_db),
 ):
     """获取单个 concept 详情（含完整内容）。
 
     使用 query parameter 而非 path parameter，因为 concept_id 含斜杠。
+
+    format=frontmatter 时返回 OKF 标准 YAML frontmatter 格式。
     """
     concept = db.query(Concept).filter(Concept.concept_id == concept_id).first()
     if not concept:
@@ -82,6 +87,14 @@ def get_concept(
     concept.access_count = (concept.access_count or 0) + 1
     concept.last_accessed_at = datetime.now(timezone.utc)
     db.commit()
+
+    # Phase B #4: frontmatter format
+    if format == "frontmatter":
+        from app.services.frontmatter import concept_to_frontmatter
+        fm = concept_to_frontmatter(db, concept_id)
+        if fm is None:
+            raise HTTPException(404, f"Concept not found: {concept_id}")
+        return PlainTextResponse(fm, media_type="text/yaml; charset=utf-8")
 
     # Phase A: include parent document's review_required + last_confirmed
     result = concept.to_full_dict()

@@ -170,6 +170,11 @@ class TestGetStaleSummary:
 
     def test_summary(self, db_session):
         """统计各状态文档数量。"""
+        # Clean slate (defend against leakage from prior tests in the same module)
+        from sqlalchemy import text as _sa_text
+        db_session.execute(_sa_text("DELETE FROM documents"))
+        db_session.commit()
+
         docs = [
             Document(doc_id=f"doc-{i}", title=f"Doc {i}", bank="general", status="active")
             for i in range(5)

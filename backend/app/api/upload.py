@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.database import SessionLocal
-from app.models.document import ParentChunk
+from app.models.document import Document, ParentChunk
 from app.services.concept_gen import generate_concepts_for_doc, infer_doc_concept_id, infer_domain, _BANK_TO_DOMAIN
 from app.repositories.document_repo import DocumentRepository
 from app.repositories.vector_repo import HindsightStore
@@ -94,8 +94,44 @@ async def upload_document(
         logger.exception("文档解析异常: %s", e)
         raise HTTPException(500, f"文档解析异常: {e}")
 
+    # ── Phase B #6: Pre-flight 2 — G1 硬拒收（在旧"内容过短"检查之前）──
+    from app.services.quality_gates import hard_check_g1
+    # title 缺省时回退到 filename（去扩展名），避免误拒
+    effective_title = (title or "").strip() or (Path(file.filename).stem if file.filename else "")
+    g1_early = hard_check_g1(text or "", effective_title)
+    if not g1_early["passed"]:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "QUALITY_GATE_G1_FAIL",
+                "issues": g1_early["issues"],
+            },
+        )
+
     if not text or len(text.strip()) < 10:
-        raise HTTPException(400, "文档内容过短")
+        # 兜底：万一 G1 没拦住，这里也用 422 而不是 400
+        raise HTTPException(422, detail={"code": "QUALITY_GATE_G1_FAIL", "issues": ["文档内容过短"]})
+
+    # ── Phase B #6: Pre-flight 1 — content_hash 重复检查（文本规范化后）──
+    text_normalized = text.replace('\r\n', '\n').strip()
+    normalized_hash = hashlib.sha256(text_normalized.encode('utf-8')).hexdigest()
+    db = SessionLocal()
+    try:
+        existing = db.query(Document).filter(
+            Document.content_hash == normalized_hash,
+            Document.status == "active",
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "DUPLICATE_CONTENT",
+                    "message": f"内容哈希重复，已存在文档: {existing.title}",
+                    "existing_doc_id": existing.doc_id,
+                },
+            )
+    finally:
+        db.close()
 
     # ── 质量评估 ──
     quality = assess_quality(text)
@@ -110,8 +146,8 @@ async def upload_document(
             },
         }
 
-    # ── 去重检测：按文件内容 SHA256 查重 ──
-    content_hash = hashlib.sha256(content).hexdigest()
+    # ── 去重检测：复用 pre-flight 阶段计算好的 normalized_hash ──
+    content_hash = normalized_hash  # Phase B #6: 使用文本规范化后的 hash
     db = SessionLocal()
     try:
         doc_repo = _get_doc_repo(db)
@@ -308,7 +344,6 @@ async def upload_document(
         )
 
         # ── P0-1 + P0-3: 写入 OKF 字段到文档 ──
-        from app.models.document import Document
         doc_record = db.query(Document).filter(Document.doc_id == doc_id).first()
         if doc_record:
             doc_record.profile_confidence = profile.get("confidence", 0.5)

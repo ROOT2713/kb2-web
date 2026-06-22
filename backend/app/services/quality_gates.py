@@ -279,3 +279,71 @@ def _log_gate_result(db: Session, doc_id: str, results: List[GateResult]):
         db.add(log)
 
     db.flush()  # 不 commit，由调用方决定
+
+
+# ── Phase B #6: Pre-flight hard gate checks (no DB round-trip) ──
+
+def hard_check_g1(text: str, title: str) -> Dict:
+    """硬模式 G1 检查：上传前快速拒绝明显无效文档。
+
+    与 _check_g1_format 不同：
+    - 不需要 Document 对象（pre-flight，文档尚未入库）
+    - 返回严格 pass/fail（不是打分制）
+    - 不记录到 quality_gate_log
+
+    Rules:
+      1. 内容字符数 < 100 → fail (鬼文档)
+      2. 乱码占比 > 30% → fail
+      3. 标题为空或全空白 → fail
+      4. 内容是纯重复字符 → fail
+
+    Returns:
+        {"passed": bool, "issues": [str, ...]}
+    """
+    issues = []
+
+    # Rule 1: 内容过短
+    clean_text = (text or "").strip()
+    if len(clean_text) < 100:
+        issues.append(f"内容过短（{len(clean_text)} 字符），至少需要 100 字符")
+
+    # Rule 2: 乱码检测
+    if clean_text:
+        garbage_count = 0
+        for ch in clean_text:
+            code = ord(ch)
+            # U+FFFD replacement character
+            if code == 0xFFFD:
+                garbage_count += 1
+            # 控制字符（除常见空白和换行）
+            elif code < 0x20 and code not in (0x09, 0x0A, 0x0D):
+                garbage_count += 1
+        garbage_ratio = garbage_count / max(len(clean_text), 1)
+        if garbage_ratio > 0.30:
+            issues.append(f"乱码占比过高（{garbage_ratio*100:.1f}%），超过 30% 阈值")
+
+    # Rule 3: 标题为空
+    if not title or not title.strip():
+        issues.append("标题为空或全空白")
+
+    # Rule 4: 纯重复字符
+    if clean_text:
+        # 检查是否由少数几种字符重复组成（取去重后字符种类数 / 总长度）
+        unique_chars = set(clean_text)
+        if len(unique_chars) <= 3 and len(clean_text) > 10:
+            issues.append("内容疑似纯重复字符（有效字符种类过少）")
+        # 额外检查：同一字符连续出现超过 80% 文本长度
+        from collections import Counter
+        char_counts = Counter(clean_text)
+        if char_counts:
+            most_common_ratio = char_counts.most_common(1)[0][1] / len(clean_text)
+            if most_common_ratio > 0.80 and len(clean_text) > 10:
+                issues.append(
+                    f"单一字符'{char_counts.most_common(1)[0][0]}'占比过高"
+                    f"（{most_common_ratio*100:.0f}%），疑似无效内容"
+                )
+
+    return {
+        "passed": len(issues) == 0,
+        "issues": issues,
+    }

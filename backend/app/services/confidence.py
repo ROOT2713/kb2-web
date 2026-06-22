@@ -75,8 +75,14 @@ def compute_concept_confidence(
     access = concept.access_count or 0
     scores["access_frequency"] = min(access / MAX_ACCESS_SCORE, 1.0)
 
-    # 维度 4: contradiction — 矛盾数（暂无实现，返回 1.0）
-    scores["contradiction"] = 1.0  # TODO: 检测矛盾
+    # 维度 4: contradiction — 矛盾检测（Phase B #3: embedding-based）
+    try:
+        from app.services.contradiction import compute_contradiction_score
+        scores["contradiction"] = compute_contradiction_score(db, concept)
+    except Exception as e:
+        logger.warning("Contradiction score failed for %s: %s, defaulting to 1.0",
+                       concept_id, e)
+        scores["contradiction"] = 1.0
 
     # 加权计算
     confidence = sum(
