@@ -371,13 +371,12 @@ def has_true_contradiction(db: Session, doc_id: str) -> bool:
     """
     row = db.execute(
         sa_text("""SELECT 1 FROM concept_contradictions cc
-            JOIN concepts ca ON ca.concept_id = cc.concept_a_id AND ca.doc_id = :did
             WHERE cc.llm_verdict = 'TRUE_CONTRADICTION'
-            LIMIT 1
-            UNION
-            SELECT 1 FROM concept_contradictions cc
-            JOIN concepts cb ON cb.concept_id = cc.concept_b_id AND cb.doc_id = :did
-            WHERE cc.llm_verdict = 'TRUE_CONTRADICTION'
+            AND (
+                cc.concept_a_id IN (SELECT concept_id FROM concepts WHERE doc_id = :did)
+                OR
+                cc.concept_b_id IN (SELECT concept_id FROM concepts WHERE doc_id = :did)
+            )
             LIMIT 1"""),
         {"did": doc_id},
     ).fetchone()

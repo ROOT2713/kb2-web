@@ -235,8 +235,9 @@ def _flag_doc_for_review(db: Session, concept_id: str):
             from sqlalchemy import text as sa_text
             judged_rows = db.execute(
                 sa_text("""SELECT 1 FROM concept_contradictions cc
-                    JOIN concepts c ON c.concept_id IN (cc.concept_a_id, cc.concept_b_id)
-                    WHERE c.doc_id = :did LIMIT 1"""),
+                    WHERE cc.concept_a_id IN (SELECT concept_id FROM concepts WHERE doc_id = :did)
+                       OR cc.concept_b_id IN (SELECT concept_id FROM concepts WHERE doc_id = :did)
+                    LIMIT 1"""),
                 {"did": doc.doc_id},
             ).fetchone()
 
