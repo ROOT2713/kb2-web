@@ -1116,6 +1116,28 @@ async def query(
         kg_info=kg_info,
     )
 
+    # ── Phase C1: Standard Number Exact Match Boost ──
+    # Detect standard numbers in query (GB/T 22239, JJF 1059.1, etc.) and force-inject
+    # matched DB docs into doc_facts. Fixes recall=0 cases where doc exists in DB
+    # but Hindsight ranking pushes it out of top-5.
+    try:
+        from app.services.standard_boost import boost_exact_standards
+        boost_db = SessionLocal()
+        try:
+            boost_stats = boost_exact_standards(
+                boost_db, q, ctx["doc_facts"], ctx["title_map"], bank=bank,
+            )
+            if boost_stats["docs_injected"]:
+                logger.info(
+                    "[C1-StdBoost] Injected %d docs (%d chunks) for %d std numbers",
+                    boost_stats["docs_injected"], boost_stats["chunks_injected"],
+                    boost_stats["std_nums_detected"],
+                )
+        finally:
+            boost_db.close()
+    except Exception as e:
+        logger.warning("[C1-StdBoost] Skipped due to error: %s", e)
+
     # ── Phase B #5: KG Traversal — 沿 KG 边做 2-hop BFS 拉取关联 concept ──
     kg_context_list = []
     kg_context_text = ""
