@@ -23,6 +23,7 @@ from app.services.concept_gen import generate_concepts_for_doc, infer_doc_concep
 from app.repositories.document_repo import DocumentRepository
 from app.repositories.vector_repo import HindsightStore
 from app.services.cache_service import invalidate_bm25_cache
+from scripts.kg_client import kg_index_document
 from app.services.chunking import (
     heading_chunk,
     parent_child_chunk,
@@ -449,6 +450,8 @@ async def upload_document(
                 if integrity.get("status") == "ok":
                     doc.searchable = 1
             doc.verified_at = datetime.now(timezone.utc)
+            # Phase A: mark knowledge as confirmed at upload time
+            doc.last_confirmed = datetime.now(timezone.utc)
             db.commit()
             logger.info("Updated metadata for %s: searchable=%s, coverage=%.1f%%", doc_id[:8], doc.searchable, doc.coverage_pct)
     except Exception as e:
@@ -462,11 +465,7 @@ async def upload_document(
         asyncio.create_task(_verify_searchable(doc_id, doc_title, len(text), hs_bank))
 
     # ── KG 索引：异步写入知识图谱 ──
-    try:
-        from scripts.kg_client import kg_index_document
-        asyncio.create_task(asyncio.to_thread(kg_index_document, doc_id, doc_title, text, bank))
-    except Exception as e:
-        logger.warning("KG index task skipped: %s", e)
+    asyncio.create_task(asyncio.to_thread(kg_index_document, doc_id, doc_title, text, bank))
 
     # ── 上传成功后清除该 bank 的 BM25 缓存 ──
     invalidate_bm25_cache(bank=bank)

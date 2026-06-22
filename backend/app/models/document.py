@@ -40,6 +40,8 @@ class Document(Base):
     supersedes = Column(String, nullable=True)                # doc_id that this version replaced
     stale_at = Column(DateTime, nullable=True)                # when marked stale
     stale_reason = Column(String, nullable=True)              # why stale
+    review_required = Column(Integer, default=0)              # 0=no review needed, 1=review recommended (confidence < 0.7)
+    last_confirmed = Column(DateTime, nullable=True)          # last time knowledge was confirmed
     version = Column(String, default="1.0.0")                 # document version
     source_url = Column(String, nullable=True)                # original source URL
     chunk_count = Column(Integer, default=0)                  # total chunks (denormalized for fast query)
@@ -65,10 +67,14 @@ class Document(Base):
         # OKF fields (only if set)
         for attr in ("concept_id", "domain", "subdomain", "profile_confidence",
                       "status", "superseded_by", "supersedes", "stale_at",
-                      "stale_reason", "version", "source_url", "chunk_count"):
+                      "stale_reason", "review_required", "last_confirmed",
+                      "version", "source_url", "chunk_count"):
             val = getattr(self, attr)
             if val is not None:
-                d[attr] = val
+                if isinstance(val, datetime):
+                    d[attr] = val.isoformat()
+                else:
+                    d[attr] = val
         return d
 
 

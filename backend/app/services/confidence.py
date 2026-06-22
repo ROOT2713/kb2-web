@@ -22,6 +22,7 @@ import math
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.document import Document
@@ -151,6 +152,9 @@ def update_concept_confidence(
             concept.confidence = new_conf
             db.flush()
 
+    # Phase A: always sync doc.review_required based on current doc-level min
+    _flag_doc_for_review(db, concept_id)
+
     return new_conf
 
 
@@ -173,6 +177,9 @@ def update_all_confidences(
             updated += 1
         total += 1
 
+        # Phase A: always sync doc.review_required based on current doc-level min
+        _flag_doc_for_review(db, concept.concept_id)
+
         if total % batch_size == 0:
             db.flush()
 
@@ -184,6 +191,34 @@ def update_all_confidences(
         "updated": unchanged,
         "changed": updated,
     }
+
+
+def _flag_doc_for_review(db: Session, concept_id: str):
+    """Sync review_required on the document that owns this concept.
+
+    Phase A semantics: review_required reflects the doc-level minimum
+    concept confidence. If ANY concept on this doc has confidence < 0.7,
+    set 1; if ALL concepts are >= 0.7, clear to 0.
+    """
+    concept = db.query(Concept).filter(Concept.concept_id == concept_id).first()
+    if not concept:
+        return
+    doc = db.query(Document).filter(Document.doc_id == concept.doc_id).first()
+    if not doc or doc.status != "active":
+        return
+
+    # Compute doc-level min confidence across all active concepts
+    min_conf = db.query(func.min(Concept.confidence)).filter(
+        Concept.doc_id == doc.doc_id,
+        Concept.status == "active",
+    ).scalar()
+
+    new_flag = 1 if (min_conf is not None and min_conf < 0.7) else 0
+    if doc.review_required != new_flag:
+        doc.review_required = new_flag
+        db.flush()
+        logger.info("Sync doc %s review_required=%d (min concept conf=%s)",
+                    doc.doc_id[:8], new_flag, min_conf)
 
 
 def _time_decay_score(dt: Optional[datetime]) -> float:

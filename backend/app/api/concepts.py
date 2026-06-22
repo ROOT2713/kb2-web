@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.database import get_db
 from app.models.concept import Concept
+from app.models.document import Document
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,15 @@ def get_concept(
     concept.last_accessed_at = datetime.now(timezone.utc)
     db.commit()
 
-    return concept.to_full_dict()
+    # Phase A: include parent document's review_required + last_confirmed
+    result = concept.to_full_dict()
+    doc = db.query(Document).filter(Document.doc_id == concept.doc_id).first()
+    if doc:
+        result["review_required"] = doc.review_required or 0
+        if doc.last_confirmed:
+            result["last_confirmed"] = doc.last_confirmed.isoformat()
+
+    return result
 
 
 @router.get("")
