@@ -2,12 +2,17 @@
 
 Phase B #3: 替代 confidence 公式中 contradiction = 1.0 的 placeholder。
 
-实现：同 domain/subdomain 下找 sibling concepts，取最低余弦相似度。
-使用 Hindsight 向量库的 cached embedding（优先）或调用 embedding API。
-若 min_sim < 0.3 → 强矛盾（返回 min_sim），否则无矛盾（返回 1.0）。
+实现：同 domain 下找 sibling concepts，取最低余弦相似度。
+使用 SiliconFlow BGE-M3 embedding API（通过 get_embedding）。
+若 min_sim < CONTRADICTION_THRESHOLD → 强矛盾（返回 min_sim），否则无矛盾（返回 1.0）。
 
-这是阶段 A 级实现，目标是消除假分而非完美的矛盾检测。
+这是阶段 B 级实现，目标是消除假分而非完美的矛盾检测。
 如果向量调用失败，降级返回 1.0 并 log warning。
+
+阈值校准（基于 BGE-M3 实测 standards domain 40 样本）：
+- global_min=0.37, global_avg=0.48, global_max=0.88
+- 阈值 0.3 永远不触发（所有标准都 ≥ 0.37）
+- 阈值 0.4 = 触发约 20% 文档（avg-1σ 区间）—— 视为"强语义偏离"
 """
 
 import logging
@@ -23,7 +28,9 @@ from app.utils.embeddings import get_embedding
 logger = logging.getLogger(__name__)
 
 # 矛盾阈值：余弦相似度低于此值视为强矛盾
-CONTRADICTION_THRESHOLD = 0.3
+# 校准依据：BGE-M3 standards domain 实测 40 样本，min=0.37 avg=0.48
+# 0.40 阈值对应"显著偏离同 domain 主流话题"
+CONTRADICTION_THRESHOLD = 0.40
 # 最多检查多少个 sibling concepts
 MAX_SIBLINGS = 20
 # 实际计算用的 sibling 数量（从候选池中抽样）
@@ -35,21 +42,22 @@ def compute_contradiction_score(db: Session, concept: Concept) -> float:
 
     Returns:
         0.0 = 完全矛盾, 1.0 = 无矛盾。
-        实际实现：取最低余弦相似度，< 0.3 时返回该值，否则返回 1.0。
+        实际实现：取最低余弦相似度，< CONTRADICTION_THRESHOLD 时返回该值，否则返回 1.0。
     """
     if not concept or not concept.concept_id:
         return 1.0
 
-    # 1. 提取 prefix（domain/subdomain/slug 层级）
+    # 1. 提取 domain prefix（parts[0]：standards / methodology / learning 等）
+    # 注意：parts[:2] 是 domain/slug（每个文档独有），无法跨文档；必须用 parts[:1]
     parts = concept.concept_id.split("/")
     if len(parts) < 2:
         return 1.0
-    prefix = "/".join(parts[:2])  # domain/subdomain
+    domain_prefix = parts[0] + "/"  # e.g. "standards/"
 
-    # 2. 找 sibling concepts（同 prefix 下的其他 active concept）
+    # 2. 找 sibling concepts（同 domain 下的其他 active concept，跨文档）
     siblings = db.query(Concept).filter(
-        Concept.concept_id.like(f"{prefix}%"),
-        Concept.concept_id != concept.concept_id,
+        Concept.concept_id.like(f"{domain_prefix}%"),
+        Concept.doc_id != concept.doc_id,  # 必须是其他文档的 concept
         Concept.status == "active",
     ).limit(MAX_SIBLINGS).all()
 
