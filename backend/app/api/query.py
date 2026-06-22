@@ -395,6 +395,31 @@ async def _build_search_context(
             doc_facts[doc_id] = []
         doc_facts[doc_id].append((text_val, doc_name, cleaned, parent_idx))
 
+    # ── Phase H: Query-doc title 相关度重排 ──
+    # 当 bank="all" 触发多 bank 分散查询时，Dense (Hindsight) 返回的各 bank
+    # top 结果可能包含与 query 主题完全无关的文档（BM25 IDF 分布变化后更明显）。
+    # 修复: 用 query_keywords 提取高信号词，把 doc_name 含高信号词的 doc 排到
+    # doc_facts 前面，让 LLM 先看到主题相关的文档。
+    _high_signal: set[str] = set()
+    for _kw in (query_keywords or []):
+        _kw_s = _kw.strip()
+        if len(_kw_s) >= 3:
+            _high_signal.add(_kw_s.lower())
+        elif any(c.isascii() and c.isalnum() for c in _kw_s) and len(_kw_s) >= 2:
+            _high_signal.add(_kw_s.lower())
+
+    if _high_signal and doc_facts:
+        _matched = {}
+        _unmatched = {}
+        for _did, _facts in doc_facts.items():
+            _dname = _facts[0][1].lower() if _facts else ""
+            if any(_t in _dname for _t in _high_signal):
+                _matched[_did] = _facts
+            else:
+                _unmatched[_did] = _facts
+        # Matched docs first (preserve original order within each group)
+        doc_facts = {**_matched, **_unmatched}
+
     return {
         "all_results": all_results,
         "doc_facts": doc_facts,
