@@ -892,6 +892,46 @@ async def _generate_answer(
     context = "\n\n---\n\n".join(context_parts)
     sources = sources[:12]
 
+    # ── Phase C2: Core Claims 速查卡 — 注入命中文档的 concept.summary ──
+    # 对每个出现在 doc_facts 中的文档，拉取其 top-3 个有 summary 的 concept，
+    # 构建一个"速查卡"段落，让 LLM 在阅读原文 chunks 之前先获得结构化核心事实。
+    core_claims_context = ""
+    try:
+        cc_db = SessionLocal()
+        try:
+            cc_parts = []
+            for doc_id in list(doc_facts.keys())[:8]:  # 最多 8 个文档
+                rows = cc_db.execute(
+                    sa_text(
+                        "SELECT title, summary FROM concepts "
+                        "WHERE doc_id=:did AND status='active' "
+                        "AND summary IS NOT NULL AND summary != '' "
+                        "ORDER BY concept_id LIMIT 3"
+                    ),
+                    {"did": doc_id},
+                ).fetchall()
+                if not rows:
+                    continue
+                doc_name = title_map.get(doc_id, doc_id[:50])
+                summaries = []
+                for title, summary in rows:
+                    label = (title or "")[:40]
+                    s = (summary or "")[:250]
+                    if s:
+                        summaries.append(f"  · {label}: {s}")
+                if summaries:
+                    cc_parts.append(f"[速查卡: {doc_name}]\n" + "\n".join(summaries))
+            if cc_parts:
+                core_claims_context = (
+                    "【知识速查卡 — 以下是从相关文档中提取的核心事实摘要，"
+                    "帮助您快速理解文档核心内容后再回答用户问题】\n"
+                    + "\n\n".join(cc_parts)
+                )
+        finally:
+            cc_db.close()
+    except Exception as e:
+        logger.warning("[C2-CoreClaims] Failed to inject core claims: %s", e)
+
     # ── Phase B #5: KG context 注入 ──
     if kg_context_text:
         context = (
@@ -901,6 +941,10 @@ async def _generate_answer(
             + "\n\n---\n\n"
             + context
         )
+
+    # ── C2 速查卡 注入（最顶层，让 LLM 先读凝练事实） ──
+    if core_claims_context:
+        context = core_claims_context + "\n\n---\n\n" + context
 
     # ── T7补充：金额类查询定向注入费率表 ──
     _has_rate = any(t in p for p in context_parts for t in ["3%", "3\\"])
