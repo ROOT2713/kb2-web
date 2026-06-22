@@ -895,12 +895,34 @@ async def _generate_answer(
     # ── Phase C2: Core Claims 速查卡 — 注入命中文档的 concept.summary ──
     # 对每个出现在 doc_facts 中的文档，拉取其 top-3 个有 summary 的 concept，
     # 构建一个"速查卡"段落，让 LLM 在阅读原文 chunks 之前先获得结构化核心事实。
+    #
+    # Phase F 修复: 速查卡 query-doc 相关度过滤
+    # 当 retrieval top-doc 与 query 主题不相关时（BM25 通用词误命中），
+    # 速查卡会放大错误——LLM 先读到错误 doc 的 summary 后直接否定。
+    # 修复: 从 query_keywords 提取高信号词（长度>=3 或含拉丁字母/数字），
+    # doc_name 必须包含至少 1 个高信号词才注入速查卡。
+    _high_signal_terms: set[str] = set()
+    for _kw in (query_keywords or []):
+        _kw_s = _kw.strip()
+        if len(_kw_s) >= 3:
+            _high_signal_terms.add(_kw_s.lower())
+        elif any(c.isascii() and c.isalnum() for c in _kw_s) and len(_kw_s) >= 2:
+            _high_signal_terms.add(_kw_s.lower())
+
     core_claims_context = ""
     try:
         cc_db = SessionLocal()
         try:
             cc_parts = []
+            _cc_skipped = 0
             for doc_id in list(doc_facts.keys())[:8]:  # 最多 8 个文档
+                doc_name = title_map.get(doc_id, doc_id[:50])
+                # Phase F: 相关度过滤 — doc_name 必须含至少 1 个 query 高信号词
+                if _high_signal_terms:
+                    _d_lower = doc_name.lower()
+                    if not any(_t in _d_lower for _t in _high_signal_terms):
+                        _cc_skipped += 1
+                        continue
                 rows = cc_db.execute(
                     sa_text(
                         "SELECT title, summary FROM concepts "
