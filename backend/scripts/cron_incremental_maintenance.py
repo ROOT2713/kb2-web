@@ -45,6 +45,27 @@ logging.basicConfig(
 logger = logging.getLogger("cron_maintenance")
 
 
+def _run_async(coro):
+    """Safely run an async coroutine from sync context.
+
+    CC HIGH#3: asyncio.run() raises RuntimeError if an event loop is already
+    running (e.g., cron embedded in FastAPI lifespan). This wrapper falls back
+    to the existing loop's run_until_complete() when available.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        # Already in an event loop — create a new loop in a separate thread
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    else:
+        return asyncio.run(coro)
+
+
 def _load_kg_client():
     """Load kg_client.py dynamically (not a proper package)."""
     spec = importlib.util.spec_from_file_location(
@@ -158,7 +179,7 @@ def phase_1_backfill_concepts(db, dry_run: bool = False) -> dict:
 
             # 5) Backfill summaries
             if concept_count > 0:
-                summary_count = asyncio.run(
+                summary_count = _run_async(
                     generate_summaries_batch(db, doc_id, limit=100)
                 )
                 db.commit()
@@ -212,7 +233,7 @@ def phase_2_backfill_summaries(db, dry_run: bool = False) -> dict:
         doc_id = str(doc_id)
         try:
             logger.info("[G2b] %s: %d summaries missing", doc_id[:8], missing_count)
-            count = asyncio.run(generate_summaries_batch(db, doc_id, limit=100))
+            count = _run_async(generate_summaries_batch(db, doc_id, limit=100))
             db.commit()
             logger.info("[G2b] %s: %d summaries backfilled", doc_id[:8], count)
             processed += 1

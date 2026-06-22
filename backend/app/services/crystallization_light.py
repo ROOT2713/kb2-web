@@ -83,19 +83,16 @@ def _call_deepseek_judge(
     """
     import requests, os
 
+    # CC HIGH#1: 统一用 python-dotenv 加载 .env，避免手动 split("=") 截断含 = 的值
+    try:
+        from dotenv import load_dotenv
+        load_dotenv("/home/ubuntu/kb2-web/backend/.env")
+    except ImportError:
+        pass  # dotenv 未安装时 fallback 到环境变量
+
     api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("LLM_API_KEY") or ""
     if not api_key:
-        # Try .env
-        env_path = "/home/ubuntu/kb2-web/backend/.env"
-        if os.path.exists(env_path):
-            with open(env_path) as f:
-                for line in f:
-                    if "DEEPSEEK_API_KEY" in line or "LLM_API_KEY" in line:
-                        api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
-                        break
-
-    if not api_key:
-        logger.error("DEEPSEEK_API_KEY not configured")
+        logger.error("DEEPSEEK_API_KEY / LLM_API_KEY not configured")
         return []
 
     # Build prompt

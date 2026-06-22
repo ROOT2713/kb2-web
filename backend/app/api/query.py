@@ -57,6 +57,28 @@ router = APIRouter()
 # ═══════════════════════════════════════════════════════════════════════
 
 
+def _extract_high_signal_terms(query_keywords: list[str] | None) -> set[str]:
+    """Extract high-signal terms from query keywords for query-doc relevance.
+
+    Used by:
+    - Phase F (速查卡过滤): skip concept summary injection for unrelated docs
+    - Phase H (doc_facts 重排): move topically-matched docs to front
+
+    Rules:
+    - Chinese terms: length >= 3 chars (filters out '系统', '方法' etc.)
+    - ASCII/alnum terms: length >= 2 (keeps 'RAG', 'GB/T', '25000' etc.)
+    - All terms lowercased for case-insensitive matching
+    """
+    high_signal: set[str] = set()
+    for kw in (query_keywords or []):
+        kw_s = kw.strip()
+        if len(kw_s) >= 3:
+            high_signal.add(kw_s.lower())
+        elif any(c.isascii() and c.isalnum() for c in kw_s) and len(kw_s) >= 2:
+            high_signal.add(kw_s.lower())
+    return high_signal
+
+
 async def _build_search_context(
     q: str,
     bank: str,
@@ -398,15 +420,8 @@ async def _build_search_context(
     # ── Phase H: Query-doc title 相关度重排 ──
     # 当 bank="all" 触发多 bank 分散查询时，Dense (Hindsight) 返回的各 bank
     # top 结果可能包含与 query 主题完全无关的文档（BM25 IDF 分布变化后更明显）。
-    # 修复: 用 query_keywords 提取高信号词，把 doc_name 含高信号词的 doc 排到
-    # doc_facts 前面，让 LLM 先看到主题相关的文档。
-    _high_signal: set[str] = set()
-    for _kw in (query_keywords or []):
-        _kw_s = _kw.strip()
-        if len(_kw_s) >= 3:
-            _high_signal.add(_kw_s.lower())
-        elif any(c.isascii() and c.isalnum() for c in _kw_s) and len(_kw_s) >= 2:
-            _high_signal.add(_kw_s.lower())
+    # 修复: 把 doc_name 含高信号词的 doc 排到 doc_facts 前面，让 LLM 先看到主题相关的文档。
+    _high_signal = _extract_high_signal_terms(query_keywords)
 
     if _high_signal and doc_facts:
         _matched = {}
@@ -924,15 +939,8 @@ async def _generate_answer(
     # Phase F 修复: 速查卡 query-doc 相关度过滤
     # 当 retrieval top-doc 与 query 主题不相关时（BM25 通用词误命中），
     # 速查卡会放大错误——LLM 先读到错误 doc 的 summary 后直接否定。
-    # 修复: 从 query_keywords 提取高信号词（长度>=3 或含拉丁字母/数字），
-    # doc_name 必须包含至少 1 个高信号词才注入速查卡。
-    _high_signal_terms: set[str] = set()
-    for _kw in (query_keywords or []):
-        _kw_s = _kw.strip()
-        if len(_kw_s) >= 3:
-            _high_signal_terms.add(_kw_s.lower())
-        elif any(c.isascii() and c.isalnum() for c in _kw_s) and len(_kw_s) >= 2:
-            _high_signal_terms.add(_kw_s.lower())
+    # 修复: doc_name 必须包含至少 1 个高信号词才注入速查卡。
+    _high_signal_terms = _extract_high_signal_terms(query_keywords)
 
     core_claims_context = ""
     try:
