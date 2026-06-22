@@ -74,6 +74,79 @@ def _truncate_at_sentence_boundary(text: str, max_len: int = 800) -> str:
     return text[:max_len]
 
 
+def _clause_split(text: str, max_child_size: int = 800) -> list:
+    """对大文本按条款编号模式拆分为子块。
+
+    检测模式：
+    1. 嵌套编号: 5.1.1, 5.1.2, A.1.1 等
+    2. 条款编号: 第1条, 第2条 等
+    3. 字母编号: a) b) c) 或 (a) (b) (c)
+
+    如果未检测到编号模式，按段落（空行）拆分。
+    每个子块不超过 max_child_size。
+
+    Returns: [{"text": str, "clause_id": str}, ...]
+    """
+    if len(text) <= max_child_size:
+        return [{"text": text, "clause_id": ""}]
+
+    lines = text.split("\n")
+
+    # Pattern 1: 嵌套编号 (5.1.1, A.2.3, etc.)
+    re_clause = re.compile(r'^(\d+(?:\.\d+)+|[A-Z]\.\d+(?:\.\d+)*)\s')
+
+    # Pattern 2: 条款编号 (第N条)
+    re_article = re.compile(r'^(第[一二三四五六七八九十百千零\d]+[条款章节])')
+
+    # Pattern 3: 字母编号 a) b) c) 或 (a) (b) (c)
+    re_letter = re.compile(r'^[（(]?[a-z][)）]')
+
+    # Find clause boundaries
+    boundaries = []  # [(line_idx, clause_id)]
+    for i, line in enumerate(lines):
+        line_stripped = line.strip()
+        m = re_clause.match(line_stripped)
+        if m:
+            boundaries.append((i, m.group(1)))
+            continue
+        m = re_article.match(line_stripped)
+        if m:
+            boundaries.append((i, m.group(1)))
+            continue
+        # Only match letter patterns if they appear at start of line
+        # and we already have at least one other boundary type
+        if boundaries and re_letter.match(line_stripped):
+            boundaries.append((i, line_stripped[:10]))
+
+    if len(boundaries) < 2:
+        # No clause boundaries found, try splitting by paragraphs
+        boundaries = []
+        for i, line in enumerate(lines):
+            if line.strip() == "" and i > 0 and lines[i - 1].strip() != "":
+                boundaries.append((i, f"para-{i}"))
+
+    if len(boundaries) < 2:
+        # Still no boundaries, hard split at max_child_size
+        chunks = []
+        for start in range(0, len(text), max_child_size):
+            chunk_text = text[start:start + max_child_size]
+            chunks.append({"text": chunk_text, "clause_id": f"chunk-{start}"})
+        return chunks
+
+    # Extract clause texts
+    clauses = []
+    for idx, (line_idx, clause_id) in enumerate(boundaries):
+        end_line = boundaries[idx + 1][0] if idx + 1 < len(boundaries) else len(lines)
+        clause_text = "\n".join(lines[line_idx:end_line]).strip()
+        if clause_text:
+            # If clause is too large, truncate at sentence boundary
+            clause_text = _truncate_at_sentence_boundary(clause_text, max_child_size)
+            clauses.append({"text": clause_text, "clause_id": clause_id})
+
+    return clauses if clauses else [{"text": text, "clause_id": ""}]
+
+
+
 def _parse_section_number(title: str):
     """Extract the numeric part from a heading title for level comparison.
 
@@ -356,15 +429,27 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
                     if len(child_text) < min_child_size:
                         # Still too small, use as-is
                         pass
-
-                results.append({
-                    "child": _truncate_at_sentence_boundary(child_text, 800),
-                    "parent": all_text[:max_parent_size],
-                    "child_index": child_index,
-                    "parent_index": parent_index,
-                    "section_hint": section_hint,
-                })
-                child_index += 1
+                # P0-4: 如果子块过大，按条款拆分
+                if len(child_text) > 800:
+                    clauses = _clause_split(child_text, max_child_size=800)
+                    for clause in clauses:
+                        results.append({
+                            "child": clause["text"],
+                            "parent": all_text[:max_parent_size],
+                            "child_index": child_index,
+                            "parent_index": parent_index,
+                            "section_hint": section_hint,
+                        })
+                        child_index += 1
+                else:
+                    results.append({
+                        "child": _truncate_at_sentence_boundary(child_text, 800),
+                        "parent": all_text[:max_parent_size],
+                        "child_index": child_index,
+                        "parent_index": parent_index,
+                        "section_hint": section_hint,
+                    })
+                    child_index += 1
 
             parent_index += 1
 
@@ -428,8 +513,7 @@ def _heading_chunk_regulation(text: str, headings: list) -> list:
                 "section_hint": section_hint,
             })
             child_index += 1
-
-        parent_index += 1
+            parent_index += 1
 
     return results
 

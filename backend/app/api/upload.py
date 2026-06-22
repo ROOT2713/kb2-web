@@ -18,10 +18,12 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.database import SessionLocal
-from app.models.document import ParentChunk
+from app.models.document import Document, ParentChunk
+from app.services.concept_gen import generate_concepts_for_doc, infer_doc_concept_id, infer_domain, _BANK_TO_DOMAIN
 from app.repositories.document_repo import DocumentRepository
 from app.repositories.vector_repo import HindsightStore
 from app.services.cache_service import invalidate_bm25_cache
+from scripts.kg_client import kg_index_document
 from app.services.chunking import (
     heading_chunk,
     parent_child_chunk,
@@ -40,6 +42,10 @@ router = APIRouter()
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
 MAX_BATCH_FILES = 20
 MAX_BATCH_TOTAL_SIZE = 500 * 1024 * 1024  # 500 MB
+
+# ── P0-3: bank → OKF domain 映射 (定义在 concept_gen.py，此处引用) ──
+# _infer_domain 已统一到 concept_gen.infer_domain()，此处保留别名
+_infer_domain = infer_domain
 
 
 def _get_doc_repo(db: Session) -> DocumentRepository:
@@ -88,8 +94,44 @@ async def upload_document(
         logger.exception("文档解析异常: %s", e)
         raise HTTPException(500, f"文档解析异常: {e}")
 
+    # ── Phase B #6: Pre-flight 2 — G1 硬拒收（在旧"内容过短"检查之前）──
+    from app.services.quality_gates import hard_check_g1
+    # title 缺省时回退到 filename（去扩展名），避免误拒
+    effective_title = (title or "").strip() or (Path(file.filename).stem if file.filename else "")
+    g1_early = hard_check_g1(text or "", effective_title)
+    if not g1_early["passed"]:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "QUALITY_GATE_G1_FAIL",
+                "issues": g1_early["issues"],
+            },
+        )
+
     if not text or len(text.strip()) < 10:
-        raise HTTPException(400, "文档内容过短")
+        # 兜底：万一 G1 没拦住，这里也用 422 而不是 400
+        raise HTTPException(422, detail={"code": "QUALITY_GATE_G1_FAIL", "issues": ["文档内容过短"]})
+
+    # ── Phase B #6: Pre-flight 1 — content_hash 重复检查（文本规范化后）──
+    text_normalized = text.replace('\r\n', '\n').strip()
+    normalized_hash = hashlib.sha256(text_normalized.encode('utf-8')).hexdigest()
+    db = SessionLocal()
+    try:
+        existing = db.query(Document).filter(
+            Document.content_hash == normalized_hash,
+            Document.status == "active",
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "DUPLICATE_CONTENT",
+                    "message": f"内容哈希重复，已存在文档: {existing.title}",
+                    "existing_doc_id": existing.doc_id,
+                },
+            )
+    finally:
+        db.close()
 
     # ── 质量评估 ──
     quality = assess_quality(text)
@@ -104,8 +146,8 @@ async def upload_document(
             },
         }
 
-    # ── 去重检测：按文件内容 SHA256 查重 ──
-    content_hash = hashlib.sha256(content).hexdigest()
+    # ── 去重检测：复用 pre-flight 阶段计算好的 normalized_hash ──
+    content_hash = normalized_hash  # Phase B #6: 使用文本规范化后的 hash
     db = SessionLocal()
     try:
         doc_repo = _get_doc_repo(db)
@@ -231,6 +273,12 @@ async def upload_document(
 
     doc_id = str(uuid.uuid4())
 
+    # ── P1-1: 版本链检测 — 同名/同标准号文档自动 supersede ──
+    from app.services.version_chain import detect_existing_doc, mark_superseded
+    existing_doc = detect_existing_doc(
+        db=db, title=doc_title, bank=bank, doc_type=doc_type, content_hash=content_hash,
+    )
+
     # 构建 parent 映射
     parent_map = {}
     for pc in pc_chunks:
@@ -282,6 +330,40 @@ async def upload_document(
         for idx, ptext in parent_map.items():
             pc = ParentChunk(doc_id=doc_id, parent_idx=idx, parent_text=ptext)
             db.merge(pc)
+
+        # ── P0-3: 自动生成 doc 级 concept_id ──
+        doc_concept_id = infer_doc_concept_id(
+            title=doc_title, bank=bank, doc_type=doc_type, text=text[:2000],
+        )
+
+        # ── P0-2: 生成 concept 记录 ──
+        concept_pc_list = [{"parent_index": idx, "parent": ptext} for idx, ptext in parent_map.items()]
+        concept_count = generate_concepts_for_doc(
+            db, doc_id, doc_concept_id, concept_pc_list,
+            doc_type=doc_type, confidence=profile.get("confidence", 0.5),
+        )
+
+        # ── P0-1 + P0-3: 写入 OKF 字段到文档 ──
+        doc_record = db.query(Document).filter(Document.doc_id == doc_id).first()
+        if doc_record:
+            doc_record.profile_confidence = profile.get("confidence", 0.5)
+            doc_record.chunk_count = len(parent_map)
+            doc_record.domain = _infer_domain(bank, doc_type)
+            if doc_concept_id:
+                doc_record.concept_id = doc_concept_id
+
+        # ── P1-1: 如果检测到旧版本，标记为 superseded ──
+        if existing_doc:
+            mark_superseded(
+                db,
+                old_doc_id=existing_doc.doc_id,
+                new_doc_id=doc_id,
+                reason="new_version_upload",
+            )
+            if doc_record:
+                doc_record.supersedes = existing_doc.doc_id
+            logger.info("Version chain: %s supersedes %s", doc_id[:8], existing_doc.doc_id[:8])
+
         db.commit()
         logger.info("Saved %d parent chunks for doc %s", len(parent_map), doc_id)
     except Exception as e:
@@ -403,6 +485,8 @@ async def upload_document(
                 if integrity.get("status") == "ok":
                     doc.searchable = 1
             doc.verified_at = datetime.now(timezone.utc)
+            # Phase A: mark knowledge as confirmed at upload time
+            doc.last_confirmed = datetime.now(timezone.utc)
             db.commit()
             logger.info("Updated metadata for %s: searchable=%s, coverage=%.1f%%", doc_id[:8], doc.searchable, doc.coverage_pct)
     except Exception as e:
@@ -416,11 +500,7 @@ async def upload_document(
         asyncio.create_task(_verify_searchable(doc_id, doc_title, len(text), hs_bank))
 
     # ── KG 索引：异步写入知识图谱 ──
-    try:
-        from scripts.kg_client import kg_index_document
-        asyncio.create_task(asyncio.to_thread(kg_index_document, doc_id, doc_title, text, bank))
-    except Exception as e:
-        logger.warning("KG index task skipped: %s", e)
+    asyncio.create_task(asyncio.to_thread(kg_index_document, doc_id, doc_title, text, bank))
 
     # ── 上传成功后清除该 bank 的 BM25 缓存 ──
     invalidate_bm25_cache(bank=bank)

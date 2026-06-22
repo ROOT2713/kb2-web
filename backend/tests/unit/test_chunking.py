@@ -11,6 +11,7 @@ from app.services.chunking import (
     ParentChildChunking,
     ExcelRowChunking,
     Chunk,
+    _clause_split,
 )
 
 
@@ -263,3 +264,63 @@ class TestExcelRowChunkingStrategy:
         strategy = ExcelRowChunking()
         result = strategy.chunk(text, filename="test.xlsx")
         assert isinstance(result, list)
+
+
+# ═══════════════════════════════════════════════════════
+# _clause_split (P0-4 clause-level segmentation)
+# ═══════════════════════════════════════════════════════
+
+class TestClauseSplit:
+    def test_short_text_no_split(self):
+        """短文本不分割"""
+        text = "短文本内容"
+        result = _clause_split(text, max_child_size=800)
+        assert len(result) == 1
+        assert result[0]["text"] == text
+        assert result[0]["clause_id"] == ""
+
+    def test_nested_numbered_clauses(self):
+        """嵌套编号条款拆分: 5.1.1, 5.1.2"""
+        # Need text > 800 chars to trigger splitting
+        text = "5.1.1 术语定义\n" + "本标准采用下列术语和定义。" * 30 + "\n\n5.1.2 缩略语\n" + "下列缩略语适用于本标准。" * 30 + "\n\n5.1.3 符号\n" + "下列符号适用于本标准。" * 30
+        result = _clause_split(text, max_child_size=800)
+        assert len(result) >= 2
+        # Check that clause IDs are extracted
+        clause_ids = [r["clause_id"] for r in result]
+        assert "5.1.1" in clause_ids
+        assert "5.1.2" in clause_ids
+
+    def test_article_clauses(self):
+        """条款编号拆分: 第N条"""
+        # Need text > 800 chars to trigger splitting
+        text = "第一条 总则\n" + "为规范火灾自动报警系统的设计，制定本规范。" * 20 + "\n\n第二条 适用范围\n" + "本规范适用于新建、扩建和改建的建筑工程。" * 20 + "\n\n第三条 术语\n" + "火灾自动报警系统由触发器件等组成。" * 20
+        result = _clause_split(text, max_child_size=800)
+        assert len(result) >= 2
+        clause_ids = [r["clause_id"] for r in result]
+        assert "第一条" in clause_ids
+        assert "第二条" in clause_ids
+
+    def test_paragraph_splitting(self):
+        """无编号时按段落拆分"""
+        text = "第一段内容。\n\n第二段内容。\n\n第三段内容。"
+        result = _clause_split(text, max_child_size=800)
+        # Should split by paragraphs
+        assert len(result) >= 1
+
+    def test_hard_split_fallback(self):
+        """无段落无编号时硬分割"""
+        text = "连续文本无分隔符" * 200
+        result = _clause_split(text, max_child_size=200)
+        assert len(result) > 1
+        for r in result:
+            assert len(r["text"]) <= 200
+
+    def test_appendix_clauses(self):
+        """附录编号拆分: A.1, A.2"""
+        # Need text > 800 chars to trigger splitting
+        text = "A.1 附录A内容\n" + "本附录规定了测试方法。" * 40 + "\n\nA.2 附录A详细步骤\n" + "第一步准备工作如下。" * 40
+        result = _clause_split(text, max_child_size=800)
+        assert len(result) >= 2
+        clause_ids = [r["clause_id"] for r in result]
+        assert "A.1" in clause_ids
+        assert "A.2" in clause_ids

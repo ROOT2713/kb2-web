@@ -773,6 +773,7 @@ async def _generate_answer(
     query_keywords: list,
     _tier_extra: list,
     title_map: dict,
+    kg_context_text: str = "",
 ) -> dict:
     """
     生成LLM答案 — 构建上下文 + 组装prompt + LLM调用 + 后处理。
@@ -891,6 +892,16 @@ async def _generate_answer(
     context = "\n\n---\n\n".join(context_parts)
     sources = sources[:12]
 
+    # ── Phase B #5: KG context 注入 ──
+    if kg_context_text:
+        context = (
+            "【知识图谱关联上下文 — 以下内容来自文档间的引用/继承关系，"
+            "可能包含相关但未直接命中的知识点】\n"
+            + kg_context_text
+            + "\n\n---\n\n"
+            + context
+        )
+
     # ── T7补充：金额类查询定向注入费率表 ──
     _has_rate = any(t in p for p in context_parts for t in ["3%", "3\\"])
     if _tier_extra and not _has_rate:
@@ -999,6 +1010,7 @@ async def _generate_answer(
         "sources": sources,
         "validation_result": validation_result,
         "suggestions": suggestions,
+        "kg_context_text": kg_context_text,
     }
 
 
@@ -1104,6 +1116,30 @@ async def query(
         kg_info=kg_info,
     )
 
+    # ── Phase B #5: KG Traversal — 沿 KG 边做 2-hop BFS 拉取关联 concept ──
+    kg_context_list = []
+    kg_context_text = ""
+    if ctx.get("doc_facts"):
+        seed_doc_ids = list(ctx["doc_facts"].keys())[:5]  # top-5 docs as seeds
+        try:
+            graph_db = SessionLocal()
+            from app.services.graph_traversal import get_kg_context_for_query
+            kg_context_list, kg_context_text = get_kg_context_for_query(
+                graph_db,
+                seed_doc_ids,
+                max_depth=2,
+                max_nodes=10,
+                max_chars=3000,
+            )
+            graph_db.close()
+            if kg_context_list:
+                logger.info(
+                    "[KG-Traversal] Found %d related nodes from %d seed docs",
+                    len(kg_context_list), len(seed_doc_ids),
+                )
+        except Exception as e:
+            logger.warning("KG traversal failed: %s", e)
+
     # ── Phase 2: 生成答案 ──
     gen = await _generate_answer(
         q=q, bank=bank, bank_prompt=bank_prompt,
@@ -1112,6 +1148,7 @@ async def query(
         query_keywords=ctx["query_keywords"],
         _tier_extra=ctx["_tier_extra"],
         title_map=ctx["title_map"],
+        kg_context_text=kg_context_text,
     )
 
     answer = gen["answer"]
@@ -1139,6 +1176,8 @@ async def query(
         result["suggestions"] = suggestions
     if standard_contents:
         result["standard_contents"] = standard_contents
+    if kg_context_list:
+        result["kg_context"] = kg_context_list
     return result
 
 
