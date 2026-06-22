@@ -1,0 +1,62 @@
+{
+  "total": 60,
+  "recall": {
+    "a": 61.7,
+    "b": 63.3,
+    "delta": 1.7
+  },
+  "answer": {
+    "a": 59.2,
+    "b": 75.0,
+    "delta": 15.8
+  },
+  "wins": {
+    "a": 9,
+    "b": 21,
+    "tie": 30
+  },
+  "categories": {
+    "标准号精确检索": {
+      "n": 10,
+      "a_recall_pct": 60.0,
+      "b_recall_pct": 60.0,
+      "a_score_pct": 35.0,
+      "b_score_pct": 65.0
+    },
+    "跨文档关联": {
+      "n": 10,
+      "a_recall_pct": 90.0,
+      "b_recall_pct": 90.0,
+      "a_score_pct": 50.0,
+      "b_score_pct": 70.0
+    },
+    "政务信息化": {
+      "n": 10,
+      "a_recall_pct": 70.0,
+      "b_recall_pct": 80.0,
+      "a_score_pct": 40.0,
+      "b_score_pct": 60.0
+    },
+    "概念辨析/矛盾检测": {
+      "n": 10,
+      "a_recall_pct": 70.0,
+      "b_recall_pct": 70.0,
+      "a_score_pct": 85.0,
+      "b_score_pct": 80.0
+    },
+    "完整标准链": {
+      "n": 10,
+      "a_recall_pct": 70.0,
+      "b_recall_pct": 70.0,
+      "a_score_pct": 70.0,
+      "b_score_pct": 90.0
+    },
+    "通用知识检索": {
+      "n": 10,
+      "a_recall_pct": 10.0,
+      "b_recall_pct": 10.0,
+      "a_score_pct": 75.0,
+      "b_score_pct": 85.0
+    }
+  }
+}

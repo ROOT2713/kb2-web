@@ -1,0 +1,994 @@
+[
+  {
+    "id": 1,
+    "category": "标准号精确检索",
+    "question": "GB 50348-2018 安防工程中高风险防护对象的防范要求有哪些？",
+    "expected_docs": [
+      "GB 50348-2018 安全防范工程技术标准"
+    ],
+    "expected_answer_keywords": [
+      "高风险",
+      "防护级别",
+      "实体防护",
+      "技术防范",
+      "人力防范"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 2,
+    "category": "标准号精确检索",
+    "question": "GB 50116-2013 火灾自动报警系统有哪几种基本形式？",
+    "expected_docs": [
+      "GB 50116-2013 火灾自动报警系统设计规范"
+    ],
+    "expected_answer_keywords": [
+      "区域报警",
+      "集中报警",
+      "控制中心报警",
+      "消防控制室"
+    ],
+    "difficulty": "简单"
+  },
+  {
+    "id": 3,
+    "category": "标准号精确检索",
+    "question": "GA/T 644-2006 电子巡查系统在线式和离线式的主要区别是什么？",
+    "expected_docs": [
+      "GA/T 644-2006 电子巡查系统技术要求"
+    ],
+    "expected_answer_keywords": [
+      "在线式",
+      "离线式",
+      "实时传输",
+      "巡查点",
+      "数据采集"
+    ],
+    "difficulty": "简单"
+  },
+  {
+    "id": 4,
+    "category": "标准号精确检索",
+    "question": "GB 16806-2006 消防联动控制系统应包含哪些基本控制功能？",
+    "expected_docs": [
+      "GB 16806-2006 消防联动控制系统"
+    ],
+    "expected_answer_keywords": [
+      "自动喷淋",
+      "防排烟",
+      "消防广播",
+      "电梯迫降",
+      "防火卷帘"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 5,
+    "category": "标准号精确检索",
+    "question": "GA/T 678-2007 联网型可视对讲系统对图像质量和通信延迟有什么要求？",
+    "expected_docs": [
+      "GA/T 678-2007 联网型可视对讲系统技术要求"
+    ],
+    "expected_answer_keywords": [
+      "分辨率",
+      "帧率",
+      "延迟",
+      "视频编码",
+      "图像清晰度"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 6,
+    "category": "标准号精确检索",
+    "question": "GB/T 50311-2016 综合布线系统划分了哪几个功能子系统？",
+    "expected_docs": [
+      "GB/T 50311-2016 综合布线系统工程设计规范"
+    ],
+    "expected_answer_keywords": [
+      "工作区",
+      "水平子系统",
+      "干线子系统",
+      "设备间",
+      "进线间"
+    ],
+    "difficulty": "简单"
+  },
+  {
+    "id": 7,
+    "category": "标准号精确检索",
+    "question": "GB 50462-2024 数据中心施工验收中环境与电气测试包含哪些具体项目？",
+    "expected_docs": [
+      "GB 50462-2024 数据中心基础设施施工及验收规范"
+    ],
+    "expected_answer_keywords": [
+      "温度",
+      "湿度",
+      "洁净度",
+      "照度",
+      "接地电阻"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 8,
+    "category": "标准号精确检索",
+    "question": "GY 5055-2008 对广播电视扩声系统的声学特性指标是如何规定的？",
+    "expected_docs": [
+      "GY 5055-2008"
+    ],
+    "expected_answer_keywords": [
+      "最大声压级",
+      "频率特性",
+      "声场不均匀度",
+      "传声增益",
+      "总噪声"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 9,
+    "category": "标准号精确检索",
+    "question": "CNAS-GL042 测量设备期间核查常用的统计方法有哪些？",
+    "expected_docs": [
+      "CNAS-GL042 测量设备期间核查的方法指南"
+    ],
+    "expected_answer_keywords": [
+      "t检验法",
+      "En值法",
+      "控制图法",
+      "比对法",
+      "核查标准"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 10,
+    "category": "标准号精确检索",
+    "question": "GB/T 4959-2011 厅堂扩声特性测量中，语言清晰度用哪些指标评价？",
+    "expected_docs": [
+      "GB/T 4959-2011 厅堂扩声特性测量方法"
+    ],
+    "expected_answer_keywords": [
+      "STIPA",
+      "RASTI",
+      "语言传输指数",
+      "辅音清晰度损失",
+      "测量信号"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 11,
+    "category": "跨文档关联",
+    "question": "安防工程验收时，GB 50348 的通用要求与 GA/T 644 在电子巡查系统方面的验收标准如何对应？",
+    "expected_docs": [
+      "GB 50348-2018",
+      "GA/T 644-2006"
+    ],
+    "expected_answer_keywords": [
+      "巡查点设置",
+      "路线规划",
+      "系统功能验收",
+      "设备安装"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 12,
+    "category": "跨文档关联",
+    "question": "火灾自动报警系统 GB 50116 的报警分区与消防联动 GB 16806 的控制分区在工程中如何协调？",
+    "expected_docs": [
+      "GB 50116-2013",
+      "GB 16806-2006"
+    ],
+    "expected_answer_keywords": [
+      "报警区域",
+      "联动区域",
+      "防火分区",
+      "控制逻辑",
+      "信号接口"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 13,
+    "category": "跨文档关联",
+    "question": "综合布线 GB/T 50311 的线缆等级要求与数据中心 GB 50462 的布线验收标准有什么异同？",
+    "expected_docs": [
+      "GB/T 50311-2016",
+      "GB 50462-2024"
+    ],
+    "expected_answer_keywords": [
+      "六类",
+      "光纤",
+      "冗余",
+      "标识管理",
+      "测试参数"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 14,
+    "category": "跨文档关联",
+    "question": "电子巡查 GA/T 644 和出入口控制 GA/T 394 在安防集成平台中如何实现联动？",
+    "expected_docs": [
+      "GA/T 644-2006",
+      "GA/T 394-2002"
+    ],
+    "expected_answer_keywords": [
+      "巡查点",
+      "门禁联动",
+      "事件记录",
+      "集成接口",
+      "报警联动"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 15,
+    "category": "跨文档关联",
+    "question": "抽样检验 GB/T 2828.1 的 AQL 原则与测量不确定度 JJF 1059.1 的评定方法在产品合格判定中如何互补？",
+    "expected_docs": [
+      "GB/T 2828.1-2012",
+      "JJF 1059.1-2012"
+    ],
+    "expected_answer_keywords": [
+      "接收质量限",
+      "扩展不确定度",
+      "合格判定区间",
+      "风险概率",
+      "测量结果"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 16,
+    "category": "跨文档关联",
+    "question": "厅堂扩声设计 GB 50371 的声学指标和 GB/T 4959 测量方法中的测点布置如何对应？",
+    "expected_docs": [
+      "GB 50371-2006",
+      "GB/T 4959-2011"
+    ],
+    "expected_answer_keywords": [
+      "测点位置",
+      "观众区",
+      "声压级分布",
+      "混响时间",
+      "测量高度"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 17,
+    "category": "跨文档关联",
+    "question": "个人信息安全规范 GB/T 35273 和密码应用基本要求 GB/T 39786 在数据加密存储方面如何衔接？",
+    "expected_docs": [
+      "GB/T 35273-2020",
+      "GB/T 39786-2021"
+    ],
+    "expected_answer_keywords": [
+      "加密算法",
+      "密钥管理",
+      "存储加密",
+      "传输加密",
+      "个人敏感信息"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 18,
+    "category": "跨文档关联",
+    "question": "电子会议系统设计中，GB 50799 的显示系统指标和 GB 50464 的施工验收指标如何保持一致？",
+    "expected_docs": [
+      "GB 50799-2012",
+      "GB 50464-2008"
+    ],
+    "expected_answer_keywords": [
+      "亮度",
+      "对比度",
+      "分辨率",
+      "色域",
+      "安装位置"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 19,
+    "category": "跨文档关联",
+    "question": "闭路电视监控 GB 50198 与安防工程 GB 50348 在视频监控系统验收时的分工和协同？",
+    "expected_docs": [
+      "GB 50198-2011",
+      "GB 50348-2018"
+    ],
+    "expected_answer_keywords": [
+      "图像质量",
+      "存储时间",
+      "覆盖范围",
+      "联动功能",
+      "系统验收"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 20,
+    "category": "跨文档关联",
+    "question": "密码应用测评 GB/T 43206 和等保测评 GB/T 28448 在身份鉴别测评项上的具体要求有何交叉？",
+    "expected_docs": [
+      "GB/T 43206-2023",
+      "GB/T 28448-2019"
+    ],
+    "expected_answer_keywords": [
+      "密码强度",
+      "鉴别机制",
+      "双因子",
+      "测评方法",
+      "判定标准"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 21,
+    "category": "政务信息化",
+    "question": "粤府办〔2023〕22号中，省级政务信息化项目按投资额如何分级审批？",
+    "expected_docs": [
+      "粤府办〔2023〕22号"
+    ],
+    "expected_answer_keywords": [
+      "投资额度",
+      "审批权限",
+      "分级管理",
+      "省政务服务数据管理局"
+    ],
+    "difficulty": "简单"
+  },
+  {
+    "id": 22,
+    "category": "政务信息化",
+    "question": "电子政务工程造价指导书中，软件功能点计数有几种复杂度等级？",
+    "expected_docs": [
+      "电子政务工程造价指导书"
+    ],
+    "expected_answer_keywords": [
+      "低复杂度",
+      "中复杂度",
+      "高复杂度",
+      "ILF",
+      "EIF"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 23,
+    "category": "政务信息化",
+    "question": "广州市政务信息化项目验收管理细则对验收申请材料有什么具体要求？",
+    "expected_docs": [
+      "广州市政务信息化项目验收管理细则"
+    ],
+    "expected_answer_keywords": [
+      "验收申请",
+      "文档清单",
+      "第三方测评报告",
+      "监理报告"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 24,
+    "category": "政务信息化",
+    "question": "广州市南沙区财政投资信息化项目管理办法2025修订稿对项目管理流程做了哪些主要调整？",
+    "expected_docs": [
+      "南沙区财政投资信息化项目管理办法"
+    ],
+    "expected_answer_keywords": [
+      "审批流程",
+      "投资额度",
+      "管理职责",
+      "修订内容",
+      "监管机制"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 25,
+    "category": "政务信息化",
+    "question": "T/EGAG 011 政务信息化项目立项设计咨询规范中，需求分析阶段需要产出哪些核心文档？",
+    "expected_docs": [
+      "T/EGAG 011-2022"
+    ],
+    "expected_answer_keywords": [
+      "需求规格说明书",
+      "业务流程图",
+      "现状分析报告",
+      "可行性研究报告"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 26,
+    "category": "政务信息化",
+    "question": "穗财资[2022]24号对信息化设备报废处置的流程和审批要求是什么？",
+    "expected_docs": [
+      "处置办法穗财资[2022]24号"
+    ],
+    "expected_answer_keywords": [
+      "资产报废",
+      "技术鉴定",
+      "审批流程",
+      "残值评估",
+      "处置方式"
+    ],
+    "difficulty": "简单"
+  },
+  {
+    "id": 27,
+    "category": "政务信息化",
+    "question": "广东省省级政务信息化验收测评服务项目管理指引对测评报告的结构和内容有什么规定？",
+    "expected_docs": [
+      "广东省省级政务信息化验收测评服务项目管理指引"
+    ],
+    "expected_answer_keywords": [
+      "测评范围",
+      "测试方法",
+      "缺陷分级",
+      "通过准则",
+      "报告模板"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 28,
+    "category": "政务信息化",
+    "question": "广州市2026版开发类项目方案编写规范要求方案包含哪些必备章节？",
+    "expected_docs": [
+      "广州市政务信息化建设开发类项目方案编写规范"
+    ],
+    "expected_answer_keywords": [
+      "项目概述",
+      "需求分析",
+      "技术方案",
+      "实施计划",
+      "投资概算"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 29,
+    "category": "政务信息化",
+    "question": "软件造价评估实施规程中，功能点分析的五类基本组件是什么？",
+    "expected_docs": [
+      "软件造价评估实施规程"
+    ],
+    "expected_answer_keywords": [
+      "ILF",
+      "EIF",
+      "EI",
+      "EO",
+      "EQ"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 30,
+    "category": "政务信息化",
+    "question": "一个政务信息化项目从立项到决算，需要经历哪些关键审批节点，分别依据什么文件？",
+    "expected_docs": [
+      "粤府办〔2023〕22号",
+      "T/EGAG 011-2022",
+      "广州市政务信息化项目验收管理细则"
+    ],
+    "expected_answer_keywords": [
+      "立项审批",
+      "概算审核",
+      "招标采购",
+      "验收",
+      "决算审计"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 31,
+    "category": "概念辨析/矛盾检测",
+    "question": "等保2.0中第二级和第三级在安全审计方面的要求有什么本质区别？",
+    "expected_docs": [
+      "GB/T 22239-2019"
+    ],
+    "expected_answer_keywords": [
+      "审计记录",
+      "审计进程保护",
+      "集中审计",
+      "审计内容",
+      "保护级别"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 32,
+    "category": "概念辨析/矛盾检测",
+    "question": "A类测量不确定度评定和B类评定的核心区别是什么？各自用什么方法计算？",
+    "expected_docs": [
+      "JJF 1059.1-2012"
+    ],
+    "expected_answer_keywords": [
+      "统计方法",
+      "贝塞尔公式",
+      "非统计方法",
+      "先验分布",
+      "标准偏差"
+    ],
+    "difficulty": "简单"
+  },
+  {
+    "id": 33,
+    "category": "概念辨析/矛盾检测",
+    "question": "防雷分区 LPZ0A、LPZ0B、LPZ1 各自的防护对象和SPD配置要求有何不同？",
+    "expected_docs": [
+      "GB 50057-2010",
+      "GB 50343-2012"
+    ],
+    "expected_answer_keywords": [
+      "直击雷",
+      "感应雷",
+      "SPD",
+      "等电位连接",
+      "屏蔽"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 34,
+    "category": "概念辨析/矛盾检测",
+    "question": "GB/T 2828.1 抽样方案中，什么是正常检验、加严检验和放宽检验？三者之间如何转换？",
+    "expected_docs": [
+      "GB/T 2828.1-2012"
+    ],
+    "expected_answer_keywords": [
+      "转移规则",
+      "连续批",
+      "AQL",
+      "加严",
+      "暂停检验"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 35,
+    "category": "概念辨析/矛盾检测",
+    "question": "等保'安全计算环境'和密码应用'设备和计算安全'这两个层面的要求有什么交叉和区别？",
+    "expected_docs": [
+      "GB/T 22239-2019",
+      "GB/T 39786-2021"
+    ],
+    "expected_answer_keywords": [
+      "身份鉴别",
+      "访问控制",
+      "密码服务",
+      "安全审计",
+      "可信验证"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 36,
+    "category": "概念辨析/矛盾检测",
+    "question": "厅堂扩声系统中，'建筑声学设计'和'电声系统设计'分别管什么？两者如何配合？",
+    "expected_docs": [
+      "GB 50371-2006"
+    ],
+    "expected_answer_keywords": [
+      "混响时间",
+      "声场分布",
+      "扩声系统",
+      "传声器布局",
+      "建声电声协调"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 37,
+    "category": "概念辨析/矛盾检测",
+    "question": "综合布线中，光纤信道和6A类铜缆信道在传输距离和带宽上各自适用于什么场景？",
+    "expected_docs": [
+      "GB/T 50311-2016"
+    ],
+    "expected_answer_keywords": [
+      "OM3",
+      "OM4",
+      "10G",
+      "100m",
+      "300m"
+    ],
+    "difficulty": "简单"
+  },
+  {
+    "id": 38,
+    "category": "概念辨析/矛盾检测",
+    "question": "安防工程中'实体防护'和'技术防范'两个层面分别包含哪些措施？",
+    "expected_docs": [
+      "GB 50348-2018"
+    ],
+    "expected_answer_keywords": [
+      "围墙",
+      "门禁",
+      "视频监控",
+      "入侵报警",
+      "防护能力"
+    ],
+    "difficulty": "简单"
+  },
+  {
+    "id": 39,
+    "category": "概念辨析/矛盾检测",
+    "question": "等保三级中，'安全区域边界'和'安全通信网络'的职责如何划分？边界防护和通信加密各有何要求？",
+    "expected_docs": [
+      "GB/T 22239-2019"
+    ],
+    "expected_answer_keywords": [
+      "边界防护",
+      "访问控制",
+      "通信加密",
+      "入侵防范",
+      "安全审计"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 40,
+    "category": "概念辨析/矛盾检测",
+    "question": "政务信息化监理（T/EGAG 010）和验收测评（T/EGAG 021）在法律效力和工作方式上有什么本质区别？",
+    "expected_docs": [
+      "T/EGAG 010-2022",
+      "T/EGAG 021-2023"
+    ],
+    "expected_answer_keywords": [
+      "全过程监理",
+      "独立测评",
+      "过程监督",
+      "结果判定",
+      "资质要求"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 41,
+    "category": "完整标准链",
+    "question": "视频监控系统从工程设计到最终验收，需要依次遵循哪些国标？",
+    "expected_docs": [
+      "GB 50348-2018",
+      "GB 50198-2011",
+      "GA/T 1127-2013"
+    ],
+    "expected_answer_keywords": [
+      "工程设计",
+      "设备选型",
+      "施工安装",
+      "系统调试",
+      "验收"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 42,
+    "category": "完整标准链",
+    "question": "一个数据中心机房的完整建设标准链：规划→施工→布线→防雷→验收，各阶段对应什么标准？",
+    "expected_docs": [
+      "GB 50462-2024",
+      "GB/T 50311-2016",
+      "GB 50343-2012"
+    ],
+    "expected_answer_keywords": [
+      "施工",
+      "布线",
+      "防雷",
+      "接地",
+      "环境测试"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 43,
+    "category": "完整标准链",
+    "question": "消防系统从火灾探测→自动报警→联动控制→应急广播的完整标准链路是什么？",
+    "expected_docs": [
+      "GB 50116-2013",
+      "GB 16806-2006"
+    ],
+    "expected_answer_keywords": [
+      "探测器",
+      "报警控制器",
+      "联动控制器",
+      "广播系统",
+      "信号传输"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 44,
+    "category": "完整标准链",
+    "question": "安防工程从风险评估→方案设计→设备选型→工程施工→检测验收对应哪些标准？",
+    "expected_docs": [
+      "GB 50348-2018",
+      "GA/T 644-2006",
+      "GA/T 394-2002"
+    ],
+    "expected_answer_keywords": [
+      "风险评估",
+      "设计",
+      "设备",
+      "施工",
+      "验收"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 45,
+    "category": "完整标准链",
+    "question": "等保2.0从定级→安全建设→等级测评→监督检查，各阶段分别依据什么标准？",
+    "expected_docs": [
+      "GB/T 22239-2019",
+      "GB/T 28448-2019",
+      "GB/T 28449-2018"
+    ],
+    "expected_answer_keywords": [
+      "定级指南",
+      "基本要求",
+      "测评要求",
+      "设计技术要求",
+      "监督检查"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 46,
+    "category": "完整标准链",
+    "question": "电子会议系统从方案设计→施工安装→测量调试→检测验收，各阶段对应的国标分别是什么？",
+    "expected_docs": [
+      "GB 50799-2012",
+      "GB 50464-2008",
+      "GB/T 4959-2011"
+    ],
+    "expected_answer_keywords": [
+      "设计",
+      "施工",
+      "测量",
+      "检测",
+      "验收"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 47,
+    "category": "完整标准链",
+    "question": "综合布线从工程设计→管线施工→链路测试→系统验收分别依据什么规范？",
+    "expected_docs": [
+      "GB/T 50311-2016"
+    ],
+    "expected_answer_keywords": [
+      "设计等级",
+      "施工工艺",
+      "测试参数",
+      "验收文档",
+      "链路模型"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 48,
+    "category": "完整标准链",
+    "question": "建筑物防雷从外部防雷→内部防雷→SPD选型→等电位→检测验收的标准链中各环节要求是什么？",
+    "expected_docs": [
+      "GB 50057-2010",
+      "GB 50343-2012"
+    ],
+    "expected_answer_keywords": [
+      "接闪器",
+      "引下线",
+      "SPD选型",
+      "等电位连接",
+      "接地检测"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 49,
+    "category": "完整标准链",
+    "question": "软件项目从需求规格→系统设计→编码测试→验收交付各阶段参考的质量标准是什么？",
+    "expected_docs": [
+      "GB/T 25000.51-2016"
+    ],
+    "expected_answer_keywords": [
+      "需求规格",
+      "设计文档",
+      "测试用例",
+      "RUSP",
+      "验收准则"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 50,
+    "category": "完整标准链",
+    "question": "电子政务项目从立项咨询→造价评估→招标→监理→验收测评→决算审计，各阶段对应什么规范文件？",
+    "expected_docs": [
+      "T/EGAG 011-2022",
+      "软件造价评估实施规程",
+      "T/EGAG 010-2022",
+      "T/EGAG 021-2023",
+      "粤府办〔2023〕22号"
+    ],
+    "expected_answer_keywords": [
+      "立项咨询",
+      "造价评估",
+      "招标",
+      "监理",
+      "验收",
+      "决算"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 51,
+    "category": "通用知识检索",
+    "question": "RAG 系统中，如果检索召回率低但准确率高，应该如何优化？",
+    "expected_docs": [
+      "RAG相关"
+    ],
+    "expected_answer_keywords": [
+      "chunk拆分",
+      "query扩展",
+      "多路召回",
+      "embedding微调",
+      "rerank"
+    ],
+    "difficulty": "简单"
+  },
+  {
+    "id": 52,
+    "category": "通用知识检索",
+    "question": "AI Agent 的记忆管理模块有哪些主流设计模式？短时记忆和长期记忆如何协同？",
+    "expected_docs": [
+      "xhs_agent_memory_management"
+    ],
+    "expected_answer_keywords": [
+      "向量存储",
+      "上下文窗口",
+      "记忆压缩",
+      "检索增强",
+      "会话管理"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 53,
+    "category": "通用知识检索",
+    "question": "使用 PaddleOCR 做大批量文档识别时，如何搭建完整的 OCR 流水线？",
+    "expected_docs": [
+      "xhs_paddleocr",
+      "xhs_paddleocr_full"
+    ],
+    "expected_answer_keywords": [
+      "版面分析",
+      "文字识别",
+      "PP-OCR",
+      "后处理",
+      "批量处理"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 54,
+    "category": "通用知识检索",
+    "question": "数据标注项目中，如何设计质检机制来保证标注质量？抽检比例怎么定？",
+    "expected_docs": [
+      "标注质检机制与质量门禁",
+      "数据质量评审检查清单"
+    ],
+    "expected_answer_keywords": [
+      "抽检比例",
+      "Kappa系数",
+      "质量门禁",
+      "返工阈值",
+      "仲裁机制"
+    ],
+    "difficulty": "中等"
+  },
+  {
+    "id": 55,
+    "category": "通用知识检索",
+    "question": "Pandas 数据分析中，如何高效处理缺失值和异常值？",
+    "expected_docs": [
+      "Pandas_清洗操作速查_Kaggle启发"
+    ],
+    "expected_answer_keywords": [
+      "dropna",
+      "fillna",
+      "插值",
+      "IQR",
+      "z-score"
+    ],
+    "difficulty": "简单"
+  },
+  {
+    "id": 56,
+    "category": "通用知识检索",
+    "question": "Claude Code 在大型代码仓库中的上下文管理策略和传统 IDE 有什么不同？",
+    "expected_docs": [
+      "xhs_claude-code-skill-bid",
+      "xhs_claude_code_context_interview_analysis"
+    ],
+    "expected_answer_keywords": [
+      "上下文窗口",
+      "工具调用",
+      "多文件编辑",
+      "Agent模式",
+      "记忆管理"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 57,
+    "category": "通用知识检索",
+    "question": "如何用 OpenRefine 的 GREL 语言进行批量数据清洗和转换？",
+    "expected_docs": [
+      "OpenRefine_GREL_脏数据处理模式库",
+      "OpenRefine_数据清洗SOP"
+    ],
+    "expected_answer_keywords": [
+      "GREL",
+      "正则表达式",
+      "facet",
+      "聚类",
+      "批量编辑"
+    ],
+    "difficulty": "简单"
+  },
+  {
+    "id": 58,
+    "category": "通用知识检索",
+    "question": "结构化数据清洗在 Kaggle 竞赛中的标准 Checklist 包含哪些关键步骤？",
+    "expected_docs": [
+      "结构化数据清洗Checklist_Kaggle启发"
+    ],
+    "expected_answer_keywords": [
+      "缺失值",
+      "异常值",
+      "特征工程",
+      "类型转换",
+      "去重"
+    ],
+    "difficulty": "简单"
+  },
+  {
+    "id": 59,
+    "category": "通用知识检索",
+    "question": "构建知识库系统时，OKF（Open Knowledge Framework）的核心理念是什么？如何落地到现有系统？",
+    "expected_docs": [
+      "kb_okf_redesign",
+      "karpathy_llm_wiki_v2"
+    ],
+    "expected_answer_keywords": [
+      "置信度",
+      "时效性",
+      "版本管理",
+      "知识图谱",
+      "Frontmatter"
+    ],
+    "difficulty": "困难"
+  },
+  {
+    "id": 60,
+    "category": "通用知识检索",
+    "question": "Label Studio 搭建数据标注项目时，如何配置标注界面和质检工作流？",
+    "expected_docs": [
+      "Label_Studio_标注项目搭建SOP"
+    ],
+    "expected_answer_keywords": [
+      "标注模板",
+      "标签配置",
+      "质检流程",
+      "任务分配",
+      "一致性计算"
+    ],
+    "difficulty": "中等"
+  }
+]
