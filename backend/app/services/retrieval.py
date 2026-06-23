@@ -320,9 +320,9 @@ async def build_bm25_index(bank: str = "all") -> tuple:
         try:
             _count_db = SessionLocal()
             if bank == "all":
-                row = _count_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1")).fetchone()
+                row = _count_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND status='active'")).fetchone()
             else:
-                row = _count_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND bank=:bank"), {"bank": bank}).fetchone()
+                row = _count_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND status='active' AND bank=:bank"), {"bank": bank}).fetchone()
             _count_db.close()
             current_ts = str(row[0]) if row and row[0] else ""
             current_count = row[1] if row else 0
@@ -347,6 +347,8 @@ async def build_bm25_index(bank: str = "all") -> tuple:
                 FROM parent_chunks p
                 JOIN documents d ON p.doc_id = d.doc_id
                 WHERE length(p.parent_text) > 50
+                  AND d.searchable = 1
+                  AND d.status = 'active'
             """)).fetchall()
         else:
             bank_cfg = get_bank_config(bank)
@@ -356,6 +358,8 @@ async def build_bm25_index(bank: str = "all") -> tuple:
                 JOIN documents d ON p.doc_id = d.doc_id
                 WHERE length(p.parent_text) > 50
                   AND d.bank = :bank
+                  AND d.searchable = 1
+                  AND d.status = 'active'
             """), {"bank": bank}).fetchall()
         pdb.close()
 
@@ -424,9 +428,9 @@ async def build_bm25_index(bank: str = "all") -> tuple:
     try:
         _ts_db = SessionLocal()
         if bank == "all":
-            _max_ts = _ts_db.execute(text("SELECT MAX(updated_at) FROM documents WHERE searchable=1")).fetchone()[0]
+            _max_ts = _ts_db.execute(text("SELECT MAX(updated_at) FROM documents WHERE searchable=1 AND status='active'")).fetchone()[0]
         else:
-            _max_ts = _ts_db.execute(text("SELECT MAX(updated_at) FROM documents WHERE searchable=1 AND bank=:bank"), {"bank": bank}).fetchone()[0]
+            _max_ts = _ts_db.execute(text("SELECT MAX(updated_at) FROM documents WHERE searchable=1 AND status='active' AND bank=:bank"), {"bank": bank}).fetchone()[0]
         _ts_db.close()
         _max_ts_str = str(_max_ts) if _max_ts else ""
     except Exception:

@@ -109,7 +109,7 @@ async def _build_search_context(
     bank_map = {}
     title_map = {}
     try:
-        rows = db.execute(sa_text("SELECT doc_id, bank, title FROM documents")).fetchall()
+        rows = db.execute(sa_text("SELECT doc_id, bank, title FROM documents WHERE searchable=1 AND status='active'")).fetchall()
         bank_map = {r[0]: r[1] for r in rows}
         title_map = {r[0]: (r[2] or "") for r in rows}
     except Exception:
@@ -135,7 +135,7 @@ async def _build_search_context(
             conditions = " OR ".join(["title LIKE :t" + str(i) for i in range(len(exact_terms))])
             params = {f"t{i}": f"%{t}%" for i, t in enumerate(exact_terms)}
             title_rows = db.execute(
-                sa_text(f"SELECT doc_id, title FROM documents WHERE {conditions}"),
+                sa_text(f"SELECT doc_id, title FROM documents WHERE searchable=1 AND status='active' AND ({conditions})"),
                 params,
             ).fetchall()
         finally:
