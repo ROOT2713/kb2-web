@@ -10,18 +10,33 @@
       @drop.prevent="handleDrop"
     >
       <div class="drop-content">
-        <p class="drop-text">拖拽文件到此处，或</p>
-        <label class="upload-btn-wrap">
-          <button type="button" class="primary">选择文件</button>
-          <input
-            ref="fileInput"
-            type="file"
-            multiple
-            class="file-input-hidden"
-            accept=".pdf,.docx,.doc,.xlsx,.xls,.txt,.md,.csv"
-            @change="handleFileSelect"
-          />
-        </label>
+        <p class="drop-text">拖拽文件/文件夹到此处，或</p>
+        <div class="upload-btn-row">
+          <label class="upload-btn-wrap">
+            <button type="button" class="primary">选择文件</button>
+            <input
+              ref="fileInput"
+              type="file"
+              multiple
+              class="file-input-hidden"
+              accept=".pdf,.docx,.doc,.xlsx,.xls,.txt,.md,.csv"
+              @change="handleFileSelect"
+            />
+          </label>
+          <label class="upload-btn-wrap">
+            <button type="button" class="secondary">选择文件夹</button>
+            <input
+              ref="folderInput"
+              type="file"
+              multiple
+              webkitdirectory
+              directory
+              class="file-input-hidden"
+              @change="handleFolderSelect"
+            />
+          </label>
+        </div>
+        <p v-if="scanInfo" class="scan-info">{{ scanInfo }}</p>
       </div>
     </div>
 
@@ -32,8 +47,9 @@
             v-for="(f, i) in displayedFiles"
             :key="i"
             class="file-tag"
+            :title="webkitRelativePath(f)"
           >
-            {{ f.name }}
+            {{ webkitRelativePath(f) }}
             <span class="file-size-inline">{{ formatSize(f.size) }}</span>
           </span>
           <span v-if="selectedFiles.length > 10" class="file-more">
@@ -72,6 +88,7 @@
       <div v-if="uploadProgress" class="progress-bar">
         <div class="progress-fill" :style="{ width: uploadProgress }"></div>
       </div>
+      <p v-if="uploadPhase" class="upload-phase">{{ uploadPhase }}</p>
     </div>
 
     <!-- 单文件上传结果 -->
@@ -137,6 +154,7 @@ import Toast from '@/components/Toast.vue'
 const banksStore = useBanksStore()
 
 const fileInput = ref<HTMLInputElement | null>(null)
+const folderInput = ref<HTMLInputElement | null>(null)
 const selectedFiles = ref<File[]>([])
 const title = ref('')
 const category = ref('')
@@ -144,6 +162,10 @@ const uploadBank = ref('general')
 const uploading = ref(false)
 const uploadProgress = ref('')
 const isDragOver = ref(false)
+const scanInfo = ref('')
+const uploadPhase = ref('')
+const batchIndex = ref(0)
+const totalBatches = ref(0)
 
 interface UploadQuality {
   score: number
@@ -204,6 +226,7 @@ function handleDrop(e: DragEvent) {
   const files = e.dataTransfer?.files
   if (files && files.length > 0) {
     selectedFiles.value = Array.from(files)
+    scanInfo.value = ''
   }
 }
 
@@ -211,7 +234,38 @@ function handleFileSelect(e: Event) {
   const input = e.target as HTMLInputElement
   if (input.files && input.files.length > 0) {
     selectedFiles.value = Array.from(input.files)
+    scanInfo.value = ''
   }
+}
+
+const SUPPORTED_EXTS = new Set(['.pdf','.docx','.doc','.xlsx','.xls','.txt','.md','.csv'])
+
+function webkitRelativePath(file: File): string {
+  return (file as any).webkitRelativePath || file.name
+}
+
+function isHiddenOrMetadata(file: File): boolean {
+  const name = file.name
+  if (name.startsWith('.') || name.startsWith('~')) return true
+  const hidden = ['.DS_Store', 'Thumbs.db', 'desktop.ini', '~$']
+  return hidden.some(h => name.startsWith(h) || name.toLowerCase() === h.toLowerCase())
+}
+
+function handleFolderSelect(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (!input.files || input.files.length === 0) return
+
+  const raw = Array.from(input.files)
+  const filtered = raw.filter(f => {
+    const ext = '.' + (f.name.split('.').pop() || '').toLowerCase()
+    return SUPPORTED_EXTS.has(ext) && !isHiddenOrMetadata(f)
+  })
+
+  scanInfo.value = `已扫描 ${raw.length} 个文件，过滤后 ${filtered.length} 个支持的文件`
+  selectedFiles.value = filtered
+
+  // reset input so re-selecting same folder triggers change
+  input.value = ''
 }
 
 function formatSize(bytes: number): string {
@@ -226,61 +280,110 @@ async function handleUpload() {
   uploadProgress.value = '0%'
   uploadResult.value = null
 
-  const isBatch = selectedFiles.value.length > 1
-  const endpoint = isBatch ? '/upload/batch' : '/upload'
+  const allFiles = selectedFiles.value
+  const isBatch = allFiles.length > 1
 
-  const formData = new FormData()
-
+  // ── 大量文件自动分批：每批 20 个，避免单请求超时 ──
+  const BATCH_SIZE = 20
+  const batches: File[][] = []
   if (isBatch) {
-    for (const f of selectedFiles.value) {
-      formData.append('files', f)
+    for (let i = 0; i < allFiles.length; i += BATCH_SIZE) {
+      batches.push(allFiles.slice(i, i + BATCH_SIZE))
     }
-    if (title.value) formData.append('title_prefix', title.value)
   } else {
-    formData.append('file', selectedFiles.value[0])
-    if (title.value) formData.append('title', title.value)
+    batches.push(allFiles)
+  }
+  totalBatches.value = batches.length
+
+  // 累积结果
+  const aggregated: BatchUploadResultData = {
+    ok: true,
+    total: allFiles.length,
+    success: 0,
+    failed: 0,
+    results: [],
   }
 
-  if (category.value) formData.append('category', category.value)
-  formData.append('bank', uploadBank.value)
-
   try {
-    const { data } = await api.post(endpoint, formData, {
-      onUploadProgress: (e) => {
-        if (e.total) {
-          uploadProgress.value = `${Math.round((e.loaded / e.total) * 100)}%`
-        }
-      },
-    })
-    uploadResult.value = data
+    for (let bi = 0; bi < batches.length; bi++) {
+      batchIndex.value = bi + 1
+      const batch = batches[bi]
+      const batchIsMulti = batch.length > 1 || batches.length > 1
+      const endpoint = batchIsMulti ? '/upload/batch' : '/upload'
 
-    // Check if upload was actually successful
-    if (isBatch) {
-      const batch = data as BatchUploadResultData
-      if (batch.ok) {
-        toastMsg.value = `批量上传完成：成功 ${batch.success} / 失败 ${batch.failed}`
-        toastType.value = 'success'
+      const formData = new FormData()
+      if (batchIsMulti) {
+        for (const f of batch) formData.append('files', f)
+        if (title.value) formData.append('title_prefix', title.value)
       } else {
-        toastMsg.value = batch.results?.[0]?.detail || '批量上传失败'
-        toastType.value = 'error'
+        formData.append('file', batch[0])
+        if (title.value) formData.append('title', title.value)
       }
+      if (category.value) formData.append('category', category.value)
+      formData.append('bank', uploadBank.value)
+
+      if (batches.length > 1) {
+        uploadPhase.value = `批次 ${bi + 1}/${batches.length}（${batch.length} 个文件）`
+      }
+
+      const { data } = await api.post(endpoint, formData, {
+        onUploadProgress: (e) => {
+          if (e.total) {
+            const batchPct = (e.loaded / e.total) * 100
+            const overallPct = ((bi + batchPct / 100) / batches.length) * 100
+            uploadProgress.value = `${Math.round(overallPct)}%`
+          }
+        },
+      })
+
+      // 累积到 aggregated
+      if (batchIsMulti) {
+        const b = data as BatchUploadResultData
+        aggregated.success += b.success || 0
+        aggregated.failed += b.failed || 0
+        aggregated.results.push(...(b.results || []))
+      } else {
+        const single = data as UploadResultData
+        if (single.ok) {
+          aggregated.success += 1
+          aggregated.results.push({
+            filename: batch[0].name,
+            ok: true,
+            doc_id: single.doc_id,
+            title: single.title,
+            chunks: typeof single.chunks === 'number' ? single.chunks : undefined,
+            quality: single.quality,
+          })
+        } else {
+          aggregated.failed += 1
+          aggregated.results.push({
+            filename: batch[0].name,
+            ok: false,
+            detail: single.detail || '上传失败',
+          })
+        }
+      }
+    }
+
+    aggregated.ok = aggregated.success > 0
+    uploadResult.value = aggregated
+    uploadPhase.value = ''
+
+    if (aggregated.ok) {
+      toastMsg.value = `批量上传完成：成功 ${aggregated.success} / 失败 ${aggregated.failed}`
+      toastType.value = aggregated.failed > 0 ? 'warning' : 'success'
     } else {
-      const single = data as UploadResultData
-      if (single.ok) {
-        toastMsg.value = '上传成功'
-        toastType.value = 'success'
-      } else {
-        toastMsg.value = single.detail || '上传失败'
-        toastType.value = 'error'
-      }
+      toastMsg.value = '全部失败，详见结果列表'
+      toastType.value = 'error'
     }
   } catch (e: unknown) {
     const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-    toastMsg.value = msg || '上传失败'
+    toastMsg.value = typeof msg === 'string' ? msg : '上传失败'
     toastType.value = 'error'
   } finally {
     uploading.value = false
     uploadProgress.value = ''
+    uploadPhase.value = ''
   }
 }
 
@@ -323,6 +426,40 @@ function resetForm() {
   font-size: 0.9rem;
   color: var(--fg-muted);
   margin-bottom: 0.75rem;
+}
+
+.upload-btn-row {
+  display: inline-flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.scan-info {
+  margin-top: 0.75rem;
+  font-size: 0.82rem;
+  color: var(--fg-muted);
+}
+
+button.secondary {
+  background: var(--bg-elevated, #f3f3f3);
+  color: var(--fg, #333);
+  border: 1px solid var(--border, #d0d0d0);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+button.secondary:hover {
+  background: var(--bg-hover, #e8e8e8);
+}
+
+.upload-phase {
+  margin-top: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .upload-btn-wrap {

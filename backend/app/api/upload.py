@@ -40,8 +40,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
-MAX_BATCH_FILES = 20
-MAX_BATCH_TOTAL_SIZE = 500 * 1024 * 1024  # 500 MB
+MAX_BATCH_FILES = 200
+MAX_BATCH_TOTAL_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
 
 # ── P0-3: bank → OKF domain 映射 (定义在 concept_gen.py，此处引用) ──
 # _infer_domain 已统一到 concept_gen.infer_domain()，此处保留别名
