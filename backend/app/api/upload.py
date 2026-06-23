@@ -65,6 +65,15 @@ async def upload_document(
     if not file.filename:
         raise HTTPException(400, "文件名不能为空")
 
+    # ── 防御性 sanitize：选择文件夹上传时 file.filename 可能含子目录路径（如 "上岗学习/xxx.doc"），
+    # 后端解析/转换/落盘逻辑均按 basename 处理，这里统一去掉路径分量，避免 tempfile.mkdtemp 后
+    # open(os.path.join(tmpdir, filename)) 因子目录不存在导致 FileNotFoundError。──
+    if file.filename and ("/" in file.filename or "\\" in file.filename):
+        original_filename = file.filename
+        sanitized = file.filename.replace("\\", "/").rsplit("/", 1)[-1]
+        file.filename = sanitized
+        logger.info("[upload] sanitize filename: %r -> %r", original_filename, sanitized)
+
     # ── bank 兼容性与验证 ──
     if bank == "kb":
         bank = "general"
