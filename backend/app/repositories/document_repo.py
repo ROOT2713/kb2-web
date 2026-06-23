@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, List, Dict
 
-from sqlalchemy import select, delete as sa_delete
+from sqlalchemy import select, delete as sa_delete, text as sa_text
 from sqlalchemy.orm import Session
 
 from app.models.document import Document
@@ -183,19 +183,55 @@ class DocumentRepository:
 
     # ── delete ──────────────────────────────────────────────────
     def delete(self, doc_id: str) -> bool:
-        """Delete document metadata (matches v1 delete_meta).
+        """Delete document and ALL its dependent rows (parent_chunks, concepts,
+        kg_triples, concept_contradictions). Wraps in transaction; rolls back on
+        any error to avoid half-cleaned state.
 
-        Returns True if a row was deleted.
+        Returns True if the document row was deleted.
         """
         doc = self.get(doc_id)
         if doc is None:
             logger.warning("Document not found for delete: doc_id=%s", doc_id)
             return False
 
-        self.db.delete(doc)
-        self.db.commit()
-        logger.info("Document deleted: doc_id=%s", doc_id)
-        return True
+        try:
+            # concept_contradictions (二跳：通过 concepts 关联 doc_id)
+            cc_res = self.db.execute(
+                sa_text(
+                    "DELETE FROM concept_contradictions "
+                    "WHERE concept_a_id IN (SELECT concept_id FROM concepts WHERE doc_id=:d) "
+                    "OR concept_b_id IN (SELECT concept_id FROM concepts WHERE doc_id=:d)"
+                ),
+                {"d": doc_id},
+            )
+            # kg_triples
+            kg_res = self.db.execute(
+                sa_text("DELETE FROM kg_triples WHERE doc_id=:d"), {"d": doc_id}
+            )
+            # concepts
+            cp_res = self.db.execute(
+                sa_text("DELETE FROM concepts WHERE doc_id=:d"), {"d": doc_id}
+            )
+            # parent_chunks
+            pc_res = self.db.execute(
+                sa_text("DELETE FROM parent_chunks WHERE doc_id=:d"), {"d": doc_id}
+            )
+            # 最后删 documents 主行
+            self.db.delete(doc)
+            self.db.commit()
+            logger.info(
+                "Document deleted (cascade): doc_id=%s | parent_chunks=%d concepts=%d kg_triples=%d cc_pairs=%d",
+                doc_id,
+                pc_res.rowcount or 0,
+                cp_res.rowcount or 0,
+                kg_res.rowcount or 0,
+                cc_res.rowcount or 0,
+            )
+            return True
+        except Exception as e:
+            self.db.rollback()
+            logger.error("Document delete failed (rolled back): doc_id=%s err=%s", doc_id, e)
+            raise
 
     def delete_by_ids(self, doc_ids: list[str]) -> int:
         """Bulk delete documents by IDs. Returns count of deleted rows."""
