@@ -274,13 +274,101 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+// ── 计算 File SHA1（与后端 hashlib.sha1 一致） ──
+async function sha1OfFile(file: File): Promise<string> {
+  const buf = await file.arrayBuffer()
+  const digest = await crypto.subtle.digest('SHA-1', buf)
+  return Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+interface PrecheckItem {
+  filename: string
+  title: string
+  status: 'new' | 'dup_hash' | 'dup_title' | 'dup_standard'
+  existing_doc_id?: string
+  existing_title?: string
+  reason?: string
+}
+
+async function runPrecheck(files: File[], bank: string): Promise<PrecheckItem[]> {
+  // 1. 本地计算 sha1
+  uploadPhase.value = `计算文件指纹 0/${files.length}`
+  const items: { filename: string; sha1: string; title: string; bank: string }[] = []
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i]
+    let sha1 = ''
+    try { sha1 = await sha1OfFile(f) } catch { /* ignore */ }
+    items.push({
+      filename: f.name,
+      sha1,
+      title: title.value || f.name.replace(/\.[^.]+$/, ''),
+      bank,
+    })
+    if ((i + 1) % 5 === 0 || i === files.length - 1) {
+      uploadPhase.value = `计算文件指纹 ${i + 1}/${files.length}`
+    }
+  }
+
+  // 2. 调 precheck endpoint
+  uploadPhase.value = `预检 ${files.length} 个文件...`
+  const { data } = await api.post('/upload/precheck', { items })
+  return data.results as PrecheckItem[]
+}
+
 async function handleUpload() {
   if (selectedFiles.value.length === 0) return
   uploading.value = true
   uploadProgress.value = '0%'
   uploadResult.value = null
 
-  const allFiles = selectedFiles.value
+  // ── 预检：识别已存在的文档 ──
+  let originalFiles = selectedFiles.value.slice()
+  let skippedDup: PrecheckItem[] = []
+  try {
+    const precheck = await runPrecheck(originalFiles, uploadBank.value)
+    const fileByName = new Map(originalFiles.map(f => [f.name, f]))
+    const keep: File[] = []
+    for (const p of precheck) {
+      if (p.status === 'new') {
+        const f = fileByName.get(p.filename)
+        if (f) keep.push(f)
+      } else {
+        skippedDup.push(p)
+      }
+    }
+    if (skippedDup.length > 0) {
+      scanInfo.value = `预检发现 ${skippedDup.length} 个已存在文档已跳过（${precheck.filter(p=>p.status==='dup_hash').length}重复内容/${precheck.filter(p=>p.status==='dup_standard').length}同标准号/${precheck.filter(p=>p.status==='dup_title').length}同标题）`
+    }
+    if (keep.length === 0) {
+      toastMsg.value = `全部 ${originalFiles.length} 个文件均已存在，无需上传`
+      toastType.value = 'warning'
+      uploading.value = false
+      uploadProgress.value = ''
+      uploadPhase.value = ''
+      // 显示跳过详情
+      uploadResult.value = {
+        ok: true,
+        total: originalFiles.length,
+        success: 0,
+        failed: 0,
+        results: skippedDup.map(p => ({
+          filename: p.filename,
+          ok: false,
+          detail: p.reason || '已存在',
+        })),
+      }
+      return
+    }
+    // 用过滤后的列表继续
+    originalFiles = keep
+  } catch (e: unknown) {
+    console.warn('precheck failed, falling back to direct upload:', e)
+    // precheck 失败不阻断上传，后端 detect_existing_doc 兜底
+  }
+
+  const allFiles = originalFiles
   const isBatch = allFiles.length > 1
 
   // ── 大量文件自动分批：每批 20 个，避免单请求超时 ──

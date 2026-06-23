@@ -540,6 +540,121 @@ async def upload_document(
     }
 
 
+@router.post("/precheck")
+async def upload_precheck(payload: dict):
+    """Precheck files before upload — detect duplicates by content_hash / title / standard_number.
+
+    Request body:
+      {
+        "items": [
+          {"filename": "GB-T 22239-2019.pdf", "sha1": "abc123...", "title": "GB/T 22239-2019 等保", "bank": "standards"},
+          ...
+        ]
+      }
+
+    Response:
+      {
+        "results": [
+          {
+            "filename": "...",
+            "status": "new" | "dup_hash" | "dup_title" | "dup_standard",
+            "existing_doc_id": "..." (only when dup),
+            "existing_title": "..." (only when dup),
+            "reason": "..."  (human-readable Chinese)
+          },
+          ...
+        ],
+        "summary": {"new": N, "dup_hash": N, "dup_title": N, "dup_standard": N}
+      }
+    """
+    from app.services.version_chain import _extract_standard_number
+
+    items = payload.get("items") or []
+    if not isinstance(items, list):
+        raise HTTPException(400, "items must be a list")
+    if len(items) > MAX_BATCH_FILES:
+        raise HTTPException(400, f"单次最多预检 {MAX_BATCH_FILES} 个文件")
+
+    db = SessionLocal()
+    results = []
+    summary = {"new": 0, "dup_hash": 0, "dup_title": 0, "dup_standard": 0}
+
+    try:
+        # 预加载活跃文档的 hash / title / 标准号索引（O(N) 一次扫描，N≈148）
+        active_docs = db.query(Document).filter(Document.status == "active").all()
+        hash_map: dict[str, Document] = {}
+        title_map: dict[tuple[str, str], Document] = {}
+        std_map: dict[tuple[str, str], Document] = {}
+        for d in active_docs:
+            d_hash = getattr(d, "content_hash", "") or ""
+            d_title = getattr(d, "title", "") or ""
+            d_bank = getattr(d, "bank", "") or ""
+            if d_hash:
+                hash_map[str(d_hash)] = d
+            if d_title and d_bank:
+                title_map[(str(d_bank), str(d_title))] = d
+            if d_title:
+                std = _extract_standard_number(str(d_title))
+                if std and d_bank:
+                    std_map[(str(d_bank), std)] = d
+
+        for it in items:
+            fname = (it.get("filename") or "").strip()
+            sha1 = (it.get("sha1") or "").strip().lower()
+            title = (it.get("title") or "").strip() or filename_to_title(fname)
+            bank = (it.get("bank") or "general").strip()
+
+            entry = {"filename": fname, "title": title}
+
+            # L1: content_hash 精确匹配
+            if sha1 and sha1 in hash_map:
+                d = hash_map[sha1]
+                entry.update({
+                    "status": "dup_hash",
+                    "existing_doc_id": d.doc_id,
+                    "existing_title": d.title,
+                    "reason": "文件内容已存在（hash 完全相同）",
+                })
+                summary["dup_hash"] += 1
+                results.append(entry)
+                continue
+
+            # L2: 同 bank + 同标准号
+            std = _extract_standard_number(title)
+            if std and (bank, std) in std_map:
+                d = std_map[(bank, std)]
+                entry.update({
+                    "status": "dup_standard",
+                    "existing_doc_id": d.doc_id,
+                    "existing_title": d.title,
+                    "reason": f"同标准号已存在: {std}",
+                })
+                summary["dup_standard"] += 1
+                results.append(entry)
+                continue
+
+            # L3: 同 bank + 同标题
+            if title and (bank, title) in title_map:
+                d = title_map[(bank, title)]
+                entry.update({
+                    "status": "dup_title",
+                    "existing_doc_id": d.doc_id,
+                    "existing_title": d.title,
+                    "reason": "同知识库下已存在同名文档",
+                })
+                summary["dup_title"] += 1
+                results.append(entry)
+                continue
+
+            entry.update({"status": "new", "reason": "未发现重复"})
+            summary["new"] += 1
+            results.append(entry)
+    finally:
+        db.close()
+
+    return {"results": results, "summary": summary}
+
+
 @router.post("/batch")
 async def upload_batch(
     files: Optional[List[UploadFile]] = File(default=None),
