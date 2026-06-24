@@ -6,7 +6,7 @@ OKF lifecycle: concept_id, domain, confidence, status, superseded_by (P0 2026-06
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, String, DateTime, Text, Integer, Float, ForeignKey, Index
+from sqlalchemy import Column, String, DateTime, Text, Integer, Float, ForeignKey, Date, Index
 from app.models.database import Base
 
 
@@ -45,6 +45,8 @@ class Document(Base):
     version = Column(String, default="1.0.0")                 # document version
     source_url = Column(String, nullable=True)                # original source URL
     chunk_count = Column(Integer, default=0)                  # total chunks (denormalized for fast query)
+    published_date = Column(Date, nullable=True)              # document publication date (vs created_at = upload time)
+    geo_scope = Column(String(32), nullable=True)             # national/provincial/city/enterprise
 
     __table_args__ = (
         Index("ix_documents_domain_status", "domain", "status"),
@@ -68,7 +70,8 @@ class Document(Base):
         for attr in ("concept_id", "domain", "subdomain", "profile_confidence",
                       "status", "superseded_by", "supersedes", "stale_at",
                       "stale_reason", "review_required", "last_confirmed",
-                      "version", "source_url", "chunk_count"):
+                      "version", "source_url", "chunk_count",
+                      "published_date", "geo_scope"):
             val = getattr(self, attr)
             if val is not None:
                 if isinstance(val, datetime):

@@ -796,3 +796,119 @@ def _find_rate_table_snippet(tier_keywords: list, bank: str = "all") -> tuple:
     except Exception as e:
         logger.warning("_find_rate_table_snippet failed: %s", e)
     return None, None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Tiebreaker: 时间 + 地理层级排序（应用层，不改 Hindsight 语义排序）
+# ═══════════════════════════════════════════════════════════════════
+
+_GEO_ORDER = {"national": 0, "provincial": 1, "city": 2, "enterprise_group": 3, "enterprise": 4}
+_GEO_KEYWORDS = {"标准", "规范", "规程", "指南", "法规", "办法", "细则", "要求",
+                 "GB", "GB/T", "GBZ", "DB", "ISO", "YD", "SJ"}
+
+
+def _extract_doc_id_from_tags(tags: list) -> str | None:
+    """Extract doc_id from hindsight result tags."""
+    if not tags:
+        return None
+    for t in tags:
+        if t.startswith("doc_id:"):
+            return t[7:]
+    return None
+
+
+def _check_geo_query(query: str) -> bool:
+    """Check if the query likely needs geo-based sorting."""
+    for kw in _GEO_KEYWORDS:
+        if kw in query:
+            return True
+    return False
+
+
+def apply_tiebreaker_sort(
+    results: list,
+    query: str = "",
+) -> list:
+    """对搜索结果应用 tiebreaker 排序。
+
+    核心原则：语义相似度永远是主排序，时间和地理只是 tiebreaker。
+
+    算法：
+    1. 从 Hindsight 标签中提取 doc_id
+    2. 批次查询 DB 获取 published_date 和 geo_scope
+    3. 按 semantic_score 分成 10 个 score_band
+    4. 段内排序：published_date DESC → geo_scope 层级 → 原始 score 兜底
+    5. geo tiebreaker 仅在 query 含标准/规范/法规等关键词时启用
+
+    Args:
+        results: RRF merge 后的搜索结果列表
+        query: 用户查询
+
+    Returns:
+        排序后的结果列表
+    """
+    if not results:
+        return results
+
+    # Batch query documents table for published_date and geo_scope
+    doc_ids = set()
+    for r in results:
+        did = _extract_doc_id_from_tags(r.get("tags", []))
+        if did:
+            doc_ids.add(did)
+
+    doc_meta = {}
+    if doc_ids:
+        try:
+            db = SessionLocal()
+            id_list = list(doc_ids)
+            # SQLite: batch query with IN clause
+            placeholders = ",".join(f":id{i}" for i in range(len(id_list)))
+            params = {f"id{i}": d for i, d in enumerate(id_list)}
+            rows = db.execute(
+                text(
+                    f"SELECT doc_id, published_date, geo_scope "
+                    f"FROM documents WHERE doc_id IN ({placeholders})"
+                ),
+                params,
+            ).fetchall()
+            db.close()
+            for row in rows:
+                doc_meta[row[0]] = {
+                    "published_date": row[1],
+                    "geo_scope": row[2],
+                }
+        except Exception as e:
+            logger.warning("tiebreaker: batch query failed: %s", e)
+
+    use_geo = _check_geo_query(query)
+
+    # Extract score from recall results (use score field or fall back to 0.5)
+    scored = []
+    for r in results:
+        score = r.get("score", 0.5) or 0.5
+        did = _extract_doc_id_from_tags(r.get("tags", []))
+        meta = doc_meta.get(did, {})
+        pub_date = meta.get("published_date")
+        geo = meta.get("geo_scope")
+        geo_rank = _GEO_ORDER.get(geo, 99) if geo else 99  # NULL last
+
+        scored.append({
+            "result": r,
+            "score": score,
+            "score_band": int(score * 10),  # 0-9
+            "pub_date_num": -int(pub_date.replace("-", "")) if pub_date else 0,  # newer=more negative, NULL=0
+            "geo_rank": geo_rank,
+        })
+
+    # Sort: score_band DESC → published_date DESC (newest first, NULL last) → geo_rank ASC → score DESC
+    scored.sort(
+        key=lambda x: (
+            -x["score_band"],      # primary: semantic score band (higher first)
+            x["pub_date_num"],      # tiebreaker 1: newer first (-20260624 < -20250101 < 0)
+            x["geo_rank"] if use_geo else 0,  # tiebreaker 2: geo scope (only for standard queries)
+            -x["score"],            # final: original score within band
+        )
+    )
+
+    return [s["result"] for s in scored]

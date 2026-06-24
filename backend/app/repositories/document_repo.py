@@ -42,6 +42,8 @@ class DocumentRepository:
         bank: str = "general",
         hs_bank: str = "kb_general",
         source: str = "manual",
+        published_date=None,
+        geo_scope: str = None,
         searchable: int = 0,
         coverage_pct: float = 0.0,
         original_text_length: int = 0,
@@ -58,6 +60,10 @@ class DocumentRepository:
             doc.bank = bank
             doc.hs_bank = hs_bank
             doc.source = source
+            if published_date is not None:
+                doc.published_date = published_date
+            if geo_scope is not None:
+                doc.geo_scope = geo_scope
             doc.searchable = searchable
             doc.coverage_pct = coverage_pct
             doc.original_text_length = original_text_length
@@ -77,6 +83,8 @@ class DocumentRepository:
                 searchable=searchable,
                 coverage_pct=coverage_pct,
                 original_text_length=original_text_length,
+                published_date=published_date,
+                geo_scope=geo_scope,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
             )

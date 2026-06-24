@@ -31,6 +31,7 @@ from app.services.retrieval import (
     BANKS,
     _get_active_hindsight_banks,
     _find_rate_table_snippet,
+    apply_tiebreaker_sort,
     bm25_search,
     build_bm25_index,
     expand_query_synonyms,
@@ -265,6 +266,14 @@ async def _build_search_context(
 
     # 精确结果排在最前面
     all_results = exact_results + bm25_merged
+
+    # ── Tiebreaker: 时间 + 地理层级排序 ──
+    # 仅在有 BM25 结果时触发（纯语义 recall 结果少，不分段意义不大）
+    if bm25_hits and len(all_results) > 5:
+        try:
+            all_results = apply_tiebreaker_sort(all_results, query=q)
+        except Exception as e:
+            logger.warning("tiebreaker sort failed: %s", e)
 
     # ── BM25 top结果强制注入 ──
     def _get_doc_key(item):
