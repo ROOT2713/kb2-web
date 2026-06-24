@@ -88,7 +88,10 @@
       <div v-if="uploadProgress" class="progress-bar">
         <div class="progress-fill" :style="{ width: uploadProgress }"></div>
       </div>
-      <p v-if="uploadPhase" class="upload-phase">{{ uploadPhase }}</p>
+      <p v-if="uploadPhase" class="upload-phase">
+        {{ uploadPhase }}
+        <span v-if="currentFileName" class="upload-file-name">{{ currentFileName }}</span>
+      </p>
     </div>
 
     <!-- 单文件上传结果 -->
@@ -166,6 +169,7 @@ const scanInfo = ref('')
 const uploadPhase = ref('')
 const batchIndex = ref(0)
 const totalBatches = ref(0)
+const currentFileName = ref('')
 
 interface UploadQuality {
   score: number
@@ -293,28 +297,42 @@ interface PrecheckItem {
 }
 
 async function runPrecheck(files: File[], bank: string): Promise<PrecheckItem[]> {
-  // 1. 本地计算 sha1
+  // 1. 本地计算 sha1 — 分块（每块 5 个），块间让出主线程避免 UI 冻结
   uploadPhase.value = `计算文件指纹 0/${files.length}`
   const items: { filename: string; sha1: string; title: string; bank: string }[] = []
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i]
-    let sha1 = ''
-    try { sha1 = await sha1OfFile(f) } catch { /* ignore */ }
-    items.push({
-      filename: f.name,
-      sha1,
-      title: title.value || f.name.replace(/\.[^.]+$/, ''),
-      bank,
-    })
-    if ((i + 1) % 5 === 0 || i === files.length - 1) {
-      uploadPhase.value = `计算文件指纹 ${i + 1}/${files.length}`
+  const CHUNK_SIZE = 5
+  for (let start = 0; start < files.length; start += CHUNK_SIZE) {
+    const chunk = files.slice(start, start + CHUNK_SIZE)
+    for (let j = 0; j < chunk.length; j++) {
+      const f = chunk[j]
+      const idx = start + j
+      let sha1 = ''
+      try { sha1 = await sha1OfFile(f) } catch (e) { console.warn('[sha1]', f.name, e) }
+      items.push({
+        filename: f.name,
+        sha1,
+        title: title.value || f.name.replace(/\.[^.]+$/, ''),
+        bank,
+      })
+      // 每文件刷新进度（不只是每5个）
+      uploadPhase.value = `计算文件指纹 ${idx + 1}/${files.length}`
     }
+    // 让出主线程，避免大文件 SHA1 阻塞 UI
+    await new Promise(r => setTimeout(r, 0))
   }
 
-  // 2. 调 precheck endpoint
+  // 2. 调 precheck endpoint（30s 超时，超时不阻塞上传）
   uploadPhase.value = `预检 ${files.length} 个文件...`
-  const { data } = await api.post('/upload/precheck', { items })
-  return data.results as PrecheckItem[]
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 30000)
+  try {
+    const { data } = await api.post('/upload/precheck', { items }, {
+      signal: controller.signal,
+    })
+    return data.results as PrecheckItem[]
+  } finally {
+    clearTimeout(timeoutId)
+  }
 }
 
 async function handleUpload() {
@@ -365,11 +383,15 @@ async function handleUpload() {
     originalFiles = keep
   } catch (e: unknown) {
     console.warn('precheck failed, falling back to direct upload:', e)
+    uploadPhase.value = `预检异常，直接上传 ${originalFiles.length} 个文件...`
     // precheck 失败不阻断上传，后端 detect_existing_doc 兜底
   }
 
   const allFiles = originalFiles
   const isBatch = allFiles.length > 1
+  uploadPhase.value = isBatch
+    ? `准备上传 ${allFiles.length} 个文件，分 ${Math.ceil(allFiles.length / 20)} 批...`
+    : `开始上传...`
 
   // ── 大量文件自动分批：每批 20 个，避免单请求超时 ──
   const BATCH_SIZE = 20
@@ -392,8 +414,8 @@ async function handleUpload() {
     results: [],
   }
 
-  try {
-    for (let bi = 0; bi < batches.length; bi++) {
+  for (let bi = 0; bi < batches.length; bi++) {
+    try {
       batchIndex.value = bi + 1
       const batch = batches[bi]
       const batchIsMulti = batch.length > 1 || batches.length > 1
@@ -411,7 +433,11 @@ async function handleUpload() {
       formData.append('bank', uploadBank.value)
 
       if (batches.length > 1) {
+        currentFileName.value = ''
         uploadPhase.value = `批次 ${bi + 1}/${batches.length}（${batch.length} 个文件）`
+      } else if (batch.length === 1) {
+        currentFileName.value = batch[0].name
+        uploadPhase.value = `上传中: ${batch[0].name}`
       }
 
       const { data } = await api.post(endpoint, formData, {
@@ -451,28 +477,32 @@ async function handleUpload() {
           })
         }
       }
+    } catch (e: unknown) {
+      // 单批失败不阻断剩余批次
+      aggregated.failed += batches[bi]?.length || 1
+      aggregated.results.push({
+        filename: `批次 ${bi + 1}`,
+        ok: false,
+        detail: '批次上传失败，已跳过',
+      })
+      console.warn(`[upload] batch ${bi + 1}/${batches.length} failed:`, e)
     }
-
-    aggregated.ok = aggregated.success > 0
-    uploadResult.value = aggregated
-    uploadPhase.value = ''
-
-    if (aggregated.ok) {
-      toastMsg.value = `批量上传完成：成功 ${aggregated.success} / 失败 ${aggregated.failed}`
-      toastType.value = aggregated.failed > 0 ? 'warning' : 'success'
-    } else {
-      toastMsg.value = '全部失败，详见结果列表'
-      toastType.value = 'error'
-    }
-  } catch (e: unknown) {
-    const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-    toastMsg.value = typeof msg === 'string' ? msg : '上传失败'
-    toastType.value = 'error'
-  } finally {
-    uploading.value = false
-    uploadProgress.value = ''
-    uploadPhase.value = ''
   }
+
+  aggregated.ok = aggregated.success > 0
+  uploadResult.value = aggregated
+  uploadPhase.value = ''
+
+  if (aggregated.ok) {
+    toastMsg.value = `批量上传完成：成功 ${aggregated.success} / 失败 ${aggregated.failed}`
+    toastType.value = aggregated.failed > 0 ? 'warning' : 'success'
+  } else {
+    toastMsg.value = '全部失败，详见结果列表'
+    toastType.value = 'error'
+  }
+  uploading.value = false
+  uploadProgress.value = ''
+  uploadPhase.value = ''
 }
 
 function resetForm() {
@@ -548,6 +578,16 @@ button.secondary:hover {
   font-size: 0.82rem;
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
+}
+.upload-file-name {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--fg);
+  margin-top: 0.2rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .upload-btn-wrap {
