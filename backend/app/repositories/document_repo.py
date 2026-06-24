@@ -41,6 +41,7 @@ class DocumentRepository:
         doc_type: str = "generic",
         bank: str = "general",
         hs_bank: str = "kb_general",
+        source: str = "manual",
         searchable: int = 0,
         coverage_pct: float = 0.0,
         original_text_length: int = 0,
@@ -56,6 +57,7 @@ class DocumentRepository:
             doc.doc_type = doc_type
             doc.bank = bank
             doc.hs_bank = hs_bank
+            doc.source = source
             doc.searchable = searchable
             doc.coverage_pct = coverage_pct
             doc.original_text_length = original_text_length
@@ -71,6 +73,7 @@ class DocumentRepository:
                 doc_type=doc_type,
                 bank=bank,
                 hs_bank=hs_bank,
+                source=source,
                 searchable=searchable,
                 coverage_pct=coverage_pct,
                 original_text_length=original_text_length,

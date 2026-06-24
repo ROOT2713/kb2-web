@@ -334,6 +334,7 @@ async def upload_document(
             doc_type=doc_type,
             bank=bank,
             hs_bank=hs_bank,
+            source=source,
         )
         # 保存 parent_chunks
         for idx, ptext in parent_map.items():
