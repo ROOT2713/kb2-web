@@ -89,8 +89,14 @@ def main():
                     updates.append(f"geo_scope='{inferred}'")
 
             if updates:
-                sql = f"UPDATE documents SET {', '.join(updates)} WHERE doc_id=:did"
-                db.execute(sa_text(sql), {"did": doc_id})
+                # Parameterized SET to avoid SQL injection (even for one-off scripts)
+                set_clause = ", ".join(f"{k}=:{k}" for k in updates)
+                params = {"did": doc_id}
+                for u in updates:
+                    k, v = u.split("=", 1)
+                    params[k] = v.strip("'")
+                sql = f"UPDATE documents SET {set_clause} WHERE doc_id=:did"
+                db.execute(sa_text(sql), params)
                 if any("published_date" in u for u in updates):
                     updated_pub += 1
                 if any("geo_scope" in u for u in updates):

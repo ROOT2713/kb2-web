@@ -267,14 +267,6 @@ async def _build_search_context(
     # 精确结果排在最前面
     all_results = exact_results + bm25_merged
 
-    # ── Tiebreaker: 时间 + 地理层级排序 ──
-    # 仅在有 BM25 结果时触发（纯语义 recall 结果少，不分段意义不大）
-    if bm25_hits and len(all_results) > 5:
-        try:
-            all_results = apply_tiebreaker_sort(all_results, query=q)
-        except Exception as e:
-            logger.warning("tiebreaker sort failed: %s", e)
-
     # ── BM25 top结果强制注入 ──
     def _get_doc_key(item):
         doc_id = item.get("doc_id")
@@ -360,6 +352,15 @@ async def _build_search_context(
             logger.warning("LLM rerank timeout (30s), using RRF order")
         except Exception as e:
             logger.warning("LLM rerank skipped: %s", e)
+
+    # ── Tiebreaker: 时间 + 地理层级排序（在 LLM Rerank 之后，doc_facts 之前）──
+    # 核心原则：语义相似度永远是主排序，时间和地理只是 tiebreaker。
+    # LLM Rerank 先做语义重排，tiebreaker 在段内做二级排序。
+    if len(all_results) > 5:
+        try:
+            all_results = apply_tiebreaker_sort(all_results, query=q)
+        except Exception as e:
+            logger.warning("tiebreaker sort failed: %s", e)
 
     # ── 清洗 + 过滤 + 去重合并 ──
     doc_facts = {}

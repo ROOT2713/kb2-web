@@ -60,6 +60,8 @@ async def upload_document(
     bank: str = Form("general"),
     confirm_quality: str = Form(""),
     source: str = Form("manual"),
+    published_date: str = Form(None),
+    geo_scope: str = Form(None),
 ):
     """Upload a document: parse → chunk → embed → index → cache invalidate."""
     if not file.filename:
@@ -82,10 +84,21 @@ async def upload_document(
     if bank == "all":
         bank = "general"  # "全部"默认归入综合文件
 
-    # ── 自动路由：source=xhs 的内容归入 xhs bank ──
+    # 自动路由 source=xhs → xhs bank
     if source == "xhs" and bank == "general":
         bank = "xhs"
         logger.info("[xhs] source=xhs auto-routed to bank=%s", bank)
+
+    # 解析 published_date（YYYY-MM-DD 格式）
+    parsed_pub_date = None
+    if published_date:
+        try:
+            from datetime import date
+            parts = published_date.split("-")
+            parsed_pub_date = date(int(parts[0]), int(parts[1]), int(parts[2]))
+            logger.info("[upload] published_date=%s parsed=%s", published_date, parsed_pub_date)
+        except (ValueError, IndexError) as e:
+            logger.warning("[upload] cannot parse published_date=%s: %s", published_date, e)
 
     bank_cfg = get_bank_config(bank)
     hs_bank = bank_cfg.get("hindsight") or "kb"
@@ -340,6 +353,8 @@ async def upload_document(
             bank=bank,
             hs_bank=hs_bank,
             source=source,
+            published_date=parsed_pub_date,
+            geo_scope=geo_scope,
         )
         # 保存 parent_chunks
         for idx, ptext in parent_map.items():

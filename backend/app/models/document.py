@@ -76,6 +76,8 @@ class Document(Base):
             if val is not None:
                 if isinstance(val, datetime):
                     d[attr] = val.isoformat()
+                elif hasattr(val, "isoformat"):
+                    d[attr] = val.isoformat()
                 else:
                     d[attr] = val
         return d
