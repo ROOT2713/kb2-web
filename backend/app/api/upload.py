@@ -91,7 +91,7 @@ async def upload_document(
 
     # 解析 published_date（YYYY-MM-DD 格式）
     parsed_pub_date = None
-    if published_date:
+    if published_date and isinstance(published_date, str):
         try:
             from datetime import date
             parts = published_date.split("-")
@@ -736,6 +736,8 @@ async def upload_batch(
                 bank=bank,
                 confirm_quality=confirm_quality,
                 source=source,
+                published_date=None,
+                geo_scope=None,
             )
             if result.get("ok"):
                 success_count += 1

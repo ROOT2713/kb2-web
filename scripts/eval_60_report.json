@@ -1,0 +1,712 @@
+{
+  "timestamp": "2026-06-24 21:27:35",
+  "total": 60,
+  "passed": 60,
+  "avg_score": 5.0,
+  "categories": {
+    "standards": {
+      "total": 22,
+      "scored": 22,
+      "found": 22,
+      "score_sum": 110
+    },
+    "project": {
+      "total": 13,
+      "scored": 13,
+      "found": 13,
+      "score_sum": 65
+    },
+    "tech": {
+      "total": 10,
+      "scored": 10,
+      "found": 10,
+      "score_sum": 50
+    },
+    "xhs": {
+      "total": 10,
+      "scored": 10,
+      "found": 10,
+      "score_sum": 50
+    },
+    "geo": {
+      "total": 2,
+      "scored": 2,
+      "found": 2,
+      "score_sum": 10
+    },
+    "time": {
+      "total": 2,
+      "scored": 2,
+      "found": 2,
+      "score_sum": 10
+    },
+    "edge": {
+      "total": 1,
+      "scored": 1,
+      "found": 1,
+      "score_sum": 5
+    }
+  },
+  "results": [
+    {
+      "qid": "Q01",
+      "question": "GB 50174 数据中心设计规范",
+      "category": "standards",
+      "answer_len": 1998,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 22.7,
+      "answer_preview": "根据您提供的文档内容，**GB 50174-2017《数据中心设计规范》** 的相关信息整理如下：### 1. 标准基本信息 - **标准编号**：GB 50174-2017 - **发布与实施日期**：2017年5月4日发布，自**201",
+      "error": null
+    },
+    {
+      "qid": "Q02",
+      "question": "GB/T 22239 等保2.0基本要求",
+      "category": "standards",
+      "answer_len": 1424,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 19.2,
+      "answer_preview": "根据您提供的文档内容，GB/T 22239-2019《信息安全技术 网络安全等级保护基本要求》（即等保2.0基本要求）的核心信息如下：1.  **标准基本信息**     *   该标准是中华人民共和国国家标准，于**2019年5月10日*",
+      "error": null
+    },
+    {
+      "qid": "Q03",
+      "question": "GB/T 28448 等保测评要求",
+      "category": "standards",
+      "answer_len": 2411,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 24.5,
+      "answer_preview": "根据您提供的文档内容，GB/T 28448-2019《信息安全技术 网络安全等级保护测评要求》的核心内容如下：### 1. 标准基本信息 - **标准全称**：信息安全技术 网络安全等级保护测评要求。- **标准编号**：GB/T 2844",
+      "error": null
+    },
+    {
+      "qid": "Q04",
+      "question": "GB/T 39786 密码应用基本要求",
+      "category": "standards",
+      "answer_len": 1991,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 22.9,
+      "answer_preview": "根据您提供的文档内容，GB/T 39786-2021《信息安全技术 信息系统密码应用基本要求》的核心内容如下：### 1. 标准基本信息 该标准于2021年3月9日发布，2021年10月1日实施，由全国信息安全标准化技术委员会（SAC/TC",
+      "error": null
+    },
+    {
+      "qid": "Q05",
+      "question": "GB/T 43206 密码应用测评要求",
+      "category": "standards",
+      "answer_len": 1293,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 20.4,
+      "answer_preview": "根据您提供的文档内容，GB/T 43206-2023《信息安全技术 信息系统密码应用测评要求》的核心内容如下：**1. 标准基本信息与适用范围** 该标准为中华人民共和国国家标准，编号GB/T 43206-2023，于2023年9月7日发布",
+      "error": null
+    },
+    {
+      "qid": "Q06",
+      "question": "T/EGAG 010 监理服务规范",
+      "category": "standards",
+      "answer_len": 2298,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 24.8,
+      "answer_preview": "根据T/EGAG 010—2022《政务信息化项目监理服务规范》，该标准由广东省电子政务协会于2022年4月13日发布，2022年5月1日实施，标准编号为T/EGAG 010—2022（来源：标准封面及前言）。以下为核心内容梳理：---  ",
+      "error": null
+    },
+    {
+      "qid": "Q07",
+      "question": "T/EGAG 011 立项设计咨询规范",
+      "category": "standards",
+      "answer_len": 2512,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 24.8,
+      "answer_preview": "根据《T/EGAG 011—2022 政务信息化项目立项设计咨询服务规范》（以下简称“该标准”），该标准由广东省电子政务协会于2022年7月15日发布，2022年8月1日实施，ICS 35.240，CCS L67。以下按服务阶段梳理核心条款",
+      "error": null
+    },
+    {
+      "qid": "Q08",
+      "question": "T/EGAG 021 验收测评服务规范",
+      "category": "standards",
+      "answer_len": 2788,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 26.3,
+      "answer_preview": "根据您提供的文档内容，以下是关于 **T/EGAG 021—2023《政务信息化项目验收测评服务规范》** 的核心内容整理，引用具体条款并标注来源。---  ### 一、标准基本信息 - **标准编号**：T/EGAG 021—2023  ",
+      "error": null
+    },
+    {
+      "qid": "Q09",
+      "question": "GB 50348 安全防范工程技术标准",
+      "category": "standards",
+      "answer_len": 1903,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 21.6,
+      "answer_preview": "根据您提供的文档内容，以下是关于 **GB 50348-2018《安全防范工程技术标准》** 的核心信息整理：### 1. 标准基本信息 - **标准编号与名称**：GB 50348-2018《安全防范工程技术标准》（英文名：Technic",
+      "error": null
+    },
+    {
+      "qid": "Q10",
+      "question": "GB/T 25000.51 系统与软件质量要求和评价",
+      "category": "standards",
+      "answer_len": 1573,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 21.9,
+      "answer_preview": "根据您提供的文档内容，GB/T 25000.51-2016《系统与软件工程 系统与软件质量要求和评价 (SQuaRE) 第51部分：就绪可用软件产品 (RUSP) 的质量要求和测试细则》主要规定了以下核心内容：**1. 标准定位与适用范围*",
+      "error": null
+    },
+    {
+      "qid": "Q11",
+      "question": "GB 50343 建筑物防雷技术规范",
+      "category": "standards",
+      "answer_len": 1760,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 20.2,
+      "answer_preview": "根据您提供的文档内容，**GB 50343-2012《建筑物电子信息系统防雷技术规范》** 的核心信息如下：### 1. 标准基本信息 - **标准编号与名称**：GB 50343-2012《建筑物电子信息系统防雷技术规范》（来源：GB 5",
+      "error": null
+    },
+    {
+      "qid": "Q12",
+      "question": "GA/T 1127 安全防范视频监控摄像机通用技术要求",
+      "category": "standards",
+      "answer_len": 1973,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 21.6,
+      "answer_preview": "根据GA/T 1127-2013《安全防范视频监控摄像机通用技术要求》文档内容，该标准的核心信息如下：**一、标准基本信息**  GA/T 1127-2013由中华人民共和国公安部发布，2013年12月20日发布，2014年1月1日起实施。",
+      "error": null
+    },
+    {
+      "qid": "Q13",
+      "question": "粤府办〔2020〕9号 省级政务信息化项目管理办法",
+      "category": "standards",
+      "answer_len": 1565,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 19.9,
+      "answer_preview": "根据《粤府办〔2020〕9号 省级政务信息化项目管理办法》，该办法的核心内容如下：**1. 制定目的与总体原则**   办法旨在推动省级政务信息化项目从条线化管理向整体化管理转变，从政府投资建设向购买服务转变，建立高效、协同、有序的一体化建",
+      "error": null
+    },
+    {
+      "qid": "Q14",
+      "question": "GB 50462 数据中心基础设施施工及验收标准",
+      "category": "standards",
+      "answer_len": 3036,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 27.1,
+      "answer_preview": "根据《GB 50462-2024 数据中心基础设施施工及验收标准》，以下是对该标准核心内容的归纳，引用具体条款和数据，并标注信息来源。---  ### 一、标准适用范围与总体结构  本标准涵盖数据中心基础设施的施工及验收，包括室内装饰装修、",
+      "error": null
+    },
+    {
+      "qid": "Q15",
+      "question": "GB/T 35273 个人信息安全规范",
+      "category": "standards",
+      "answer_len": 1539,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 20.6,
+      "answer_preview": "根据您提供的文档内容，GB/T 35273—2020《信息安全技术 个人信息安全规范》的核心信息如下：**1. 标准基本信息与定位** 该标准为国家标准，由全国信息安全标准化技术委员会（SAC/TC260）提出并归口，于2020年3月6日发",
+      "error": null
+    },
+    {
+      "qid": "Q16",
+      "question": "广州市政务信息化项目验收管理细则有哪些内容",
+      "category": "project",
+      "answer_len": 1655,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 21.1,
+      "answer_preview": "根据《广州市政务信息化项目验收管理细则（2023）》的内容，该细则主要涵盖以下方面：### 一、项目终验的禁止与限制条件 细则明确了不得通过终验或需特殊处理的情形：- **多次清理仍未提交终验申请的项目**：经多次清理，仍未提交终验申请的项",
+      "error": null
+    },
+    {
+      "qid": "Q17",
+      "question": "广东省政务信息化项目管理办法2023",
+      "category": "project",
+      "answer_len": 791,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 17.8,
+      "answer_preview": "根据您提供的文档内容，关于“广东省政务信息化项目管理办法2023”的核心信息如下：**1. 现行有效版本及废止文件**  广东省省级政务信息化项目管理的现行有效文件是《广东省省级政务信息化项目管理办法 (修订)》，文号为**粤府办〔2023",
+      "error": null
+    },
+    {
+      "qid": "Q18",
+      "question": "电子政务工程造价指导书",
+      "category": "project",
+      "answer_len": 1885,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 20.7,
+      "answer_preview": "根据《电子政务工程造价指导书（2019年）第三部分》的内容，以下是对电子政务工程造价相关条款和数据的归纳：### 一、信息资源测试费用  测试费用按检测内容分项计取，具体标准如下（来源：电子政务工程造价指导书（2019年）第三部分，表5-8",
+      "error": null
+    },
+    {
+      "qid": "Q19",
+      "question": "省级政务信息化验收测评服务项目管理指引",
+      "category": "project",
+      "answer_len": 2047,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 22.0,
+      "answer_preview": "根据您提供的文档内容，以下是关于《广东省省级政务信息化验收测评服务项目管理指引》的核心内容整理，涵盖目的依据、职责分工、适用范围及采购要求等关键条款。### 1. 目的与依据 该指引旨在规范省级政务信息化验收测评服务项目管理，提升第三方服务",
+      "error": null
+    },
+    {
+      "qid": "Q20",
+      "question": "软件造价评估实施规程",
+      "category": "standards",
+      "answer_len": 2052,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 22.4,
+      "answer_preview": "根据《软件造价评估实施规程（修订）》（T/CCUA 005—2024 / T/BSCEA 002—2024）及相关文档，该规程的核心内容如下：---  ### 一、规程的定位与适用范围  该规程规定了软件造价评估工作的通则和流程，适用于规范",
+      "error": null
+    },
+    {
+      "qid": "Q21",
+      "question": "会议系统检测实施细则",
+      "category": "standards",
+      "answer_len": 1081,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 18.3,
+      "answer_preview": "根据《会议系统检测实施细则》（ST/C1-A-014），该文件由广州市盛通建设工程质量检测有限公司编制，发布日期为2022年05月25日，实施日期为2022年06月01日，修订次数为第0次，共11页。**1. 应用范围与检测项目**  该细",
+      "error": null
+    },
+    {
+      "qid": "Q22",
+      "question": "消防联动控制系统标准",
+      "category": "standards",
+      "answer_len": 1940,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 21.9,
+      "answer_preview": "根据您提供的文档内容，关于“消防联动控制系统标准”的核心信息如下：### 1. 标准主体与适用范围 该标准为 **GB 16806-2006《消防联动控制系统》**，于2006年发布，代替了1997年的旧版标准。标准规定了消防联动控制系统的",
+      "error": null
+    },
+    {
+      "qid": "Q23",
+      "question": "火灾自动报警系统设计规范",
+      "category": "standards",
+      "answer_len": 1968,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 21.3,
+      "answer_preview": "根据《火灾自动报警系统设计规范》（GB 50116-2013），以下是该规范的核心内容摘要，涵盖强制性条文、布线要求、典型场所设计等关键条款。### 一、规范基本信息与强制性条文  - **标准编号与施行日期**：GB 50116-2013",
+      "error": null
+    },
+    {
+      "qid": "Q24",
+      "question": "视频显示系统工程技术规范",
+      "category": "standards",
+      "answer_len": 2021,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 22.1,
+      "answer_preview": "根据您提供的文档内容，以下是《视频显示系统工程技术规范》（GB 50464-2008）的核心内容整理，引用具体条款和数据，并标注来源。### 1. 规范基本信息与适用范围 - **标准编号与名称**：GB 50464-2008《视频显示系统",
+      "error": null
+    },
+    {
+      "qid": "Q25",
+      "question": "城市轨道交通站台屏蔽门系统技术规范",
+      "category": "standards",
+      "answer_len": 1514,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 19.6,
+      "answer_preview": "根据您提供的文档内容，《城市轨道交通站台屏蔽门系统技术规范》（CJJ 183-2012）主要包含以下关键条款和数据：### 1. 规范目的与适用范围 - **制定目的**：该规范旨在提高站台屏蔽门系统工程的整体质量、减少质量纠纷、保证产品正",
+      "error": null
+    },
+    {
+      "qid": "Q26",
+      "question": "广州市政务信息化项目管理办法2022修订稿",
+      "category": "project",
+      "answer_len": 977,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 17.6,
+      "answer_preview": "根据《广州市政务信息化项目管理办法（2022修订稿）》（来源：广州市政务信息化项目管理办法(2022修订稿)），该办法的核心内容如下：**一、制定目的与适用范围**  第一条明确，制定本办法的目的是推动广州数字政府改革建设，打造泛在可及、智",
+      "error": null
+    },
+    {
+      "qid": "Q27",
+      "question": "广州市南沙区财政投资信息化项目管理办法",
+      "category": "project",
+      "answer_len": 3142,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 27.4,
+      "answer_preview": "根据您提供的文档内容，广州市南沙区财政投资信息化项目管理办法的核心内容整理如下：### 一、 适用范围与项目分类  1.  **适用范围**：本办法适用于开发区和区级行政事业单位及其下属单位、团体组织、垂直管理部门、区属公立学校、区统筹管理",
+      "error": null
+    },
+    {
+      "qid": "Q28",
+      "question": "广州市南沙区财政投资信息化项目管理办法2025修订",
+      "category": "project",
+      "answer_len": 2533,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 25.7,
+      "answer_preview": "根据《广州市南沙（开发）区财政投资信息化项目管理办法（2025年修订稿）》（以下简称“2025修订稿”），该办法的核心内容如下：### 一、适用范围与项目分类  **1. 适用主体与资金范围** 办法适用于开发区和区级行政事业单位、团体组织",
+      "error": null
+    },
+    {
+      "qid": "Q29",
+      "question": "广州市政务信息化建设开发类项目方案编写规范",
+      "category": "project",
+      "answer_len": 1660,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 23.9,
+      "answer_preview": "根据《广州市政务信息化建设开发类项目方案编写规范（2026）》（以下简称“编写规范”），该文件对建设开发类项目方案的编制提出了系统性要求。以下基于文档内容，按章节梳理核心条款和要点。---  ### 一、总则与适用范围  **第一条** 明",
+      "error": null
+    },
+    {
+      "qid": "Q30",
+      "question": "广州市政务信息化运维服务类项目方案编写规范",
+      "category": "project",
+      "answer_len": 1039,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 20.1,
+      "answer_preview": "根据《广州市政务信息化运维服务类项目方案编写规范（2026）》，该规范的核心内容如下：### 一、适用范围与总则 - **适用对象**：本规范适用于**运维服务类项目方案**的编制。应用系统运行维护工作主要包括维护系统正常运行、记录运行情况",
+      "error": null
+    },
+    {
+      "qid": "Q31",
+      "question": "广东省省级政务信息化验收测评服务项目管理指引解读",
+      "category": "project",
+      "answer_len": 1852,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 24.6,
+      "answer_preview": "根据《广东省省级政务信息化验收测评服务项目管理指引解读》（以下简称《指引解读》），该文件的核心内容如下：### 一、目的与依据 《指引解读》第一条明确，制定该指引的目的是“规范省级政务信息化验收测评服务项目管理,进一步提升政务信息化第三方服",
+      "error": null
+    },
+    {
+      "qid": "Q32",
+      "question": "附件1 广东省等保测评机构检查标准",
+      "category": "standards",
+      "answer_len": 2615,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 29.2,
+      "answer_preview": "根据《广东省等保测评机构检查标准2021年版》（v1.7.1-20210701），该标准主要分为调查类、方案类、报告类及机构管理类检查项，以下按类别梳理关键条款和数据。### 一、调查类检查项（总分10分）  **1. 调查内容全面性与准确",
+      "error": null
+    },
+    {
+      "qid": "Q33",
+      "question": "处置办法穗财资2022",
+      "category": "project",
+      "answer_len": 1499,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 22.3,
+      "answer_preview": "根据您提供的文档内容，**《广州市市本级行政事业单位国有资产处置管理办法》（穗财资〔2022〕24号）** 主要规定了以下核心内容：### 1. 资产处置收入管理（第十章） - **收入定义**：资产处置收入包括转让资产收入、置换差价收入、",
+      "error": null
+    },
+    {
+      "qid": "Q34",
+      "question": "监理报告附表有哪些内容",
+      "category": "project",
+      "answer_len": 390,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 16.0,
+      "answer_preview": "根据文档内容，监理报告附表（附件3）主要包含以下内容：**1. 项目建设内容检查项** 该表用于检查项目实际建设周期与备案方案的对比情况。具体检查项包括：- **建设类项目周期**：从项目中主体和配套里最早的合同签订之日起，至最后的合同验收",
+      "error": null
+    },
+    {
+      "qid": "Q35",
+      "question": "验收测评附表",
+      "category": "project",
+      "answer_len": 921,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 20.2,
+      "answer_preview": "根据知识库内容，与“验收测评附表”直接相关的文档是《附件1.验收测评附表》，该附件主要提供了一张**项目内容差异对照表（建设开发类项目）**的模板结构。以下是基于文档的具体内容：### 1. 附表名称与用途 该附表名为**“表1.1 项目内",
+      "error": null
+    },
+    {
+      "qid": "Q36",
+      "question": "RAG三种架构对比",
+      "category": "tech",
+      "answer_len": 1728,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 22.8,
+      "answer_preview": "根据文档内容，RAG（检索增强生成）的发展经历了三个递进阶段，核心差异在于“检索什么”和“如何行动”。以下是三阶段的横向对比，引用自《一个视频让你看懂RAG的三种架构》和《RAG让检索更聪明且可信：图、反思与评测》。---  ### 第一阶",
+      "error": null
+    },
+    {
+      "qid": "Q37",
+      "question": "RAG检索准确率从60%提升到85%的方法",
+      "category": "tech",
+      "answer_len": 1554,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 20.7,
+      "answer_preview": "根据文档内容，RAG检索准确率从约60%提升至85%以上，主要依赖以下四种方法的组合，具体数据和做法如下：### 1. 语义分块与元数据注入 **做法**：按文档结构（标题、段落、列表）进行语义分块，每个chunk注入来源、标题、章节、页码",
+      "error": null
+    },
+    {
+      "qid": "Q38",
+      "question": "Claude Code动态工作流",
+      "category": "tech",
+      "answer_len": 1514,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 24.3,
+      "answer_preview": "好的，根据您提供的文档内容，以下是关于“Claude Code动态工作流”的详细解答。### 核心概念：从概率到确定性的工程化  Claude Code动态工作流的核心是将AI的任务编排从概率性的模型内部，转移到确定性的代码框架中。其核心思",
+      "error": null
+    },
+    {
+      "qid": "Q39",
+      "question": "如何构建可交付的AI Agent系统",
+      "category": "tech",
+      "answer_len": 1971,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 22.4,
+      "answer_preview": "# 构建可交付的AI Agent系统的五个核心维度  基于《构建可交付的AI Agent系统-5维度框架(雷哥AI)》的内容，构建可交付的AI Agent系统需要从以下五个维度入手：## 一、信息格式适配AI理解方式  人类看HTML时关注",
+      "error": null
+    },
+    {
+      "qid": "Q40",
+      "question": "LangChain vs LangGraph适用场景",
+      "category": "tech",
+      "answer_len": 1939,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 23.2,
+      "answer_preview": "# LangChain vs LangGraph 适用场景分析  ## 核心差异：DAG vs 循环状态图  根据视频笔记的转录内容，两者的架构本质完全不同：**LangChain** 走的是 **DAG（有向无环图）模式**——“这条路只",
+      "error": null
+    },
+    {
+      "qid": "Q41",
+      "question": "Supervision AI视觉方案",
+      "category": "tech",
+      "answer_len": 616,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 17.3,
+      "answer_preview": "好的，根据您提供的文档内容，关于Supervision AI视觉方案，以下是核心信息整理：**Supervision是一个开源的AI视觉工具项目**，其GitHub Star数量即将突破40K（来源：Supervision-AI视觉方案开源",
+      "error": null
+    },
+    {
+      "qid": "Q42",
+      "question": "数据标注质检流程",
+      "category": "tech",
+      "answer_len": 2042,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 21.5,
+      "answer_preview": "根据文档内容，数据标注质检流程包含以下核心环节和具体要求：## 一、质检目标与模式  质检的核心目标是**保证标注结果可用于模型训练**，降低错标、漏标、边界不准、类别不一致等问题（来源：《数据标注质检流程》）。质检模式分为五种，各自适用不",
+      "error": null
+    },
+    {
+      "qid": "Q43",
+      "question": "数据清洗方法OpenRefine",
+      "category": "tech",
+      "answer_len": 2180,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 22.0,
+      "answer_preview": "好的，根据您提供的文档内容，以下是关于数据清洗方法OpenRefine的详细说明。### OpenRefine 数据清洗方法  OpenRefine 被定位为一款交互式数据清洗工具，专门用于处理表格、CSV、Excel、JSON/XML 等",
+      "error": null
+    },
+    {
+      "qid": "Q44",
+      "question": "OCR文档标注模板",
+      "category": "tech",
+      "answer_len": 2802,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 24.8,
+      "answer_preview": "好的，根据您提供的文档内容，以下是关于OCR文档标注模板的详细说明。### 1. 模板库的构成与用途  OCR/文档标注模板库的核心用途是将通用的标注任务（如OCR、文档、多模态）转化为**政务材料标注的可复用模板**。这些模板不是直接复制",
+      "error": null
+    },
+    {
+      "qid": "Q45",
+      "question": "标注员能力模型",
+      "category": "tech",
+      "answer_len": 787,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 16.7,
+      "answer_preview": "根据文档内容，标注员能力模型分为四个等级，每个等级有明确的能力要求。以下是具体内容，均来源于《标注员能力模型》和《总报告_数据标注课程_结构化版》。---  ### 1. 初级：会操作  **能力要求**（来源：《标注员能力模型》第1节）：",
+      "error": null
+    },
+    {
+      "qid": "Q46",
+      "question": "普通人如何应对金融危机",
+      "category": "xhs",
+      "answer_len": 1251,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 18.1,
+      "answer_preview": "根据知识库中收录的文档内容，普通人应对金融危机可遵循以下五步行动清单，顺序不可乱。所有内容均来自《普通人如何应对金融危机》视频笔记（博主大闫叨叨，2026-06-15发布）。---  ### 第一步：心态稳住 - **核心认知**：危机不是",
+      "error": null
+    },
+    {
+      "qid": "Q47",
+      "question": "小红书开店方法论",
+      "category": "xhs",
+      "answer_len": 2462,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 23.6,
+      "answer_preview": "根据您提供的文档内容，关于“小红书开店方法论”的核心信息主要来自《小红书开店方法论：采访100个离开职场的人×书豪》这份文档。以下是对该方法的系统性梳理，包含具体条款、数据及来源标注。---  ## 一、核心方法论：三层框架  ### 1.",
+      "error": null
+    },
+    {
+      "qid": "Q48",
+      "question": "如何用Codex做期末考复习",
+      "category": "xhs",
+      "answer_len": 1114,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 20.3,
+      "answer_preview": "根据文档内容，用Codex做期末考复习的核心方法是一个**三段式学习闭环**，而非简单让AI出卷。具体操作步骤如下：---  ### 第一步：限定资料范围，减少AI幻觉  不要直接让Codex凭空生成复习资料。用户“辣妈行动西西”的做法是：",
+      "error": null
+    },
+    {
+      "qid": "Q49",
+      "question": "OpenAI教你如何榨干Codex",
+      "category": "xhs",
+      "answer_len": 1418,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 19.2,
+      "answer_preview": "根据文档内容，OpenAI大神Jason Liu在《Codex-maxxing》文章中分享了将Codex从一次性代码助手升级为持续运行工作操作系统的核心技巧，具体包括以下要点：## 1. 核心操作循环 Jason将Codex的高阶用法总结为",
+      "error": null
+    },
+    {
+      "qid": "Q50",
+      "question": "三遍读论文法",
+      "category": "xhs",
+      "answer_len": 1522,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 20.5,
+      "answer_preview": "根据文档内容，三遍读论文法（three-pass approach）源自滑铁卢大学S. Keshav的经典论文《How to Read a Paper》，其核心是“不要从头啃到尾，每遍各有目标”。该方法被小红书用户“芝知”整理为一个可复用的",
+      "error": null
+    },
+    {
+      "qid": "Q51",
+      "question": "AI写作Prompt",
+      "category": "xhs",
+      "answer_len": 1076,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 23.0,
+      "answer_preview": "根据您提供的文档内容，关于“AI写作Prompt”的信息主要集中在以下两个来源中，我将分别进行说明。### 一、学术写作Prompt集合  文档《小红书-顶尖研究所AI写作Prompt-awesome-ai-research-writing",
+      "error": null
+    },
+    {
+      "qid": "Q52",
+      "question": "美股Skills蒸馏方法论",
+      "category": "xhs",
+      "answer_len": 849,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 20.7,
+      "answer_preview": "根据您提供的文档内容，**知识库中未收录关于“美股Skills蒸馏方法论”的系统性论述或具体操作步骤**。文档仅包含以下相关片段，但不足以构成完整的方法论：1. **项目概述**：文档提到一个名为“UZI-Skill”的开源项目，其核心能力",
+      "error": null
+    },
+    {
+      "qid": "Q53",
+      "question": "3D数据可视化大屏",
+      "category": "xhs",
+      "answer_len": 1463,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 19.0,
+      "answer_preview": "好的，根据您提供的文档内容，关于“3D数据可视化大屏”的相关信息整理如下：### 一、 核心技术与功能特性  该3D数据可视化大屏是一个基于 **Three.js** 3D引擎和 **React** 前端框架构建的开源项目。其核心功能特性包",
+      "error": null
+    },
+    {
+      "qid": "Q54",
+      "question": "入门LLM的训练方法",
+      "category": "xhs",
+      "answer_len": 1869,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 21.8,
+      "answer_preview": "基于文档内容，入门LLM的训练方法可以归纳为以下核心路径，所有信息均来自对 **MiniMind** 项目的分析。### 1. 核心训练流程：从零到完整闭环  MiniMind 项目完整覆盖了从预训练到强化学习的全流程，具体包括以下阶段（来",
+      "error": null
+    },
+    {
+      "qid": "Q55",
+      "question": "Excel做RAG的好方法",
+      "category": "xhs",
+      "answer_len": 1780,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 22.3,
+      "answer_preview": "根据知识库内容，Excel文件做RAG（检索增强生成）目前没有通用的完美方案，但社区和实践中总结了几条可行路径。以下是具体方法和数据支撑：---  ### 1. 核心难点：行列对齐与结构理解  Excel做RAG的主要障碍在于大模型对表格结",
+      "error": null
+    },
+    {
+      "qid": "Q56",
+      "question": "广州市的政务信息化验收规定",
+      "category": "geo",
+      "answer_len": 1949,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 22.6,
+      "answer_preview": "根据您提供的文档内容，广州市政务信息化项目验收规定主要依据《广州市政务信息化项目验收管理细则（2023）》及其补充通知。以下是核心规定的梳理：### 一、验收管理的基本框架 - **适用对象**：本细则适用于《广州市政务信息化项目管理办法（",
+      "error": null
+    },
+    {
+      "qid": "Q57",
+      "question": "广东省的标准规范",
+      "category": "geo",
+      "answer_len": 1777,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 20.5,
+      "answer_preview": "根据提供的文档内容，广东省在政务信息化领域已形成一套涵盖项目管理、验收测评、服务规范的标准规范体系。以下按类别梳理核心内容：### 一、项目管理办法 - **《广东省省级政务信息化项目管理办法（修订）》**（粤府办〔2023〕22号）：该办",
+      "error": null
+    },
+    {
+      "qid": "Q58",
+      "question": "2023年发布的验收规范",
+      "category": "time",
+      "answer_len": 778,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 17.2,
+      "answer_preview": "根据您提供的文档内容，2023年发布的政务信息化验收规范主要涉及以下两份文件：1.  **GDZW 0082-2023《政务信息化项目验收规范》**：由广东省政务服务数据管理局于2023年11月10日发布并实施。该标准为需方验收政务信息化项",
+      "error": null
+    },
+    {
+      "qid": "Q59",
+      "question": "2022年发布的广东省标准",
+      "category": "time",
+      "answer_len": 454,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 15.1,
+      "answer_preview": "根据您提供的文档内容，2022年发布的广东省标准（团体标准）共有两项，具体信息如下：1. **《政务信息化项目监理服务规范》**    - **标准编号**：T/EGAG 010—2022    - **发布日期**：2022年4月13日 ",
+      "error": null
+    },
+    {
+      "qid": "Q60",
+      "question": "AirMagnet Survey使用教程",
+      "category": "edge",
+      "answer_len": 2161,
+      "source_count": 12,
+      "score": 5,
+      "elapsed": 25.7,
+      "answer_preview": "根据您提供的文档内容，**AirMagnet Survey 的使用教程**主要包含软件安装、站点地图导入、勘察模式选择、数据导出以及与 Cisco WCS 集成等核心步骤。以下是基于文档的详细操作指南：### 1. 软件安装与系统要求 - ",
+      "error": null
+    }
+  ]
+}
