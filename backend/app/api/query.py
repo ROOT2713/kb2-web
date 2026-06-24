@@ -112,7 +112,10 @@ async def _build_search_context(
     try:
         rows = db.execute(sa_text("SELECT doc_id, bank, title FROM documents WHERE searchable=1 AND status='active'")).fetchall()
         bank_map = {r[0]: r[1] for r in rows}
-        title_map = {r[0]: (r[2] or "") for r in rows}
+        # title_map: 只用于展示来源文档名，不参与检索过滤，因此不限制 searchable=1
+        # 避免 reparse/reindex 后 searchable 尚未置 1 时 title 为空
+        title_rows = db.execute(sa_text("SELECT doc_id, title FROM documents WHERE status='active'")).fetchall()
+        title_map = {r[0]: (r[1] or "") for r in title_rows}
     except Exception:
         pass
     finally:

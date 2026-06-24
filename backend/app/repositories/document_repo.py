@@ -120,6 +120,9 @@ class DocumentRepository:
             "hs_bank": doc.hs_bank,
             "searchable": doc.searchable if doc.searchable is not None else 0,
             "coverage_pct": doc.coverage_pct if doc.coverage_pct is not None else 0,
+            "source": doc.source,
+            "published_date": doc.published_date.isoformat() if doc.published_date else None,
+            "geo_scope": doc.geo_scope,
         }
 
     # ── get_by_hash ────────────────────────────────────────────

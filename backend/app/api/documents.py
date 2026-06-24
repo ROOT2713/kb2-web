@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.database import get_db, SessionLocal
 from app.repositories.document_repo import DocumentRepository
+from app.models.document import Document
 from app.services.retrieval import (
     recall, get_bank_config, _get_active_hindsight_banks,
     _hindsight_request, BANKS,
@@ -1092,12 +1093,33 @@ async def reparse_document(doc_id: str, db: Session = Depends(get_db)):
         logger.info("Reparse total: %d/%d chunks stored", retained, len(memory_items))
 
     content_hash = hashlib.sha256(content).hexdigest()
-    repo.save(new_doc_id, doc_title, doc_category, filename, content_hash, doc_type, old_bank, hs_bank)
-
-    db.execute(
-        sa_text("UPDATE documents SET bank = :bank, hs_bank = :hs_bank WHERE doc_id = :did"),
-        {"bank": old_bank, "hs_bank": hs_bank, "did": new_doc_id}
+    source_from_meta = meta.get("source", "manual")
+    pub_date = meta.get("published_date")
+    geo_scope_from_meta = meta.get("geo_scope")
+    repo.save(
+        doc_id=new_doc_id, title=doc_title, category=doc_category,
+        filename=filename, content_hash=content_hash, doc_type=doc_type,
+        bank=old_bank, hs_bank=hs_bank,
+        source=source_from_meta,
+        published_date=pub_date,
+        geo_scope=geo_scope_from_meta,
+        coverage_pct=coverage,
+        original_text_length=len(text),
     )
+
+    # Update OKF fields (profile_document returns confidence but not stored by save())
+    doc_record = db.query(Document).filter(Document.doc_id == new_doc_id).first()
+    if doc_record:
+        doc_record.bank = old_bank
+        doc_record.hs_bank = hs_bank
+        doc_record.profile_confidence = profile.get("confidence", 0.5)
+        doc_record.chunk_count = len(pc_chunks)
+        doc_record.original_text_length = len(text)
+        try:
+            from app.services.concept_gen import infer_domain
+            doc_record.domain = infer_domain(old_bank, doc_type)
+        except Exception:
+            pass
     db.commit()
 
     asyncio.create_task(_verify_searchable(new_doc_id, doc_title, len(text), hs_bank))
