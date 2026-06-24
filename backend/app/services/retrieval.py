@@ -155,9 +155,11 @@ async def _get_active_hindsight_banks(min_docs: int = 1) -> list:
 # ── LLM Chat helper (for rerank; will be replaced by generation.py in Batch 5) ──
 async def _llm_chat(messages: list, stream: bool = False, max_retries: int = 3) -> str:
     """调用 LLM Chat API（带 429 重试）"""
-    llm_base_url = settings.llm_base_url or "https://token-plan-cn.xiaomimimo.com/v1"
+    if not settings.llm_base_url or not settings.llm_api_key:
+        raise ValueError("LLM_BASE_URL 或 LLM_API_KEY 未配置（.env）")
+    llm_base_url = settings.llm_base_url
     llm_api_key = settings.llm_api_key
-    llm_model = settings.llm_model or "mimo-v2.5"
+    llm_model = settings.llm_model
 
     last_error = None
     for attempt in range(max_retries):
@@ -197,11 +199,11 @@ async def _llm_chat(messages: list, stream: bool = False, max_retries: int = 3) 
                     logger.warning("llm_chat: rate limit in body, 第%d次重试, 等待 %ds", attempt + 1, wait)
                     await asyncio.sleep(wait)
                     continue
-                logger.warning("llm_chat: mimo API 无 choices. status=%d error=%s", resp.status_code, error_msg)
+                logger.warning("llm_chat: LLM API 无 choices. status=%d error=%s", resp.status_code, error_msg)
                 raise ValueError(f"LLM API 返回异常: {error_msg or resp.text[:200]}")
             try:
                 content = choices[0]["message"]["content"]
-                # mimo reasoning model: content 可能为空，检查 reasoning_content
+                # reasoning model: content 可能为空，检查 reasoning_content
                 if not content and choices[0]["message"].get("reasoning_content"):
                     content = choices[0]["message"]["reasoning_content"]
                 return content or "（模型返回空内容）"
