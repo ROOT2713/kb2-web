@@ -82,6 +82,11 @@ async def upload_document(
     if bank == "all":
         bank = "general"  # "全部"默认归入综合文件
 
+    # ── 自动路由：source=xhs 的内容归入 xhs bank ──
+    if source == "xhs" and bank == "general":
+        bank = "xhs"
+        logger.info("[xhs] source=xhs auto-routed to bank=%s", bank)
+
     bank_cfg = get_bank_config(bank)
     hs_bank = bank_cfg.get("hindsight") or "kb"
 

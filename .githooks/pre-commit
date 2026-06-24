@@ -1,0 +1,43 @@
+#!/bin/sh
+# Pre-commit hook: check Hermes skill references are synced
+#
+# When a SKILL.md references a file in its "linked_files" section,
+# that file should exist in the skill's references/ directory.
+# This hook warns (does not block) when skill files changed but
+# their referenced files weren't staged.
+
+echo "=== [hermes] Checking skill references ==="
+
+staged=$(git diff --cached --name-only)
+has_warn=false
+
+for skill_md in $(echo "$staged" | grep -E 'SKILL\.md$'); do
+    skill_dir=$(dirname "$skill_md")
+    ref_dir="$skill_dir/references"
+
+    if [ ! -d "$ref_dir" ]; then
+        continue
+    fi
+
+    for ref in "$ref_dir"/*.md; do
+        [ -f "$ref" ] || continue
+        ref_name=$(basename "$ref")
+
+        if echo "$staged" | grep -qF "$ref_name"; then
+            continue  # ref is staged
+        fi
+
+        if ! grep -qF "$ref_name" "$skill_md"; then
+            continue  # skill doesn't reference this file
+        fi
+
+        echo "  ⚠️  $skill_md references $ref_name but file wasn't staged"
+        has_warn=true
+    done
+done
+
+if [ "$has_warn" = true ]; then
+    echo "  → Review staged files before committing"
+fi
+
+echo "=== [hermes] Skill reference check complete ==="
