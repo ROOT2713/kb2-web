@@ -577,10 +577,13 @@ async def upload_precheck(payload: dict):
     Request body:
       {
         "items": [
-          {"filename": "GB-T 22239-2019.pdf", "sha1": "abc123...", "title": "GB/T 22239-2019 等保", "bank": "standards"},
+          {"filename": "...", "sha1": "SHA256hex...", "title": "...", "bank": "standards"},
           ...
         ]
       }
+
+    Note: `sha1` field is actually SHA-256 (hashed with crypto.subtle.digest('SHA-256')),
+    matching the backend's `content_hash` (hashlib.sha256).
 
     Response:
       {

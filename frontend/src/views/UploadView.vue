@@ -229,8 +229,15 @@ function handleDrop(e: DragEvent) {
   isDragOver.value = false
   const files = e.dataTransfer?.files
   if (files && files.length > 0) {
-    selectedFiles.value = Array.from(files)
-    scanInfo.value = ''
+    const raw = Array.from(files)
+    const filtered = raw.filter(f => {
+      const ext = '.' + (f.name.split('.').pop() || '').toLowerCase()
+      return SUPPORTED_EXTS.has(ext) && !isHiddenOrMetadata(f)
+    })
+    scanInfo.value = raw.length > filtered.length
+      ? `已扫描 ${raw.length} 个文件，过滤后 ${filtered.length} 个支持的文件`
+      : ''
+    selectedFiles.value = filtered
   }
 }
 
@@ -278,10 +285,10 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-// ── 计算 File SHA1（与后端 hashlib.sha1 一致） ──
-async function sha1OfFile(file: File): Promise<string> {
+// ── 计算文件 SHA-256（与后端 hashlib.sha256 一致，用于 precheck 精确匹配） ──
+async function sha256OfFile(file: File): Promise<string> {
   const buf = await file.arrayBuffer()
-  const digest = await crypto.subtle.digest('SHA-1', buf)
+  const digest = await crypto.subtle.digest('SHA-256', buf)
   return Array.from(new Uint8Array(digest))
     .map(b => b.toString(16).padStart(2, '0'))
     .join('')
@@ -306,8 +313,9 @@ async function runPrecheck(files: File[], bank: string): Promise<PrecheckItem[]>
     for (let j = 0; j < chunk.length; j++) {
       const f = chunk[j]
       const idx = start + j
+      uploadPhase.value = `计算文件指纹 ${idx + 1}/${files.length}`
       let sha1 = ''
-      try { sha1 = await sha1OfFile(f) } catch (e) { console.warn('[sha1]', f.name, e) }
+      try { sha1 = await sha256OfFile(f) } catch (e) { console.warn('[sha1]', f.name, e) }
       items.push({
         filename: f.name,
         sha1,
@@ -383,8 +391,20 @@ async function handleUpload() {
     originalFiles = keep
   } catch (e: unknown) {
     console.warn('precheck failed, falling back to direct upload:', e)
-    uploadPhase.value = `预检异常，直接上传 ${originalFiles.length} 个文件...`
-    // precheck 失败不阻断上传，后端 detect_existing_doc 兜底
+    // 区分超时/网络错误/其他异常，给出具体文案
+    const err = e as Error
+    const isTimeout = err?.name === 'AbortError' || err?.name === 'CanceledError'
+    const isNetwork = err instanceof TypeError && (err.message || '').includes('NetworkError')
+    if (isTimeout) {
+      uploadPhase.value = `预检超时（30s），跳过预检直接上传 ${originalFiles.length} 个文件...`
+      scanInfo.value = '预检未响应，重复文件将由服务端检测'
+    } else if (isNetwork) {
+      uploadPhase.value = `预检网络异常，跳过预检直接上传 ${originalFiles.length} 个文件...`
+      scanInfo.value = '网络不稳定，请检查连接'
+    } else {
+      uploadPhase.value = `预检异常，直接上传 ${originalFiles.length} 个文件...`
+      scanInfo.value = `预检失败: ${err?.message?.slice(0, 80) || '未知错误'}`
+    }
   }
 
   const allFiles = originalFiles
@@ -478,14 +498,17 @@ async function handleUpload() {
         }
       }
     } catch (e: unknown) {
-      // 单批失败不阻断剩余批次
-      aggregated.failed += batches[bi]?.length || 1
-      aggregated.results.push({
-        filename: `批次 ${bi + 1}`,
-        ok: false,
-        detail: '批次上传失败，已跳过',
-      })
-      console.warn(`[upload] batch ${bi + 1}/${batches.length} failed:`, e)
+      // 单批失败不阻断剩余批次，记录每个文件的名称
+      const failedFiles = batches[bi] || []
+      aggregated.failed += failedFiles.length
+      for (const f of failedFiles) {
+        aggregated.results.push({
+          filename: f.name,
+          ok: false,
+          detail: '批次上传失败，已跳过',
+        })
+      }
+      console.warn(`[upload] batch ${bi + 1}/${batches.length} (${failedFiles.length} files) failed:`, e)
     }
   }
 
@@ -503,6 +526,10 @@ async function handleUpload() {
   uploading.value = false
   uploadProgress.value = ''
   uploadPhase.value = ''
+  // 上传完成后清空文件列表，允许用户选择下一批
+  selectedFiles.value = []
+  if (fileInput.value) fileInput.value.value = ''
+  if (folderInput.value) folderInput.value.value = ''
 }
 
 function resetForm() {

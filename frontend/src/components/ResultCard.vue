@@ -58,9 +58,20 @@
     <div v-if="sources.length" class="result-sources">
       <h4 class="sources-title">来源</h4>
       <div class="source-list">
-        <div v-for="(src, i) in sources" :key="i" class="source-item">
-          <span class="source-doc">{{ src.doc }}</span>
-          <span v-if="src.score" class="source-score">{{ src.score }}</span>
+        <div v-for="(src, i) in dedupedSources" :key="i" class="source-item">
+          <div class="source-header">
+            <router-link
+              v-if="src.doc_id"
+              :to="'/documents/' + src.doc_id"
+              class="source-doc-link"
+            >
+              {{ src.doc }}
+            </router-link>
+            <span v-else class="source-doc">{{ src.doc }}</span>
+            <span v-if="src.score" class="source-score">{{ src.score }}</span>
+          </div>
+          <div v-if="src.text" class="source-text">{{ cleanSourceText(src.text) }}</div>
+          <span v-else-if="src.chunk" class="source-chunk-info">{{ src.chunk }}</span>
         </div>
       </div>
     </div>
@@ -143,6 +154,29 @@ const suggestionTitle = computed(() => {
   }
   return '💡 相关规范与追问'
 })
+
+/** 来源去重（防御性，后端已按 doc_id 去重） */
+const dedupedSources = computed(() => {
+  const seen = new Set<string>()
+  return props.sources.filter(src => {
+    const key = (src.doc_id || src.doc) + (src.text || '').slice(0, 50)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+})
+
+/** 清洗来源文本：剥离 [文档:xxx][章节:xxx] 前缀和 HTML 实体 */
+function cleanSourceText(raw: string): string {
+  return raw
+    .replace(/^\[文档:[^\]]+\](?:\[章节:[^\]]+\])?\s*/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&amp;/g, '&')
+    .replace(/<[^>]*>/g, '')
+    .trim()
+    .substring(0, 300)
+}
 
 function formatSize(chars: number): string {
   if (chars < 1024) return `${chars}B`
@@ -275,14 +309,21 @@ function renderStdText(text: string): string {
 }
 
 .source-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
   font-size: 0.75rem;
-  padding: 0.2rem 0.5rem;
+  padding: 0.3rem 0.5rem;
   border: 1px solid var(--border);
   background: var(--bg-alt);
   border-radius: var(--radius);
+  max-width: 400px;
+}
+
+.source-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .source-doc {
@@ -293,9 +334,37 @@ function renderStdText(text: string): string {
   white-space: nowrap;
 }
 
+.source-doc-link {
+  color: var(--accent);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.source-doc-link:hover {
+  text-decoration: underline;
+}
+
 .source-score {
   font-size: 0.65rem;
   color: var(--accent);
+}
+
+.source-text {
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  line-height: 1.4;
+  max-height: 4.2rem;
+  overflow: hidden;
+  word-break: break-all;
+}
+
+.source-chunk-info {
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  font-style: italic;
 }
 
 .suggestion-panel {

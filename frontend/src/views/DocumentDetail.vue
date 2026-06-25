@@ -66,12 +66,19 @@
 
       <!-- 操作 -->
       <div class="action-bar">
-        <button class="btn-primary" @click="handleReparse">重解析</button>
+        <button class="primary" :disabled="reparsing" @click="handleReparse">{{ reparsing ? '解析中...' : '重解析' }}</button>
         <button class="btn-danger" @click="handleDelete">删除文档</button>
       </div>
     </div>
 
     <Toast v-if="toastMsg" :message="toastMsg" :type="toastType" @close="toastMsg = ''" />
+    <ConfirmDialog
+      :visible="showDeleteConfirm"
+      message="确认删除该文档？此操作不可撤销。"
+      confirm-text="确认删除"
+      @confirm="doDelete"
+      @cancel="showDeleteConfirm = false"
+    />
   </div>
 </template>
 
@@ -86,6 +93,7 @@ import { getDocument, type DocumentDetail } from '@/services/documents'
 import { useDocumentsStore } from '@/stores/documents'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import Toast from '@/components/Toast.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -96,6 +104,8 @@ const loading = ref(true)
 const error = ref('')
 const toastMsg = ref('')
 const toastType = ref<'info' | 'success' | 'error' | 'warning'>('info')
+const showDeleteConfirm = ref(false)
+const reparsing = ref(false)
 
 onMounted(() => {
   loadDetail()
@@ -126,7 +136,12 @@ function formatDate(iso: string): string {
 
 async function handleDelete() {
   if (!docDetail.value) return
-  if (!confirm(`确认删除文档「${docDetail.value.title}」？`)) return
+  showDeleteConfirm.value = true
+}
+
+async function doDelete() {
+  showDeleteConfirm.value = false
+  if (!docDetail.value) return
   try {
     await docsStore.removeDocument(docDetail.value.doc_id)
     toastMsg.value = '已删除'
@@ -139,7 +154,8 @@ async function handleDelete() {
 }
 
 async function handleReparse() {
-  if (!docDetail.value) return
+  if (!docDetail.value || reparsing.value) return
+  reparsing.value = true
   try {
     await docsStore.reparse(docDetail.value.doc_id)
     toastMsg.value = '重新解析完成'
@@ -148,6 +164,8 @@ async function handleReparse() {
   } catch {
     toastMsg.value = '重新解析失败'
     toastType.value = 'error'
+  } finally {
+    reparsing.value = false
   }
 }
 </script>

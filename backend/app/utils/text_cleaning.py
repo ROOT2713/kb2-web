@@ -9,6 +9,7 @@ Ported from: kb-web server.py clean_pipeline() L1100-L1112, clean_watermarks() L
              normalize_standard_numbers() L249-L276, expand_amount_tiers() L277-L321
 """
 
+import html as _html_mod
 import logging
 import re
 from pathlib import Path
@@ -73,7 +74,8 @@ def clean_page_artifacts(text: str) -> str:
 
 
 def clean_html_residuals(text: str) -> str:
-    """去除HTML标签残留"""
+    """去除HTML标签残留和HTML实体"""
+    text = _html_mod.unescape(text)
     text = re.sub(r'<br\s*/?>', '\n', text)
     text = re.sub(r'</?(div|span|p|table|tr|td|th|img|a)[^>]*>', '', text, flags=re.IGNORECASE)
     text = re.sub(r'style="[^"]*"', '', text)

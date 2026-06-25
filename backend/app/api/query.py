@@ -12,6 +12,7 @@ Architecture:
 """
 
 import asyncio
+import html as _html_mod
 import logging
 import os
 import re
@@ -817,6 +818,33 @@ def _generate_query_suggestions(
     }
 
 
+_AGENT_PREFIX_RE = re.compile(
+    r'^\s*\[文档:[^\]]+\](?:\[章节:[^\]]+\])?\s*'
+)
+
+
+def _clean_source_text(text: str) -> str:
+    """清洗用于前端来源卡片展示的文本"""
+    if not text:
+        return ""
+    # 1. 剥离 agent 前缀 [文档:xxx][章节:xxx]
+    text = _AGENT_PREFIX_RE.sub('', text)
+    # 2. 解析 HTML 实体
+    text = _html_mod.unescape(text)
+    # 3. 清理 Hindsight 元数据
+    text = re.sub(r'\s*\|\s*(?:When|Involving|Entities|Location|Type|Source|Confidence):[^|\n]*', '', text)
+    # 4. 去掉残留的 HTML 标签
+    from app.utils.text_cleaning import clean_html_residuals
+    text = clean_html_residuals(text)
+    # 5. 规范化空白
+    from app.utils.text_cleaning import normalize_whitespace
+    text = normalize_whitespace(text)
+    # 6. 过滤短垃圾（<50字符）
+    if len(text.strip()) < 50:
+        return ""
+    return text.strip()
+
+
 async def _generate_answer(
     q: str,
     bank: str,
@@ -922,7 +950,7 @@ async def _generate_answer(
             "doc_id": doc_id if not doc_id.startswith("_notag_") else None,
             "score": relevance_score,
             "chunk": f"{len(facts)} 条相关",
-            "text": snippet[:3000],
+            "text": _clean_source_text(snippet[:3000]),
         })
 
     # ── 限制 context 总量 ──
