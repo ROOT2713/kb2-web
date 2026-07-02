@@ -3,6 +3,15 @@
     <div class="result-header">
       <span class="result-label">{{ label }}</span>
       <span v-if="cacheHit" class="badge cache-badge">{{ cacheHit }}</span>
+      <button
+        v-if="cacheHit"
+        type="button"
+        class="refresh-btn"
+        @click="emit('refresh')"
+        title="强制刷新，绕过缓存重新查询"
+      >
+        🔄 强制刷新
+      </button>
     </div>
     <div class="result-body" v-html="renderedHtml"></div>
     <div v-if="suggestions" class="suggestion-panel">
@@ -112,7 +121,7 @@ interface StandardContent {
   preview: string
 }
 
-const emit = defineEmits<{ (e: 'search-suggestion', query: string): void }>()
+const emit = defineEmits<{ (e: 'search-suggestion', query: string): void; (e: 'refresh'): void }>()
 
 const props = withDefaults(
   defineProps<{
@@ -245,6 +254,23 @@ function renderStdText(text: string): string {
   font-size: 0.65rem;
   color: var(--success);
   border-color: var(--success);
+}
+
+.refresh-btn {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  margin-left: 0.5rem;
+  border: 1px solid var(--accent, #e67e22);
+  background: transparent;
+  color: var(--accent, #e67e22);
+  cursor: pointer;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+.refresh-btn:hover {
+  background: var(--accent, #e67e22);
+  color: #fff;
 }
 
 .result-body {

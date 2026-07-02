@@ -25,7 +25,7 @@ class Chunk:
 # ─── Internal dict-based functions (preserving v1 logic verbatim) ────────
 
 
-def heading_chunk(text: str, profile: dict, min_child_size: int = 200, max_parent_size: int = 3000) -> list:
+def heading_chunk(text: str, profile: dict, min_child_size: int = 200, max_parent_size: int = 12000) -> list:
     """Split document by semantic headings. Returns same format as parent_child_chunk.
 
     For gb_standard:
@@ -74,7 +74,7 @@ def _truncate_at_sentence_boundary(text: str, max_len: int = 800) -> str:
     return text[:max_len]
 
 
-def _clause_split(text: str, max_child_size: int = 800) -> list:
+def _clause_split(text: str, max_child_size: int = 1200) -> list:
     """对大文本按条款编号模式拆分为子块。
 
     检测模式：
@@ -164,7 +164,7 @@ def _parse_section_number(title: str):
     return None
 
 
-def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_parent_size: int = 3000) -> list:
+def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_parent_size: int = 12000) -> list:
     """Heading-based chunking for GB standard documents."""
     lines = text.split("\n")
 
@@ -528,22 +528,32 @@ def extract_table_chunks(text: str) -> list:
     results = []
     lines = text.split("\n")
 
-    def _get_surrounding_context(line_idx: int) -> str:
-        """获取表格前后的文字上下文（各最近2行非表格文字）"""
+    def _get_surrounding_context(line_idx: int, context_lines: int = 50) -> str:
+        """获取表格前后的文字上下文（各最多50行，含表格标题和节标题）"""
         before = []
-        for i in range(max(0, line_idx - 5), line_idx):
-            if lines[i].strip() and not re.match(r'^\s*\|', lines[i]):
+        for i in range(max(0, line_idx - context_lines), line_idx):
+            if lines[i].strip() and not re.match(r'^\s*\|', lines[i]) and not re.match(r'^\s*<', lines[i]):
                 before.append(lines[i].strip())
         after = []
-        for i in range(line_idx + 1, min(len(lines), line_idx + 6)):
-            if lines[i].strip() and not re.match(r'^\s*\|', lines[i]):
+        for i in range(line_idx + 1, min(len(lines), line_idx + context_lines + 1)):
+            if lines[i].strip() and not re.match(r'^\s*\|', lines[i]) and not re.match(r'^\s*<', lines[i]):
                 after.append(lines[i].strip())
         ctx_parts = []
+        table_title = _find_table_title(before)
+        if table_title:
+            ctx_parts.append(f"【表格标题】{table_title}")
         if before:
-            ctx_parts.append("… " + " ".join(before[-2:]))
+            ctx_parts.append("… " + " ".join(before[-8:]))
         if after:
-            ctx_parts.append(" ".join(after[:2]) + " …")
+            ctx_parts.append(" ".join(after[:8]) + " …")
         return " | ".join(ctx_parts) if ctx_parts else ""
+
+    def _find_table_title(before_lines: list) -> str:
+        """从表格前的文字中查找表标题（如'表5-47 电子政务信息安全等级保护评测费用表'）"""
+        for line in reversed(before_lines):
+            if re.match(r'^[表图][\d\-\.]+\s', line) or '表' in line[:10]:
+                return line[:100]
+        return ""
 
     # ── 1. HTML表格检测: <table>...</table> ──
     re_html_table = re.compile(r'<table>.*?</table>', re.DOTALL)
@@ -585,12 +595,17 @@ def extract_table_chunks(text: str) -> list:
                 table_text = "\n".join(table_lines)
                 if any(re_table_sep.match(l) for l in table_lines):
                     surrounding = _get_surrounding_context(table_start)
+                    _table_title = _find_table_title(
+                        [lines[i].strip() for i in range(max(0, table_start - 50), table_start)
+                         if lines[i].strip() and not re.match(r'^\s*\|', lines[i])]
+                    )
+                    _hint_title = f" | {_table_title}" if _table_title else ""
                     results.append({
                         "child": table_text,
                         "parent": f"{surrounding}\n\n{table_text}" if surrounding else table_text,
                         "child_index": 0,
                         "parent_index": table_start,
-                        "section_hint": f"[表格] {table_lines[0][:80]}"
+                        "section_hint": f"[表格]{_hint_title} {table_lines[0][:80]}"
                     })
             table_start = None
             table_lines = []
@@ -600,12 +615,17 @@ def extract_table_chunks(text: str) -> list:
         if any(re_table_sep.match(l) for l in table_lines):
             table_text = "\n".join(table_lines)
             surrounding = _get_surrounding_context(table_start)
+            _table_title = _find_table_title(
+                [lines[i].strip() for i in range(max(0, table_start - 50), table_start)
+                 if lines[i].strip() and not re.match(r'^\s*\|', lines[i])]
+            )
+            _hint_title = f" | {_table_title}" if _table_title else ""
             results.append({
                 "child": table_text,
                 "parent": f"{surrounding}\n\n{table_text}" if surrounding else table_text,
                 "child_index": 0,
                 "parent_index": table_start,
-                "section_hint": f"[表格] {table_lines[0][:80]}"
+                "section_hint": f"[表格]{_hint_title} {table_lines[0][:80]}"
             })
 
     return results
@@ -683,7 +703,7 @@ def excel_row_chunk(text: str, doc_title: str = "") -> list:
     return chunks
 
 
-def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 2048, overlap: int = 80, doc_title: str = "") -> list:
+def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 8000, overlap: int = 120, doc_title: str = "") -> list:
     """将文本切分为父子分块。
 
     Args:

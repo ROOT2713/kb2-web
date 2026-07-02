@@ -127,7 +127,9 @@ class HindsightStore:
             return 0
 
         endpoint = f"/v1/default/banks/{bank}/memories"
-        timeout = max(120, min(len(chunks) * 5, 600))
+        chunk_count = len(chunks)
+        # 大文档逐批写入超时：20chunk默认120s，每多10chunk加60s，上限600s
+        timeout = min(120 + max(0, chunk_count - 20) * 3, 600)
 
         result = await self._request(
             endpoint,

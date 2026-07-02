@@ -44,6 +44,7 @@ from app.services.quality import assess_quality, profile_document
 from app.services.cache_service import invalidate_for_doc, invalidate_bm25_cache
 from app.utils.text_cleaning import filename_to_title, clean_watermarks
 from app.middleware.auth import require_admin
+from app.middleware.jwt_auth import require_role
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,7 @@ async def list_documents(bank: str = Query("all"), db: Session = Depends(get_db)
 
 @router.post("/fetch-standard")
 async def fetch_standard(
+    _admin: bool = Depends(require_role("admin")),
     std_no: str = Form(...),
     bank: str = Form("kb"),
     db: Session = Depends(get_db),
@@ -296,6 +298,7 @@ async def fetch_standard(
 
 @router.post("/refetch")
 async def refetch_document(
+    _admin: bool = Depends(require_role("admin")),
     doc_id: str = Form(...),
     std_no: str = Form(""),
     db: Session = Depends(get_db),
@@ -796,6 +799,7 @@ async def patch_document(
     title: Optional[str] = Form(None),
     category: Optional[str] = Form(None),
     db: Session = Depends(get_db),
+    _admin: bool = Depends(require_role("admin")),
 ):
     """Edit document title and category (v1 L4062-L4067)."""
     if not title and not category:
@@ -816,6 +820,7 @@ async def patch_document_bank(
     doc_id: str,
     bank: str = Form(...),
     db: Session = Depends(get_db),
+    _admin: bool = Depends(require_role("admin")),
 ):
     """Change document bank assignment (v1 L4070-L4083)."""
     if bank not in BANKS:
@@ -837,7 +842,7 @@ async def patch_document_bank(
 async def delete_document(
     doc_id: str,
     db: Session = Depends(get_db),
-    admin: bool = Depends(require_admin),
+    _admin: bool = Depends(require_role("admin")),
 ):
     """Delete document and all its vectors (v1 L4276-L4359)."""
     repo = DocumentRepository(db)
@@ -910,7 +915,11 @@ async def delete_document(
 # ═══════════════════════════════════════════════════════════════════
 
 @router.post("/{doc_id}/reparse")
-async def reparse_document(doc_id: str, db: Session = Depends(get_db)):
+async def reparse_document(
+    doc_id: str,
+    db: Session = Depends(get_db),
+    _admin: bool = Depends(require_role("admin")),
+):
     """Re-parse existing document: delete old vectors, re-OCR, re-index (v1 L4360-L4555)."""
     repo = DocumentRepository(db)
     meta = repo.get_meta(doc_id)
@@ -1000,13 +1009,13 @@ async def reparse_document(doc_id: str, db: Session = Depends(get_db)):
         if coverage < 0.60:
             pc_chunks.extend([
                 {
-                    "child": text[i:i + 5000],
-                    "parent": text[i:i + 5000],
+                    "child": text[i:i + 12000],
+                    "parent": text[i:i + 12000],
                     "child_index": 0,
                     "parent_index": 0,
                     "section_hint": "",
                 }
-                for i in range(0, len(text), 5000)
+                for i in range(0, len(text), 12000)
             ])
 
     if not pc_chunks:
@@ -1167,6 +1176,7 @@ def supersede_document(
     new_doc_id: str = Query(..., description="替代此文档的新版本 doc_id"),
     reason: str = Query("new_version", description="supersede 原因"),
     db: Session = Depends(get_db),
+    _admin: bool = Depends(require_role("admin")),
 ):
     """手动标记文档为 superseded。
 

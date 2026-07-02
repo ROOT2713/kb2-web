@@ -26,6 +26,7 @@ from app.services.cache_service import (
     get_exact as cache_get_exact,
     get_semantic as cache_get_semantic,
     set_cache as cache_set,
+    clear_all_cache,
 )
 from app.services.generation import chat, logic_validate
 from app.services.retrieval import (
@@ -49,7 +50,17 @@ from app.utils.text_cleaning import (
 )
 from app.utils.tokenizer import expand_keywords, extract_keyword_snippet
 
+from app.services.fee_utils import (
+    find_fee_relevant_chunks,
+)
+
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _sh = logging.StreamHandler()
+    _sh.setLevel(logging.INFO)
+    _sh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(_sh)
 
 router = APIRouter()
 
@@ -67,14 +78,35 @@ def _extract_high_signal_terms(query_keywords: list[str] | None) -> set[str]:
     - Phase H (doc_facts 重排): move topically-matched docs to front
 
     Rules:
-    - Chinese terms: length >= 3 chars (filters out '系统', '方法' etc.)
+    - Chinese terms: length >= 2 AND length < 3 is allowed UNLESS in stoplist
+      (2-char terms like '接线' '端子' '接地' are high-signal in technical queries)
+      Old rule was >= 3, which filtered out all 2-char technical terms
+    - Stoplist filters common 2-char middle-weight words
     - ASCII/alnum terms: length >= 2 (keeps 'RAG', 'GB/T', '25000' etc.)
     - All terms lowercased for case-insensitive matching
     """
+    _CHINESE_2CHAR_STOP = frozenset({
+        "系统", "方法", "要求", "标准", "规范", "技术", "管理", "信息", "服务",
+        "文件", "工作", "内容", "规定", "可以", "需要", "进行", "相关", "以下",
+        "其他", "包括", "说明", "定义", "方式", "条件", "功能", "使用", "数据",
+        "应用", "设计", "配置", "安装", "测试", "检测",
+        "不同", "什么", "为什么", "如何", "怎样", "哪个", "哪些", "之间",
+        "比较", "区别", "差异", "相同", "不同", "一样",
+        "提供", "支持", "具备", "包含", "属于",
+        "一般", "通常", "主要", "基本", "整体",
+        "情况", "场景", "过程", "流程", "步骤",
+        "应该", "可以", "必须", "需要", "能够",
+        "怎么", "如何", "怎样", "哪个", "哪些", "之间",
+        "什么", "为什么",
+        "工具", "功能", "用途", "特性",
+        "注意", "说明", "备注", "参考", "资料",
+    })
     high_signal: set[str] = set()
     for kw in (query_keywords or []):
         kw_s = kw.strip()
         if len(kw_s) >= 3:
+            high_signal.add(kw_s.lower())
+        elif len(kw_s) == 2 and kw_s not in _CHINESE_2CHAR_STOP:
             high_signal.add(kw_s.lower())
         elif any(c.isascii() and c.isalnum() for c in kw_s) and len(kw_s) >= 2:
             high_signal.add(kw_s.lower())
@@ -366,6 +398,100 @@ async def _build_search_context(
         except Exception as e:
             logger.warning("tiebreaker sort failed: %s", e)
 
+    # ── D2-B: 金额类查询定向注入费率表chunk ──
+    # 旧方案: LIMIT 3 parent_chunks → 命中封面/编委会，不含费率表。
+    # 新方案: keyword scoring + formula-aware → 命中 idx=38-55 的真实费率表。
+    _d2q = q
+    try:
+        _d2q = q.encode('latin-1').decode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    _fee_q = any(kw in _d2q for kw in [
+        "造价", "取费", "费用", "费率", "收费",
+        "验收测评", "验收评测", "检测费", "测评费", "评测费",
+        "审计费", "管理费", "设计费", "监理费", "招标",
+        "等保", "密评", "咨询费",
+    ])
+    if _fee_q:
+        try:
+            _fdocs = SessionLocal()
+            _frows = _fdocs.execute(sa_text(
+                "SELECT d.doc_id, d.title FROM documents d "
+                "WHERE d.searchable=1 AND d.status='active' "
+                "AND d.bank='industry_docs' "
+                "AND (d.title LIKE '%造价%' OR d.title LIKE '%费用%' OR d.title LIKE '%取费%')"
+            )).fetchall()
+        except Exception:
+            _frows = []
+        finally:
+            if '_fdocs' in locals():
+                try:
+                    _fdocs.close()
+                except Exception:
+                    pass
+        _fee_docs = {r[0]: r[1] for r in _frows}
+
+        # Build dedup set from existing results to avoid double-injecting same chunks
+        _injected_keys = set()
+        for r in all_results:
+            _did = None
+            for t in r.get("tags", []):
+                if t.startswith("doc_id:"):
+                    _did = t[7:]
+                    break
+            if _did:
+                _txt = (r.get("text", "") or "")[:100]
+                _injected_keys.add(f"{_did}:{hash(_txt)}")
+
+        # Build amount keywords from query for scoring
+        _amount_kw = [kw for kw in (_tier_extra or []) if "万" in kw]
+        _amount_kw.extend(re.findall(r'\d+[\.\d]*\s*万', q))
+        
+        # Extract fee type keywords from query for boosting
+        _fee_type_kw = []
+        _fee_type_patterns = re.findall(r'(验收测评|验收评测|监理|设计|等保|咨询|审计|招标|检测|评测|评估|造价|管理费)', q)
+        if _fee_type_patterns:
+            _fee_type_kw = list(set(_fee_type_patterns))
+            logger.info("[D2-B] Fee type detected: %s", _fee_type_kw)
+
+        # Use fee-aware chunk selection — inject ALL fee docs
+        _all_fee_ids = list(_fee_docs.keys())
+        _fee_chunks_to_inject = []
+        if _all_fee_ids:
+            _fee_chunks_to_inject = find_fee_relevant_chunks(
+                _all_fee_ids,
+                amount_keywords=_amount_kw,
+                max_chunks=8,
+                fee_type_keywords=_fee_type_kw,
+            )
+        # Prepend in score-descending order, skip already-injected chunks
+        for _chunk in reversed(_fee_chunks_to_inject):
+            _dedup_key = f"{_chunk['doc_id']}:{hash(_chunk['text'][:100])}"
+            if _dedup_key in _injected_keys:
+                continue
+            _injected_keys.add(_dedup_key)
+            all_results.insert(0, {
+                    "text": _chunk["text"],
+                    "tags": [
+                        f"doc_id:{_chunk['doc_id']}",
+                        f"title:{_chunk['title']}",
+                        "source:industry_fallback",
+                    ],
+                    "metadata": {
+                        "doc_id": _chunk["doc_id"],
+                        "title": _chunk["title"],
+                        "source": "industry_fallback",
+                    },
+                })
+        if _fee_chunks_to_inject:
+            logger.info(
+                "[D2-B] Injected %d fee chunks (from %d docs), top score=%d",
+                len(_fee_chunks_to_inject), len(_all_fee_ids),
+                _fee_chunks_to_inject[0]["score"] if _fee_chunks_to_inject else 0,
+            )
+        else:
+            logger.info("[D2-B] No fee chunks found for query: %s", q[:60])
+
     # ── 清洗 + 过滤 + 去重合并 ──
     doc_facts = {}
     for r in all_results:
@@ -439,15 +565,25 @@ async def _build_search_context(
 
     if _high_signal and doc_facts:
         _matched = {}
+        _content_matched = {}
         _unmatched = {}
         for _did, _facts in doc_facts.items():
             _dname = _facts[0][1].lower() if _facts else ""
             if any(_t in _dname for _t in _high_signal):
                 _matched[_did] = _facts
+            elif _facts:
+                # Chunk text content matching: docs whose chunk text (not just title)
+                # contains query keywords should also be boosted.
+                # Fixes: GB 16806 chunk has "接线端子" but title "消防联动控制系统" doesn't.
+                _chunks_text = " ".join([f[0].lower() for f in _facts])
+                if any(_t in _chunks_text for _t in _high_signal):
+                    _content_matched[_did] = _facts
+                else:
+                    _unmatched[_did] = _facts
             else:
                 _unmatched[_did] = _facts
-        # Matched docs first (preserve original order within each group)
-        doc_facts = {**_matched, **_unmatched}
+        # Title-matched first, content-matched second, unmatched last
+        doc_facts = {**_matched, **_content_matched, **_unmatched}
 
     return {
         "all_results": all_results,
@@ -934,7 +1070,17 @@ async def _generate_answer(
         if not combined:
             continue
 
-        context_parts.append(f"[来源: {doc_name}]\n{combined}")
+        # Phase C1-RPO: 关键词命中密度信号（检索层结构化输出，零 prompt 改动）
+        # 让 LLM 感知检索质量 — 检索内容与 query 的关键词重合度
+        _kw_signal = ""
+        logger.info("[RPO-debug] query_keywords=%s, combined_len=%d", query_keywords[:5] if query_keywords else "EMPTY", len(combined or ""))
+        if query_keywords and combined:
+            _combined_lower = combined.lower()
+            _kw_hits = sum(1 for kw in query_keywords if kw.lower() in _combined_lower)
+            _kw_pct = min(_kw_hits / max(len(query_keywords), 1), 1.0)
+            _kw_signal = f" (相关度: {int(_kw_pct*100)}% | 关键词匹配: {_kw_hits}/{len(query_keywords)})"
+            logger.info("[RPO-kw] doc=%s hits=%d/%d pct=%.0f%%", doc_name[:40], _kw_hits, len(query_keywords), _kw_pct*100)
+        context_parts.append(f"[来源: {doc_name}{_kw_signal}]\n{combined}")
 
         merged_text = "；".join([c for _, _, c, _ in facts[:3]])
         if parent_texts_for_doc:
@@ -955,13 +1101,13 @@ async def _generate_answer(
 
     # ── 限制 context 总量 ──
     total_chars = sum(len(p) for p in context_parts)
-    if total_chars > 10000:
+    if total_chars > 15000:
         kept = []
         chars = 0
         n_docs = len(context_parts)
-        per_doc_min = min(800, 8000 // max(n_docs, 1))
+        per_doc_min = min(1200, 12000 // max(n_docs, 1))
         for p in context_parts:
-            if chars + len(p) > 10000:
+            if chars + len(p) > 15000:
                 if per_doc_min > 0 and len(p) > per_doc_min:
                     kept.append(p[:per_doc_min] + "...")
                     chars += per_doc_min
@@ -1042,8 +1188,11 @@ async def _generate_answer(
     if core_claims_context:
         context = core_claims_context + "\n\n---\n\n" + context
 
-    # ── T7补充：金额类查询定向注入费率表 ──
-    _has_rate = any(t in p for p in context_parts for t in ["3%", "3\\"])
+    # ── T7补充：金额类查询定向注入费率表（仅当 D2-B 未注入时触发）──
+    # D2-B 已在 _build_search_context 中用评分感知注入 top-8 fee chunk，
+    # 此处只作为兜底：检查 context 中是否已被 D2-B 注入（有 %、费率、计费额等特征），
+    # 已注入则跳过 T7 避免重复。
+    _has_rate = any(t in p for p in context_parts for t in ["%", "费率", "计费额", "收费基价"])
     if _tier_extra and not _has_rate:
         _snippet, _dtitle = _find_rate_table_snippet(_tier_extra, bank)
         if _snippet:
@@ -1068,22 +1217,90 @@ async def _generate_answer(
     _tier_hint = ""
     if _tier_extra:
         _tier_hint = (
-            "【重要提示】本查询涉及具体金额的费用计算。文档中可能包含按投资总额分档的费率表"
-            "（如100万以下、100万~300万、300万以上等不同档位的费率），请优先查找并引用费率表中的具体百分比，"
-            "而不是自行估算。关键规则：1) 'X万以下'包含X万本身——例如'100万以下'包含100万元整，应使用该档位费率；"
-            "2) 必须精确匹配金额所属档位——例如查询金额为'100万'时，应使用'100万以下'档位的费率（3%），"
-            "绝不能错用'100万~300万'档位的费率（4%）。\n\n"
+            "【费用计算引导】\n"
+            "本查询涉及具体金额的费用计算，文档中可能包含以下计费方式，"
+            "请根据文档原文中的费率表和公式选择正确的计算方法：\n\n"
+            "① 直线内插法（设计费、监理费等计费额与收费基价对照表）：\n"
+            "   公式：y = y₁ + (x-x₁)/(x₂-x₁) × (y₂-y₁)\n"
+            "   其中 (x₁,y₁) 和 (x₂,y₂) 为计费额所在档位上下界及对应的收费基价\n"
+            "   示例（原文）：计费额5000万在3000万~5000万档，对应基价103.8万~163.9万\n"
+            "\n"
+            "② 费率比例法（验收测评费、等保评测费、云平台评测费、政务APP评测费等）：\n"
+            "   公式：V = D × g × (1-Z)\n"
+            "   其中 D=建设规模（万元），g=费率（%），Z=计费调衡系数（%）\n"
+            "   注意：D 的单位是万元，计算结果 V 也是万元\n"
+            "\n"
+            "③ 阶梯费率法（建设单位管理费等）：\n"
+            "   按投资额所在档位，逐档累加计算\n"
+            "   示例（原文表5-41）：1000万以下2%，1001~5000万1.5%，5001~10000万1.2%\n"
+            "   1000万项目 = 1000×2% = 20万元\n"
+            "   5000万项目 = 20 + (5000-1000)×1.5% = 80万元\n"
+            "   10000万项目 = 80 + (10000-5000)×1.2% = 140万元\n"
+            "\n"
+            "④ 固定单价法（源代码审计、安全测评等）：\n"
+            "   公式：V = 单价 × 数量 × (1-Z)\n"
+            "   或 V = c × (1-Z)（一口价）\n"
+            "\n"
+            "【核心规则】\n"
+            "1. 'X万以下'包含X万本身——例如'100万以下'包含100万元整\n"
+            "2. 'X万以上'不包含X万——例如'100万以上'从100.01万开始\n"
+            "3. 文档中每个费率表后面通常跟着计算公式和具体算例，\n"
+            "   请直接使用文档原公式进行计算，不要自行发明公式\n"
+            "4. 如果文档中有示例计算，按照示例的步骤执行\n"
+            "5. 必须标注每个关键数字的来源（文档名称+表号）\n"
+            "6. 注意区分计费额（计费基数是投资额的一段区间）和直接按投资额×费率\n"
+            "7. **费用类型匹配优先于格式便利**：当用户问题含具体费用类型（如\"验收测评费\"）时，必须优先使用名称匹配该费用类型的费率表，即使其他表看起来更简单，不得改用名称不相关的其他计费方式\n"
+            "8. 金额覆盖范围不明确时，按【回答原则】第7条处理\n\n"
         )
+
+    # ── 费用规则条件注入：仅当用户问题涉及费用/计费时加载 ──
+    _fee_rules = ""
+    # Note: q is already decoded by FastAPI Form(), but curl -d raw Chinese
+    # can vary by encoding. Use raw q directly (no latin-1 re-encode).
+    _d2q_fee = q
+    if any(kw in _d2q_fee for kw in [
+        "造价", "取费", "费用", "费率", "收费",
+        "验收测评", "验收评测", "检测费", "测评费", "评测费",
+        "审计费", "管理费", "设计费", "监理费", "招标",
+        "等保", "密评", "咨询费",
+    ]):
+        _fee_rules = (
+            "5. **计费类查询强制计算规则**：当「文档内容」中包含费率表（分档百分比/基价表）、计算公式（V=Dxgx(1-Z)/直线内插等）或具体计费数据时，你必须基于文档中的公式和数据执行以下操作：\n"
+            "   a. 从文档中找出**名称最匹配**的费率表（如用户问验收测评费 优先找名称含验收测评或验收评测的费率表，不得改用名称不相关的监理费/设计费表）\n"
+            "   b. **禁止说未提供、未找到、未单独列出、未直接给出**——只要文档内容中出现了费率表、百分比数值和V=公式，你就必须使用它们进行计算。一句未提供就跳到其他费用类型是严重的错误\n"
+            "   c. 如果金额覆盖范围不明确，在结果中标注假设条件，但必须完成计算\n"
+            "   d. 常见的4种计费公式必须识别并使用：\u2460直线内插法 y=y1+(x-x1)/(x2-x1)x(y2-y1) \u2461费率比例法 V=Dxgx(1-Z) \u2462阶梯费率法（逐档累加）\u2463固定单价法 V=单价x数量x(1-Z)\n"
+            "   e. **D(投资额)≠D(功能点数)**：同一文档中可能同时出现两种D。当用户提供万元金额时，必须使用建设规模D对应的费率和V=Dxgx(1-Z)公式，不得使用功能点数对应的评测系数。功能点数评测系数仅当用户提供了功能点数(FP)时才适用。\n"
+            "   f. **含g%和Z%列的表优先**：文档中的费率表（表5-49、5-45、5-47等）即使同一段落出现了功能点数说明，其行数据中的D代表建设规模(万元)。只需将用户金额匹配到对应档位，使用V=Dxgx(1-Z)即可计算。\n"
+            "   g. **注意区分\"验收评测费率\"与\"全流程评测费率\"**：表5-49下可能包含两套费率——\n"
+            "      - \"验收评测费率表\"：g值约2.8%~3.0%，适用于验收评测场景\n"
+            "      - \"全流程评测费率表\"：g值约6%~12%，适用于全流程评测场景\n"
+            "      用户问验收评测费时，必须使用\"验收评测费率\"列的数据，不得使用\"全流程评测费率\"（g值过高会导致结果错误）。\n"
+        )
+        logger.info("[FEE_RULES] Injected fee calculation rules (query contains fee keywords)")
 
     prompt = f"""{bank_prompt}
 
 【回答原则】
 1. 以「文档内容」为主要依据，优先引用文档中的具体内容和数据
-2. 可以基于文档内容进行综合推理和归纳总结，但不得编造文档中不存在的具体数字、条款号或标准编号
+2. **多个文档存在矛盾时**：必须同时列出各方说法，各自标注来源文档名称，在报告末尾注明"建议进一步核实"或"建议以最新发布的XXX为准"。绝对禁止：选择其中一个说法忽略其他、自行折中得出文档中不存在的中间值、或只引用文档标题不给出实质差异
 3. 每个关键论断标注来源文档名称
-4. 重要：如果下面的「文档内容」中已经包含与问题相关的段落、条款或数据，你必须基于这些内容回答，绝不能说"未收录""未找到"。只有当文档内容与问题完全无关（没有任何段落涉及问题主题）时，才可以说"未收录"
-5. 多个文档存在矛盾时，列出不同说法并各自标注来源
-6. 如果文档内容只覆盖了问题的部分方面，先回答已有部分，再说明哪些方面知识库未涉及
+4. 可以基于文档内容进行综合推理和归纳总结，但不得编造文档中不存在的具体数字、条款号或标准编号
+{_fee_rules}6. **禁止因「文档没有单独成节/专门定义/直接对比」而拒答**：只要同一文档或关联文档中出现了用户所问术语、概念或相关条款的内容，即使没有以"XX的定义""XX与XX的区别""XX的说明"等专门章节形式存在，也必须基于现有内容给出实质性回答：
+   a. 用户问A和B的区别 → 文档中有A的条款和B的条款，但没有"AB对比章"→ 必须分别列出A的规定和B的规定，基于差异做对比回答，禁止说"文档没有直接对比"
+   b. 用户问A的定义 → 文档在多个条款里提到了A的不同侧面 → 必须汇总拼接成完整描述，禁止说"文档未单独定义"
+   c. 用户问A的要求 → 文档相关章节有A的技术参数/安装要求/功能指标 → 必须逐条列出，禁止说"文档未涉及"
+   d. **绝对禁止**：说"未找到""未直接命中""未明确定义""没有相关信息""文档未涉及"[术语]——只要chunks中有该关键词命中，就说明文档涉及了该内容
+
+7. 如果文档内容只覆盖了问题的部分方面，先回答已有部分，再说明哪些方面知识库未涉及
+8. **用户提问不准确/不规范时的兜底处理**：用户的问题可能使用了口语化、非标准术语或缺少必要限定条件，此时按以下原则处理而非直接拒绝回答：
+   a. 术语映射：用户使用口语表述时，自动映射到文档中的标准术语再检索（如"人工测评"→"人工测试"、"价格"→"取费标准"），回答中使用标准术语并在括号中补充用户原文
+   b. 条件补全：用户问题缺少关键的限定条件（如只给金额没写是总投资还是软件开发费、只给标准号没写具体条款），基于文档中最可能匹配的场景回答，同时在回答中明确标注"此处假设xxx"让用户确认
+   c. 多重理解：当用户问题有多个合理解读时（如"验收测评费"可能指软件验收测评、系统验收评测、等保测评），逐种解读逐一回答，并标注各自的适用场景和文档依据
+   d. 宽泛/描述不清问题：当用户问题过于宽泛或缺少关键信息时（如"做一个系统的验收测试多少钱"缺少投资额和系统类型），你必须先将文档中涉及的**可用费用类型和格式**展示给用户，再**必须**在回答末尾用"请问……？"邀请补充。禁止直接说"请明确"。示例：先给出3种场景的结构化说明，然后以「要获得精确结果，请问项目的投资总额和系统类型是什么？我可以据此使用对应的费率表计算。」结尾。
+
+   重要：如果问句中没有具体的金额数字（万元）或系统类型，回答的最后一段必须是邀请补充的话——判断依据是用户问题不包含明确的投资额数字。
+   e. **禁止行为**：不得因用户提问不准确而拒绝回答、说"请明确定义"或简单说"未收录"。必须先基于最佳理解给出实质性回答，再附条件说明
 
 【去AI味要求】
 你的回答必须像真人撰写的专业报告，严禁以下AI味表达：
@@ -1239,7 +1456,14 @@ async def query(
 
     # ── 提取查询关键词 ──
     import jieba as _jieba_mod
-    query_keywords_raw = [w for w in _jieba_mod.cut(q_recalled) if len(w.strip()) > 1]
+    # [FIX] q 在 FastAPI Form 中被误解码为 Latin-1（UTF-8字节→Latin-1字符），jira 分词需正确 Unicode
+    _q_for_kw = q_recalled
+    if len(_q_for_kw) > 0 and max(ord(c) for c in _q_for_kw[:10]) > 127:
+        try:
+            _q_for_kw = q_recalled.encode('latin-1').decode('utf-8')
+        except (UnicodeEncodeError, UnicodeDecodeError, LookupError):
+            pass
+    query_keywords_raw = [w for w in _jieba_mod.cut(_q_for_kw) if len(w.strip()) > 1]
     query_keywords = expand_keywords(query_keywords_raw)
     if _tier_extra:
         query_keywords = list(set(query_keywords + _tier_extra))
@@ -1255,7 +1479,6 @@ async def query(
         query_keywords=query_keywords, _tier_extra=_tier_extra,
         kg_info=kg_info,
     )
-
     # ── Phase C1: Standard Number Exact Match Boost ──
     # Detect standard numbers in query (GB/T 22239, JJF 1059.1, etc.) and force-inject
     # matched DB docs into doc_facts. Fixes recall=0 cases where doc exists in DB
@@ -1341,6 +1564,14 @@ async def query(
     if kg_context_list:
         result["kg_context"] = kg_context_list
     return result
+
+
+@router.post("/cache-clear")
+async def clear_llm_cache():
+    """清除所有 L1/L2 查询缓存 + BM25 缓存"""
+    count = await clear_all_cache()
+    logger.info("[CACHE] User triggered cache clear: %d entries", count)
+    return {"status": "ok", "cleared": count, "message": f"已清除 {count} 条缓存"}
 
 
 @router.get("/standard-full/{doc_id}")

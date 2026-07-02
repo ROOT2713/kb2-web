@@ -31,5 +31,6 @@ def init_db():
     import app.models.document  # noqa: F401 — Document + ParentChunk
     import app.models.cache     # noqa: F401
     import app.models.synonym   # noqa: F401
+    import app.models.user      # noqa: F401 — User (admin/viewer)
 
     Base.metadata.create_all(bind=engine)

@@ -62,12 +62,16 @@ export async function postQuery(params: {
   bank?: string
   history?: string
   rerank?: boolean
+  multiHypothesis?: boolean
+  nocache?: boolean
 }): Promise<QueryResponse> {
   const formData = new FormData()
   formData.append('q', params.q)
   if (params.bank) formData.append('bank', params.bank)
   if (params.history) formData.append('history', params.history)
   if (params.rerank) formData.append('rerank', 'true')
+  if (params.multiHypothesis) formData.append('multi_hypothesis', 'true')
+  if (params.nocache) formData.append('nocache', 'true')
   const { data } = await api.post<QueryResponse>('/query', formData)
   return data
 }
@@ -82,5 +86,11 @@ export async function webSearch(params: {
   if (params.bank) formData.append('bank', params.bank)
   if (params.context) formData.append('context', params.context)
   const { data } = await api.post<WebSearchResponse>('/query/web-search', formData)
+  return data
+}
+
+
+export async function clearQueryCache(): Promise<{status: string, cleared: number, message: string}> {
+  const { data } = await api.post('/query/cache-clear')
   return data
 }

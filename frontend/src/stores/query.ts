@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import {
   postQuery as apiPostQuery,
   webSearch as apiWebSearch,
+  clearQueryCache as apiClearCache,
   type Source,
   type QuerySuggestions,
 } from '@/services/query'
@@ -20,6 +21,7 @@ export const useQueryStore = defineStore('query', () => {
   const sources = ref<Source[]>([])
   const loading = ref(false)
   const webSearching = ref(false)
+  const clearingCache = ref(false)
   const error = ref('')
   const cacheHit = ref('')
   const suggestions = ref<QuerySuggestions | null>(null)
@@ -30,6 +32,8 @@ export const useQueryStore = defineStore('query', () => {
     bank?: string
     history?: string
     rerank?: boolean
+    multiHypothesis?: boolean
+    nocache?: boolean
   }) {
     loading.value = true
     error.value = ''
@@ -82,11 +86,26 @@ export const useQueryStore = defineStore('query', () => {
     standardContents.value = []
   }
 
+  async function clearCache() {
+    clearingCache.value = true
+    try {
+      const result = await apiClearCache()
+      error.value = ''
+      return result
+    } catch (e: unknown) {
+      error.value = e instanceof Error ? e.message : '清除缓存失败'
+      return null
+    } finally {
+      clearingCache.value = false
+    }
+  }
+
   return {
     answer,
     sources,
     loading,
     webSearching,
+    clearingCache,
     error,
     cacheHit,
     suggestions,
@@ -94,5 +113,6 @@ export const useQueryStore = defineStore('query', () => {
     submitQuery,
     doWebSearch,
     clear,
+    clearCache,
   }
 })

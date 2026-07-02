@@ -22,7 +22,7 @@ async def chat(
     stream: bool = False,
     max_retries: int = 3,
     temperature: float = 0.3,
-    max_tokens: int = 3000,
+    max_tokens: int = 4000,
 ) -> str:
     """
     调用 LLM Chat API（带 429 重试）

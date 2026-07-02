@@ -41,5 +41,18 @@ frontend/dist/
 .codegraph/
 cc_*.md
 
+# MinerU temp outputs
+MinerU_markdown_*
+
+# Analysis / code review artifacts
+code-review-findings.md
+backend/tests/kb2_diagnostic_report.md
+backend/tests/graphrag_p0_merged_plan.md
+backend/_cron_stale_*.py
+
+# Test artifacts
+backend/tests/errors/
+backend/tests/unit/errors/
+
 # Frontend build cache
 frontend/tmp/

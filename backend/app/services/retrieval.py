@@ -27,6 +27,7 @@ from app.utils.tokenizer import tokenize, expand_keywords
 from app.utils.text_cleaning import normalize_query, expand_amount_tiers
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # ── Bank 配置 ─────────────────────────────────────────────────────
 _HARDCODED_BANKS = {
@@ -39,6 +40,8 @@ _HARDCODED_BANKS = {
     "general":       {"name": "综合文件",       "hindsight": "kb_general", "prompt": "你是知识管理助手。擅长整理归纳各类知识，回答清晰有条理。"},
     "checklist":    {"name": "检查标准",       "hindsight": "kb_checklist", "prompt": "你是等保测评机构检查标准专家。回答时优先引用检查项、检查要求、检查方法、核查力度等表格字段。"},
     "xhs":          {"name": "小红书技术",     "hindsight": "kb_xhs",      "prompt": "你是互联网产品与技术内容分析专家。精通互联网产品评测、AI/Agent/DevOps 工具体验、技术趋势解读。回答时注重产品能力边界、真实体验和对比分析。善于从社区内容中提炼有实操价值的手法、技巧和避坑建议。"},
+    "business":     {"name": "商业分析",       "hindsight": "kb_general",  "prompt": "你是商业与技术分析专家。精通AI产品评测、技术趋势分析、量化交易、金融知识。回答注重技术能力边界、实践经验和中立对比。"},
+    "methodology":  {"name": "方法论",          "hindsight": "kb_general",  "prompt": "你是知识管理方法论专家。精通OKF知识组织框架、知识库设计、信息架构、SOP编写。回答注重结构化方法和最佳实践。"},
 }
 BANKS = dict(_HARDCODED_BANKS)
 
@@ -254,8 +257,12 @@ def expand_query_synonyms(q: str) -> str:
 # 语义召回
 # ═══════════════════════════════════════════════════════════════════
 
-async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int = 4096) -> list:
-    """语义召回 — 支持多 bank 映射和并行查询"""
+async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int = 4096,
+                  max_chunks_per_doc: int = 5) -> list:
+    """语义召回 — 支持多 bank 映射和并行查询
+
+    max_chunks_per_doc: 每个文档最多保留的 chunk 数（默认 5），防止单文档淹没结果
+    """
     # 1. Resolve frontend bank key → Hindsight bank name
     #    兼容：调用方可能传前端 key（industry_docs）或 Hindsight 名（kb_industry）
     bank_cfg = BANKS.get(bank, {})
@@ -290,6 +297,7 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
         all_lists = await asyncio.gather(*tasks, return_exceptions=True)
         merged = []
         seen = set()
+        doc_counts = {}
         for lst in all_lists:
             if isinstance(lst, Exception):
                 logger.warning("recall task exception: %s", lst)
@@ -297,6 +305,16 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
             for r in lst:
                 key = r.get("text", "")[:80]
                 if key not in seen:
+                    # per-doc 限制
+                    doc_id = None
+                    for t in r.get("tags", []):
+                        if t.startswith("doc_id:"):
+                            doc_id = t[7:]
+                            break
+                    if doc_id:
+                        if doc_counts.get(doc_id, 0) >= max_chunks_per_doc:
+                            continue
+                        doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
                     seen.add(key)
                     merged.append(r)
         return merged[:limit]
@@ -307,7 +325,24 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
         "POST",
         {"query": query, "max_tokens": max_tokens, "limit": limit},
     )
-    return result.get("results", [])
+    results = result.get("results", [])
+    # per-doc 限制
+    if results and max_chunks_per_doc > 0:
+        _dc_raw = {}
+        _filtered = []
+        for _r in results:
+            _did = None
+            for _t in _r.get("tags", []):
+                if _t.startswith("doc_id:"):
+                    _did = _t[7:]
+                    break
+            if _did:
+                if _dc_raw.get(_did, 0) >= max_chunks_per_doc:
+                    continue
+                _dc_raw[_did] = _dc_raw.get(_did, 0) + 1
+            _filtered.append(_r)
+        results = _filtered
+    return results
 
 
 # ═══════════════════════════════════════════════════════════════════

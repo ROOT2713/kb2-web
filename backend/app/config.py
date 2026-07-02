@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     # ── MinerU ──
     mineru_api_url: str = "https://mineru.net/api/v4"
     mineru_api_key: str = ""
+    mineru_api_key2: str = ""
     mineru_pages_max: int = 200
 
     # ── Cache ──
@@ -69,8 +70,8 @@ class Settings(BaseSettings):
     cache_ttl_seconds: int = 86400
 
     # ── Chunking ──
-    default_chunk_size: int = 512
-    chunk_overlap: int = 64
+    default_chunk_size: int = 800
+    chunk_overlap: int = 120
 
     # ── Retrieval ──
     top_k: int = 20

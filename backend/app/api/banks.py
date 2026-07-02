@@ -22,6 +22,7 @@ from app.services.retrieval import (
 )
 
 from app.middleware.auth import require_admin
+from app.middleware.jwt_auth import require_role
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +213,7 @@ async def create_bank_api(
     label: str = Form(...),
     description: str = Form(""),
     prompt: str = Form(""),
+    _admin: bool = Depends(require_role("admin")),
 ):
     """Create a new knowledge base bank (v1 L4180-L4216)."""
     key = key.strip()
@@ -246,8 +248,8 @@ async def create_bank_api(
 async def delete_bank_api(
     bank_key: str,
     confirm: bool = False,
-    admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
+    _admin: bool = Depends(require_role("admin")),
 ):
     """Delete a bank (requires confirmation) (v1 L4217-L4252)."""
     banks_cfg = _refresh_banks()

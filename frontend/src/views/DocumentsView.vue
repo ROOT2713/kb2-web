@@ -43,8 +43,8 @@
         </span>
         <span class="col-date">{{ formatDate(doc.created) }}</span>
         <span class="col-actions">
-          <button class="btn-sm" @click="handleReparse(doc.id)">重解析</button>
-          <button class="btn-sm danger" @click="handleDelete(doc.id)">删除</button>
+          <button v-if="authStore.isAdmin" class="btn-sm" @click="handleReparse(doc.id)">重解析</button>
+          <button v-if="authStore.isAdmin" class="btn-sm danger" @click="handleDelete(doc.id)">删除</button>
         </span>
       </div>
     </div>
@@ -61,11 +61,13 @@
 import { ref, computed, onMounted } from 'vue'
 import { useDocumentsStore } from '@/stores/documents'
 import { useBanksStore } from '@/stores/banks'
+import { useAuthStore } from '@/stores/auth'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import Toast from '@/components/Toast.vue'
 
 const docsStore = useDocumentsStore()
 const banksStore = useBanksStore()
+const authStore = useAuthStore()
 
 const search = ref('')
 const filterBank = ref('all')

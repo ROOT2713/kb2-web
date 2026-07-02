@@ -19,7 +19,9 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.database import SessionLocal
 from app.models.document import Document, ParentChunk
+from app.models.concept import Concept
 from app.services.concept_gen import generate_concepts_for_doc, infer_doc_concept_id, infer_domain, _BANK_TO_DOMAIN
+from app.services.confidence import update_concept_confidence
 from app.repositories.document_repo import DocumentRepository
 from app.repositories.vector_repo import HindsightStore
 from app.services.cache_service import invalidate_bm25_cache
@@ -36,6 +38,7 @@ from app.services.retrieval import get_bank_config, recall
 from app.utils.text_cleaning import clean_pipeline, filename_to_title
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 router = APIRouter()
 
@@ -242,7 +245,7 @@ async def upload_document(
             # 对未覆盖段落做分块
             uncovered_text = "\n\n".join(uncovered_segments)
             if len(uncovered_text.strip()) > 500:
-                GAP_PARENT = 5000
+                GAP_PARENT = 12000
                 gap_chunks = []
                 paras = uncovered_text.split("\n\n")
                 buf = ""
@@ -396,6 +399,62 @@ async def upload_document(
 
         db.commit()
         logger.info("Saved %d parent chunks for doc %s", len(parent_map), doc_id)
+
+        # ── P0-2: 上传后自动计算 concept 置信度 ──
+        try:
+            _concepts = db.query(Concept).filter(
+                Concept.doc_id == doc_id,
+                Concept.status == "active",
+            ).all()
+            for _c in _concepts:
+                update_concept_confidence(db, _c.concept_id)
+            db.commit()
+            logger.info("Auto-confidence updated for %d concepts (doc %s)", len(_concepts), doc_id[:8])
+        except Exception as _ce:
+            logger.warning("Auto-confidence update failed for %s: %s", doc_id[:8], _ce)
+
+        # ── P0-3: 上传后自动运行 Quality Gate G2 ──
+        try:
+            from app.services.quality_gates import check_document
+            _g2_result = check_document(db, doc_id, gates="G2")
+            _g2_passed = _g2_result.get("overall_passed", False)
+            logger.info("Quality Gate G2 for %s: passed=%s score=%s",
+                        doc_id[:8], _g2_passed, _g2_result.get("overall_score"))
+            if not _g2_passed:
+                logger.warning("Quality Gate G2 issues: %s",
+                               [g["issues"] for g in _g2_result.get("gates", [])])
+        except Exception as _qce:
+            logger.warning("Quality Gate G2 check failed for %s: %s", doc_id[:8], _qce)
+
+        # ── P0-4: 前3个 concept 并行生成摘要（每调用最多10s超时，不阻塞上传） ──
+        try:
+            from app.services.concept_summary import generate_summary
+            _summaries = db.query(Concept).filter(
+                Concept.doc_id == doc_id,
+                Concept.status == "active",
+                (Concept.summary.is_(None)) | (Concept.summary == ""),
+            ).order_by(Concept.parent_idx).limit(3).all()
+            if _summaries:
+                _tasks = [
+                    asyncio.wait_for(
+                        generate_summary(content=_sc.content or "", title=_sc.title or ""),
+                        timeout=10,
+                    )
+                    for _sc in _summaries
+                ]
+                _summaries_text = await asyncio.gather(*_tasks, return_exceptions=True)
+                for _sc, _st in zip(_summaries, _summaries_text):
+                    if isinstance(_st, Exception):
+                        logger.warning("Summary gen timeout/fail for concept %s: %s",
+                                       _sc.concept_id[:30], _st)
+                        continue
+                    if _st:
+                        _sc.summary = _st
+            db.flush()
+            gen_count = sum(1 for s in _summaries_text if isinstance(s, str) and s) if _summaries else 0
+            logger.info("Generated summaries for %d/%d concepts (doc %s)", gen_count, len(_summaries), doc_id[:8])
+        except Exception as _sume:
+            logger.warning("Summary gen failed for %s: %s", doc_id[:8], _sume)
     except Exception as e:
         logger.warning("Failed to save parent_chunks for %s: %s", doc_id, e)
     finally:
@@ -413,12 +472,14 @@ async def upload_document(
         except Exception as e:
             logger.warning("Failed to save %s to %s: %s", backup_name, save_dir, e)
 
-    # ── 上传到Hindsight（分批写入）──
+    # ── 上传到Hindsight（分批写入，大文档用小批次）──
     retained = 0
     hindsight_error = None
     hs = HindsightStore()
     if memory_items:
-        BATCH_SIZE = 20
+        # 总字符量超过500K或单个chunk>5K则用10个一批，否则20个一批（防Hindsight超时）
+        total_chars = sum(len(m.get("content","")) for m in memory_items)
+        BATCH_SIZE = 10 if (total_chars > 500000 or any(len(m.get("content","")) > 5000 for m in memory_items)) else 20
         for batch_start in range(0, len(memory_items), BATCH_SIZE):
             batch = memory_items[batch_start:batch_start + BATCH_SIZE]
             batch_num = batch_start // BATCH_SIZE + 1

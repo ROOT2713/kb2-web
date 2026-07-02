@@ -220,17 +220,27 @@ def normalize_standard_numbers(text: str) -> str:
 def expand_amount_tiers(query: str) -> str:
     """金额档位扩展：将具体金额映射到文档中的分档区间，提升BM25召回率。
 
-    例如："500万软件项目" → 追加 "300万以上"
-          "200万项目" → 追加 "100万 300万"
+    例如："510万软件项目" → 追加 "500万以上 1000万元以下"
+           "300万项目"   → 追加 "100万~300万 300万元以上"
+
+    政务IT造价常见分档（从造价指导书中提取）：
+      D ≤ 100万       → ["100万以下", "100万元以下"]
+      100万 < D ≤ 300万 → ["100万~300万", "100万元以上"]
+      300万 < D ≤ 500万 → ["300万~500万", "300万元以上"]
+      500万 < D ≤ 1000万 → ["500万~1000万", "500万元以上"]
+      D > 1000万        → ["1000万以上", "1000万元以上"]
+
+    边界值（100、300、500、1000）同时覆盖上下档，确保无论文档用什么写法都能命中。
     """
-    # 政务IT造价常见分档（从造价指导书中提取）
-    # 按金额排序：每个 tuple 是 (阈值, 关键词列表)
+    # 政务IT造价常见分档：(lower, upper, [keywords_in_lower, keywords_in_upper])
+    # lower < D ≤ upper 时使用 keywords_in_upper
+    # D ≤ lower 时使用 keywords_in_lower
     TIERS = [
-        (100,  ["100万以下", "100万元以下"]),
-        (300,  ["100万", "100万元", "100万~300万", "300万元"]),
-        (500,  ["300万以上", "300万元以上"]),
-        (1000, ["500万", "1000万"]),
-        (3000, ["1000万以上", "1000万元以上"]),
+        (0,    100,  ["100万以下", "100万元以下"]),
+        (100,  300,  ["100万~300万", "100万元以上", "300万元以下"]),
+        (300,  500,  ["300万~500万", "300万元以上", "500万元以下"]),
+        (500,  1000, ["500万~1000万", "500万元以上", "1000万元以下"]),
+        (1000, None, ["1000万以上", "1000万元以上"]),
     ]
 
     # 提取查询中的金额（支持 "500万"、"500万元"、"500 万"）
@@ -246,13 +256,25 @@ def expand_amount_tiers(query: str) -> str:
             continue
 
         # 找到金额所在的分档区间
-        for threshold, keywords in TIERS:
-            if amt <= threshold:
+        for lower, upper, keywords in TIERS:
+            if upper is None:
+                # 超过最大阈值（D > 1000万）
+                if amt > lower:
+                    tier_keywords.update(keywords)
+                break
+            if amt <= lower and lower > 0:
+                # 精确落在边界值上（如100万、300万、500万）
+                # 同时覆盖上下档位
+                _prev_keys = TIERS[TIERS.index((lower, upper, keywords)) - 1][2] if TIERS.index((lower, upper, keywords)) > 0 else []
+                tier_keywords.update(_prev_keys)
+                tier_keywords.update(keywords)
+                break
+            if lower < amt <= upper:
                 tier_keywords.update(keywords)
                 break
         else:
             # 超过最大阈值
-            tier_keywords.update(TIERS[-1][1])
+            tier_keywords.update(TIERS[-1][2])
 
     if not tier_keywords:
         return query

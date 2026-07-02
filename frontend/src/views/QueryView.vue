@@ -35,8 +35,27 @@
           <input v-model="useRerank" type="checkbox" />
           精排
         </label>
+        <label class="option-label">
+          <input v-model="useMultiHypothesis" type="checkbox" />
+          多假设对比
+        </label>
+        <label class="option-label nocache-label">
+          <input v-model="forceRefresh" type="checkbox" />
+          <span class="nocache-text">强制刷新</span>
+        </label>
       </div>
     </form>
+
+    <div class="action-bar" v-if="!queryStore.loading">
+      <button
+        type="button"
+        class="btn-clear-cache"
+        :disabled="queryStore.clearingCache"
+        @click="handleClearCache"
+      >
+        {{ queryStore.clearingCache ? '清除中...' : '🗑️ 清除缓存' }}
+      </button>
+    </div>
 
     <LoadingSpinner v-if="queryStore.loading" label="正在查询..." />
     <LoadingSpinner v-if="queryStore.webSearching" label="联网搜索中..." />
@@ -57,6 +76,7 @@
       :standard-contents="queryStore.standardContents"
       :bank="selectedBank"
       @search-suggestion="handleSuggestionSearch"
+      @refresh="handleRefreshFromCache"
     />
   </div>
 </template>
@@ -75,6 +95,8 @@ const banksStore = useBanksStore()
 const queryText = ref('')
 const selectedBank = ref('all')
 const useRerank = ref(false)
+const useMultiHypothesis = ref(false)
+const forceRefresh = ref(false)
 
 onMounted(() => {
   banksStore.fetchBanks()
@@ -86,6 +108,8 @@ function handleQuery() {
     q: queryText.value.trim(),
     bank: selectedBank.value,
     rerank: useRerank.value,
+    multiHypothesis: useMultiHypothesis.value,
+    nocache: forceRefresh.value,
   })
 }
 
@@ -104,7 +128,26 @@ function handleSuggestionSearch(nextQuery: string) {
     q: nextQuery,
     bank: selectedBank.value,
     rerank: useRerank.value,
+    nocache: forceRefresh.value,
   })
+}
+
+function handleRefreshFromCache() {
+  if (!queryText.value.trim()) return
+  queryStore.submitQuery({
+    q: queryText.value.trim(),
+    bank: selectedBank.value,
+    rerank: useRerank.value,
+    multiHypothesis: useMultiHypothesis.value,
+    nocache: true,
+  })
+}
+
+async function handleClearCache() {
+  const result = await queryStore.clearCache()
+  if (result) {
+    queryStore.clear()
+  }
 }
 </script>
 
@@ -121,7 +164,7 @@ function handleSuggestionSearch(nextQuery: string) {
 }
 
 .query-form {
-  margin-bottom: 1.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .query-input-row {
@@ -151,8 +194,42 @@ function handleSuggestionSearch(nextQuery: string) {
   cursor: pointer;
 }
 
+.nocache-label {
+  color: var(--accent, #e67e22);
+}
+
+.nocache-text {
+  font-weight: 600;
+}
+
 .bank-select {
   font-size: 0.8rem;
   padding: 0.3rem 0.5rem;
+}
+
+.action-bar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.btn-clear-cache {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--border, #ddd);
+  background: var(--bg-card, #fff);
+  color: var(--fg-muted, #666);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.btn-clear-cache:hover {
+  border-color: var(--accent, #e67e22);
+  color: var(--accent, #e67e22);
+}
+
+.btn-clear-cache:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

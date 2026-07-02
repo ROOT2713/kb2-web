@@ -66,8 +66,8 @@
 
       <!-- 操作 -->
       <div class="action-bar">
-        <button class="primary" :disabled="reparsing" @click="handleReparse">{{ reparsing ? '解析中...' : '重解析' }}</button>
-        <button class="btn-danger" @click="handleDelete">删除文档</button>
+        <button v-if="authStore.isAdmin" class="primary" :disabled="reparsing" @click="handleReparse">{{ reparsing ? '解析中...' : '重解析' }}</button>
+        <button v-if="authStore.isAdmin" class="btn-danger" @click="handleDelete">删除文档</button>
       </div>
     </div>
 
@@ -91,6 +91,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getDocument, type DocumentDetail } from '@/services/documents'
 import { useDocumentsStore } from '@/stores/documents'
+import { useAuthStore } from '@/stores/auth'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import Toast from '@/components/Toast.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -98,6 +99,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 const route = useRoute()
 const router = useRouter()
 const docsStore = useDocumentsStore()
+const authStore = useAuthStore()
 
 const docDetail = ref<DocumentDetail | null>(null)
 const loading = ref(true)

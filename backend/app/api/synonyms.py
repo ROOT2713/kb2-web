@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.synonym import Synonym
 from app.services.retrieval import _synonym_cache
-from app.middleware.auth import require_admin
+from app.middleware.jwt_auth import require_role
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,7 @@ async def add_synonym(
     expansion: str = Form(...),
     category: str = Form(""),
     db: Session = Depends(get_db),
+    _admin: bool = Depends(require_role("admin")),
 ):
     """Add a synonym mapping (v1 L4968-L4978)."""
     db.execute(
@@ -82,6 +83,7 @@ async def update_synonym(
     expansion: str = Form(...),
     category: str = Form(""),
     db: Session = Depends(get_db),
+    _admin: bool = Depends(require_role("admin")),
 ):
     """Update a synonym mapping (v1 L4981-L4993)."""
     result = db.execute(
@@ -102,8 +104,8 @@ async def update_synonym(
 @router.delete("/{syn_id}")
 async def delete_synonym(
     syn_id: int,
-    admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
+    _admin: bool = Depends(require_role("admin")),
 ):
     """Delete a synonym mapping (v1 L4996-L5008)."""
     result = db.execute(

@@ -16,6 +16,16 @@ os.environ.setdefault("LLM_BASE_URL", "")
 os.environ.setdefault("LLM_API_KEY", "")
 os.environ.setdefault("HINDSIGHT_URL", "http://fake-hindsight:9999")
 
+def pytest_addoption(parser):
+    """Allow --run-integration flag for golden-query regression tests that hit production DB."""
+    parser.addoption(
+        "--run-integration",
+        action="store_true",
+        default=False,
+        help="Run integration tests that require production DB and external services",
+    )
+
+
 import pytest
 from sqlalchemy import create_engine, text as sa_text
 from sqlalchemy.orm import sessionmaker, Session

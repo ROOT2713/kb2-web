@@ -96,12 +96,16 @@ async def mineru_parse_pdf(filename: str, content: bytes) -> str:
 
     超过 MINERU_PAGES_MAX 页自动分批，合并结果。
     """
-    if not settings.mineru_api_key:
+    # 多 Key 并发分流：多批时 round-robin 绕开单 Key 排队瓶颈
+    keys = [settings.mineru_api_key]
+    if settings.mineru_api_key2:
+        keys.append(settings.mineru_api_key2)
+    if not keys[0]:
         raise RuntimeError("MINERU_API_TOKEN 未配置")
 
     reader = pypdf.PdfReader(BytesIO(content))
     total_pages = len(reader.pages)
-    logger.info("MinerU: %d 页，开始解析...", total_pages)
+    logger.info("MinerU: %d 页，%d 个Key可用，开始解析...", total_pages, len(keys))
 
     # 计算分批范围
     ranges = []
@@ -114,102 +118,130 @@ async def mineru_parse_pdf(filename: str, content: bytes) -> str:
     logger.info("MinerU: 分 %d 批: %s", len(ranges), ranges)
 
     all_md_parts = []
+    failed_batches = []
 
     for batch_idx, (pg_start, pg_end) in enumerate(ranges):
         batch_label = f"batch{batch_idx+1}"
         if len(ranges) > 1:
-            # In batch mode, the extracted sub-PDF is 1-indexed relative to itself
             page_range = f"1-{pg_end - pg_start + 1}"
         else:
             page_range = f"{pg_start}-{pg_end}"
 
         mineru_base = settings.mineru_api_url or "https://mineru.net/api/v4"
 
-        # Step 1: 获取上传 URL
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{mineru_base}/file-urls/batch",
-                headers={
-                    "Authorization": f"Bearer {settings.mineru_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "files": [{
-                        "name": f"{batch_label}.pdf",
-                        "is_ocr": True,
-                        "page_ranges": page_range,
-                    }],
-                    "model_version": "pipeline",
-                    "language": "ch",
-                    "enable_table": True,
-                },
-            )
-            data = resp.json()
-            if data.get("code") != 0:
-                raise RuntimeError(f"MinerU 获取上传URL失败: {data.get('msg')}")
+        # Multi-Key retry: try each key, fallback on failure
+        last_err = None
+        for key_try in range(len(keys)):
+            bearer = keys[(batch_idx + key_try) % len(keys)]
+            if key_try > 0:
+                logger.info("MinerU %s: Key%d 排队超时，切换到Key%d重试...",
+                            batch_label,
+                            (batch_idx + key_try - 1) % len(keys) + 1,
+                            (batch_idx + key_try) % len(keys) + 1)
+            try:
+                # Step 1: 获取上传 URL
+                async with httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.post(
+                        f"{mineru_base}/file-urls/batch",
+                        headers={
+                            "Authorization": f"Bearer {bearer}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "files": [{
+                                "name": f"{batch_label}.pdf",
+                                "is_ocr": True,
+                                "page_ranges": page_range,
+                            }],
+                            "model_version": "pipeline",
+                            "language": "ch",
+                            "enable_table": True,
+                        },
+                    )
+                    data = resp.json()
+                    if data.get("code") != 0:
+                        raise RuntimeError(f"MinerU 获取上传URL失败: {data.get('msg')}")
 
-            batch_id = data["data"]["batch_id"]
-            file_url = data["data"]["file_urls"][0]
+                    batch_id = data["data"]["batch_id"]
+                    file_url = data["data"]["file_urls"][0]
 
-        # Step 2: 上传文件
-        # 如果文件超过200页需要截取，否则传整个文件
-        if len(ranges) == 1:
-            upload_bytes = content
-        else:
-            # 截取指定页码范围
-            writer = pypdf.PdfWriter()
-            for pg in range(pg_start - 1, pg_end):
-                writer.add_page(reader.pages[pg])
-            upload_buf = BytesIO()
-            writer.write(upload_buf)
-            upload_bytes = upload_buf.getvalue()
+                # Step 2: 上传文件
+                if len(ranges) == 1:
+                    upload_bytes = content
+                else:
+                    writer = pypdf.PdfWriter()
+                    for pg in range(pg_start - 1, pg_end):
+                        writer.add_page(reader.pages[pg])
+                    upload_buf = BytesIO()
+                    writer.write(upload_buf)
+                    upload_bytes = upload_buf.getvalue()
 
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.put(file_url, content=upload_bytes)
-            if resp.status_code != 200:
-                raise RuntimeError(f"MinerU 文件上传失败: HTTP {resp.status_code}")
+                async with httpx.AsyncClient(timeout=120) as client:
+                    resp = await client.put(file_url, content=upload_bytes)
+                    if resp.status_code != 200:
+                        raise RuntimeError(f"MinerU 文件上传失败: HTTP {resp.status_code}")
 
-        logger.info("MinerU %s: 已上传 %d-%d 页", batch_label, pg_start, pg_end)
+                logger.info("MinerU %s: 已上传 %d-%d 页", batch_label, pg_start, pg_end)
 
-        # Step 3: 轮询结果
-        poll_url = f"{mineru_base}/extract-results/batch/{batch_id}"
-        max_wait = 600  # 最多等10分钟
+                # Step 3: 轮询结果
+                poll_url = f"{mineru_base}/extract-results/batch/{batch_id}"
+                max_wait = 90
 
-        for _ in range(max_wait // 3):
-            await asyncio.sleep(3)
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(
-                    poll_url,
-                    headers={"Authorization": f"Bearer {settings.mineru_api_key}"},
-                )
-                data = resp.json()
+                for _ in range(max_wait // 3):
+                    await asyncio.sleep(3)
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        resp = await client.get(
+                            poll_url,
+                            headers={"Authorization": f"Bearer {bearer}"},
+                        )
+                        data = resp.json()
 
-            if data.get("code") != 0:
+                    if data.get("code") != 0:
+                        continue
+
+                    er = (data.get("data", {}).get("extract_result") or [{}])[0]
+                    state = er.get("state")
+
+                    if state == "done":
+                        zip_url = er.get("full_zip_url")
+                        break
+                    elif state == "failed":
+                        raise RuntimeError(f"MinerU {batch_label} 失败: {er.get('err_msg')}")
+                else:
+                    raise RuntimeError(f"MinerU {batch_label}: 轮询超时 ({max_wait}s)")
+
+                # Step 4: 下载并解压 Markdown
+                async with httpx.AsyncClient(timeout=60) as client:
+                    resp = await client.get(zip_url)
+                    zip_data = resp.content
+
+                with _zipfile.ZipFile(BytesIO(zip_data)) as zf:
+                    if "full.md" not in zf.namelist():
+                        raise RuntimeError(f"MinerU {batch_label}: ZIP 中缺少 full.md")
+                    md_text = zf.read("full.md").decode("utf-8")
+
+                all_md_parts.append(md_text)
+                logger.info("MinerU %s: Key%d 成功，%d 字符", batch_label,
+                            (batch_idx + key_try) % len(keys) + 1, len(md_text))
+                last_err = None
+                break  # Success, exit retry loop
+
+            except RuntimeError as e:
+                last_err = e
+                logger.warning("MinerU %s Key%d: %s", batch_label,
+                               (batch_idx + key_try) % len(keys) + 1, e)
                 continue
 
-            er = (data.get("data", {}).get("extract_result") or [{}])[0]
-            state = er.get("state")
+        if last_err:
+            failed_batches.append(batch_idx)
+            logger.error("MinerU %s: %d 个Key均失败", batch_label, len(keys))
 
-            if state == "done":
-                zip_url = er.get("full_zip_url")
-                break
-            elif state == "failed":
-                raise RuntimeError(f"MinerU {batch_label} 失败: {er.get('err_msg')}")
-        else:
-            raise RuntimeError(f"MinerU {batch_label}: 轮询超时 ({max_wait}s)")
-
-        # Step 4: 下载并解压 Markdown
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.get(zip_url)
-            zip_data = resp.content
-
-        with _zipfile.ZipFile(BytesIO(zip_data)) as zf:
-            if "full.md" not in zf.namelist():
-                raise RuntimeError(f"MinerU {batch_label}: ZIP 中缺少 full.md")
-            md_text = zf.read("full.md").decode("utf-8")
-
-        all_md_parts.append(md_text)
-        logger.info("MinerU %s: %d 字符", batch_label, len(md_text))
+    if failed_batches:
+        if len(failed_batches) == len(ranges):
+            raise RuntimeError(
+                f"MinerU: 全部 {len(ranges)} 批失败（{len(keys)} 个Key均不可用），最近错误: {last_err}"
+            )
+        logger.warning("MinerU: %d/%d 批失败，使用部分结果", len(failed_batches), len(ranges))
 
     result = "\n\n".join(all_md_parts)
     logger.info("MinerU 完成: %d 字符", len(result))

@@ -6,17 +6,20 @@
     </div>
     <nav class="header-nav">
       <RouterLink to="/query" class="nav-link">查询</RouterLink>
-      <RouterLink to="/upload" class="nav-link">上传</RouterLink>
+      <RouterLink v-if="authStore.isAdmin" to="/upload" class="nav-link">上传</RouterLink>
       <RouterLink to="/documents" class="nav-link">文档</RouterLink>
       <RouterLink to="/banks" class="nav-link">知识库</RouterLink>
       <RouterLink to="/synonyms" class="nav-link">同义词</RouterLink>
-      <RouterLink to="/admin" class="nav-link">管理</RouterLink>
+      <RouterLink v-if="authStore.isAdmin" to="/admin" class="nav-link">管理</RouterLink>
       <RouterLink to="/wiki" class="nav-link">Wiki</RouterLink>
     </nav>
   </header>
 </template>
 
 <script setup lang="ts">
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
 </script>
 
 <style scoped>
@@ -47,34 +50,5 @@
   font-size: 1.1rem;
   color: var(--accent);
   letter-spacing: -0.02em;
-}
-
-.brand-sub {
-  font-size: 0.8rem;
-  color: var(--fg-muted);
-}
-
-.header-nav {
-  display: flex;
-  gap: 0.25rem;
-}
-
-.nav-link {
-  padding: 0.4rem 0.6rem;
-  font-size: 0.85rem;
-  color: var(--fg-muted);
-  border-bottom: 2px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
-  text-decoration: none;
-}
-
-.nav-link:hover {
-  color: var(--fg);
-  text-decoration: none;
-}
-
-.nav-link.router-link-active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
 }
 </style>

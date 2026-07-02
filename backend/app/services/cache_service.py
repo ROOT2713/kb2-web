@@ -18,6 +18,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.models.database import SessionLocal
 from app.utils.text_cleaning import normalize_query, _extract_numbers
+from app.services.query_decomposer import split_sub_queries
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,11 @@ async def get_semantic(query: str, bank: str, threshold: float = 0.82) -> Option
                     c_nums = _extract_numbers(r[1] or "")  # query_text
                     if q_nums and c_nums and q_nums != c_nums:
                         continue  # 数字不同，不算缓存命中
+                    # 子问题一致性检查：如果当前查询和缓存的查询子问题数不同，跳过
+                    q_sub_count = len(split_sub_queries(query))
+                    c_sub_count = len(split_sub_queries(r[1] or ""))
+                    if q_sub_count != c_sub_count:
+                        continue  # 子问题数不同，不算缓存命中
                     best_sim = sim
                     best_match = r
         if best_match:
@@ -197,3 +203,21 @@ async def warmup_bm25():
         logger.info("BM25 warmup done: %d docs in %.1fs", len(cache["docs"]), elapsed)
     except Exception as e:
         logger.warning("BM25 warmup failed (will lazy-load): %s", e)
+
+
+async def clear_all_cache():
+    """清除所有查询缓存（L1+L2 query_cache + BM25 缓存）"""
+    count = 0
+    db = SessionLocal()
+    try:
+        result = db.execute(text("DELETE FROM query_cache"))
+        count = result.rowcount
+        db.commit()
+        logger.info("[CACHE] Cleared %d query_cache entries", count)
+    except Exception as e:
+        db.rollback()
+        logger.warning("[CACHE] Clear failed: %s", e)
+    finally:
+        db.close()
+    invalidate_bm25_cache(None)
+    return count
