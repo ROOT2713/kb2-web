@@ -1,33 +1,86 @@
-# kb-web 2.0 — 知识库 Web 服务
+# kb2-web — 知识库 Web 服务 v2
 
-kb2-web 是 kb-web V1 的 Fork 2.0 重写版，基于 FastAPI + Vue 3 + Hindsight + LLM，目标是在灰度验证完成后替代 V1。
+基于 **FastAPI + Vue 3 + Hindsight** 的政务信息化知识库 Web 服务，支持多 bank 知识库管理、BM25+Dense 混合检索、LLM 问答生成。
 
-## 当前状态
+> 从 V1 架构完全重写，当前替代 V1 作为生产环境。
 
-| 组件 | 路径 | 端口/服务 | 状态 |
-|---|---|---|---|
-| V1 kb-web | `/home/ubuntu/kb-web` | `:3002` / `kb-web.service` | 生产基线，只修 Bug |
-| V2 kb2-web | `/home/ubuntu/kb2-web` | `:3027` / `kb2-web.service` | 灰度建设与验证 |
-| Hindsight | 服务依赖 | `:8888` / `hindsight.service` | V1/V2 共用检索后端 |
+---
 
-V2 已完成模块化后端、Vue 前端、JWT 登录、上传/查询/文档管理、Bank 管理、同义词管理、Admin/Wiki 页面和 V1 compatibility alias。当前仍需完成真实端到端 smoke、查询质量回归、V1/V2 数据边界治理后再全量替代 V1。
+## ✨ 核心特性
 
-## 快速开始（本机开发）
+| 特性 | 说明 |
+|------|------|
+| **混合检索** | BM25(初筛) → Hindsight Dense(向量排序) → top-K → LLM 生成，支持多 bank 并行召回 |
+| **知识库管理** | 上传(单文件/批量/文件夹)、文档 CRUD、重解析、缓存管理 |
+| **取费表查询** | `fee_utils` 关键词评分 D2-B 注入，16 种子词+金额档位评分排序 |
+| **同义词扩展** | 158 条同义词映射在检索层扩展 query，零 prompt 膨胀 |
+| **L2 语义缓存** | 基于语义指纹的查询缓存，nocache 参数控制 |
+| **多用户权限** | admin/viewer 双角色 + JWT + 路由级 require_role |
+| **Domain 过滤** | 按领域关键词自动路由到对应 Hindsight bank |
+| **OKF 信息架构** | Document 12 字段 + Concept/KGTriple/QualityGate + Concept Summary 上浮 |
+| **66 题质量评估** | 并行测试脚本，66 道真实政务场景题，当前通过率 **74.2%** |
+
+---
+
+## 🏗️ 架构概览
+
+```text
+┌─────────────────────────────────────────────────────┐
+│                    Vue 3 SPA                         │
+│  (Axios + JWT + Pinia + 来源卡片 + 文档管理)         │
+└─────────────────────┬───────────────────────────────┘
+                      │ POST /api/query (Form) + JWT
+                      ▼
+┌─────────────────────────────────────────────────────┐
+│                  FastAPI (:3027)                      │
+│                                                      │
+│  ┌─────────┐ ┌──────────┐ ┌───────────┐ ┌─────────┐ │
+│  │ api/    │ │ services/│ │repositories││ models/  │ │
+│  │ 路由层  │ │ 业务逻辑 │ │ 数据访问  │ │ SQLAlch.│ │
+│  └────┬────┘ └────┬─────┘ └─────┬─────┘ └────┬────┘ │
+│       │           │             │            │       │
+│  ┌────┴───────────┴─────────────┴────────────┴────┐  │
+│  │            utils/ + middleware/ + config/       │  │
+│  └────────────────────────────────────────────────┘  │
+└──────────┬───────────────────────────────────────────┘
+           │
+    ┌──────┴──────┐
+    │  SQLite     │  Hindsight (:8888)
+    │  (kb.db)    │  (Dense/BM25 检索)
+    └─────────────┘
+```
+
+---
+
+## ⚡ 快速开始
+
+### 前置依赖
+
+- Python 3.10+
+- Node.js 18+
+- SQLite 3
+- Hindsight 服务 (`:8888`)
+- MinerU API Key（文档解析）
+
+### 后端启动
 
 ```bash
-cd /home/ubuntu/kb2-web/backend
+cd backend
+pip install -r requirements.txt
+# 或使用虚拟环境
 /home/ubuntu/.hermes/hermes-agent/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 3027
 ```
 
-前端开发：
+### 前端开发
 
 ```bash
-cd /home/ubuntu/kb2-web/frontend
+cd frontend
 npm install
-npm run dev
+npm run dev          # 开发模式
+npm run build        # 生产构建
 ```
 
-生产服务由 systemd 管理：
+### 生产服务（systemd）
 
 ```bash
 sudo systemctl status kb2-web.service
@@ -35,121 +88,123 @@ sudo systemctl restart kb2-web.service
 curl -sS http://127.0.0.1:3027/health
 ```
 
-## 项目结构
+---
 
-```text
+## 📁 项目结构
+
+```
 kb2-web/
 ├── backend/
 │   ├── app/
-│   │   ├── api/          # FastAPI 路由层：auth/upload/query/documents/banks/synonyms/admin
-│   │   ├── services/     # 业务逻辑：parsing/chunking/retrieval/generation/cache/quality
-│   │   ├── models/       # SQLAlchemy 模型
-│   │   ├── repositories/ # 数据访问层
-│   │   ├── middleware/   # JWT/Basic Auth/错误处理
-│   │   ├── utils/        # 文本清洗、分词、embedding 等工具
-│   │   ├── config.py     # Pydantic Settings
-│   │   └── main.py       # FastAPI 入口、SPA 挂载、V1 compatibility aliases
-│   ├── migrations/       # Alembic
-│   ├── scripts/          # 数据同步/回填/对比脚本
-│   └── tests/            # unit + integration tests
-├── frontend/             # Vue 3 + Vite + Pinia 前端
-├── docs/                 # 项目文档和评估脚本
+│   │   ├── api/           # FastAPI 路由层
+│   │   │   ├── auth.py         # 登录/注册/JWT
+│   │   │   ├── query.py        # 核心查询端点
+│   │   │   ├── upload.py       # 文档上传(batch+单文件)
+│   │   │   ├── documents.py    # 文档 CRUD
+│   │   │   ├── banks.py        # Bank 管理
+│   │   │   ├── synonyms.py     # 同义词管理
+│   │   │   └── admin.py        # 管理面板
+│   │   ├── services/
+│   │   │   ├── retrieval.py    # 检索管线(BM25+Dense+RRF)
+│   │   │   ├── generation.py   # LLM 问答生成
+│   │   │   ├── chunking.py     # 切片策略
+│   │   │   ├── parsing.py      # 文档解析(MinerU/pypdf)
+│   │   │   ├── fee_utils.py    # 取费表评分注入
+│   │   │   └── cache.py        # L2 语义缓存
+│   │   ├── models/         # SQLAlchemy 模型
+│   │   ├── repositories/   # 数据访问层
+│   │   ├── middleware/     # JWT/错误处理
+│   │   └── main.py         # FastAPI 入口
+│   ├── migrations/     # Alembic
+│   ├── scripts/        # 数据同步/回填/评估脚本
+│   └── tests/          # 单元+集成测试
+├── frontend/           # Vue 3 + Vite + Pinia
+│   ├── src/
+│   │   ├── views/      # 页面组件
+│   │   ├── components/ # 通用组件(来源卡片/文档列表等)
+│   │   └── stores/     # Pinia 状态管理
+│   └── dist/           # 构建产物
 └── README.md
 ```
 
-## 架构
+---
 
-```text
-Vue 3 SPA
-   │ Axios + JWT
-   ▼
-FastAPI app (:3027)
-   ├── api/          路由层，处理 HTTP、表单、鉴权、响应结构
-   ├── services/     解析、分块、Dense/BM25/RRF/Rerank、生成、缓存
-   ├── repositories/ SQLite/Hindsight 访问封装
-   ├── models/       documents、parent_chunks、query_cache、synonym_map
-   └── frontend/dist SPA 静态文件与 history fallback
-```
-
-## 主要 API
+## 🔌 主要 API
 
 | 能力 | Endpoint | 说明 |
-|---|---|---|
-| 登录 | `POST /api/auth/login` | JSON：`username/password`，返回 JWT |
-| 查询 | `POST /api/query` | Form：`q`, `bank`, `nocache`, `rerank`, `history` |
-| 联网搜索 | `POST /api/query/web-search` | Form：`q`, `bank`, `context` |
-| 上传 | `POST /api/upload` | 单文件上传 |
-| 批量上传 | `POST /api/upload/batch` | 多文件上传，返回逐文件结果 |
-| 文档管理 | `/api/documents/*` | 列表、详情、内容、删除、重解析、审计 |
+|------|----------|------|
+| 登录 | `POST /api/auth/login` | JSON：username/password，返回 JWT |
+| 查询 | `POST /api/query` | Form：q, bank, nocache, rerank, history |
+| 联网搜索 | `POST /api/query/web-search` | Form：q, bank, context |
+| 单文件上传 | `POST /api/upload` | 文件 + bank + title |
+| 批量上传 | `POST /api/upload/batch` | 多文件 + 预检 + 分批 |
+| 文档管理 | `/api/documents/*` | 列表、详情、删除、重解析 |
 | Bank 管理 | `/api/banks/*` | Bank 列表、配置、wiki tree |
-| 同义词 | `/api/synonyms/*` | CRUD |
-| Admin | `/api/admin/*` | stats、health、cache invalidate、bank config |
+| 同义词管理 | `/api/synonyms/*` | CRUD |
+| 管理面板 | `/api/admin/*` | stats、health、cache invalidate |
 
-V1 compatibility aliases 保留在 `backend/app/main.py`，用于兼容旧路径，例如 `/api/stats`、`/api/wiki`、`/api/categories`、`/api/web-search` 等。旧路径仍受 JWT 保护。
+---
 
-## 测试与构建
+## ⚙️ 关键技术决策
 
-后端：
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 检索引擎 | Hindsight (BM25+Dense) | 自托管，低延迟，SQLite 原生集成 |
+| 文档解析 | MinerU (优先) → pypdf (降级) | MinerU 高精度保留表格/公式 |
+| LLM | DeepSeek V4 (OpenRouter) | 成本低、中文表现强 |
+| 缓存 | L2 语义缓存 | 相似 query 命中，nocache 强制绕过 |
+| 鉴权 | JWT + require_role | 轻量、stateless、支持 admin/viewer |
+| 数据存储 | SQLite (共享 V1) | 无需额外 DB 服务，双写策略待定 |
 
-```bash
-cd /home/ubuntu/kb2-web/backend
-/home/ubuntu/.hermes/hermes-agent/venv/bin/python -m pytest -q
-```
+---
 
-前端：
-
-```bash
-cd /home/ubuntu/kb2-web/frontend
-npm run build
-```
-
-服务 smoke：
+## 🧪 测试与评估
 
 ```bash
-curl -sS http://127.0.0.1:3027/health
-```
-
-涉及查询质量或新 RAG 逻辑时，必须使用真实 `/api/query` 并加 `nocache=true`，避免 L2 语义缓存误导验证。
-
-## V1 与 V2 的关系
-
-- V1 继续运行在 `:3002`，作为生产基线和回滚路径。
-- V2 运行在 `:3027`，承接新功能和灰度验证。
-- V1 原则上只修 Bug，不再新增功能。
-- V2 在完全替代 V1 前，必须通过：后端测试、前端构建、真实上传/查询/删除 smoke、V1/V2 查询质量对比、compatibility alias 验证。
-- 当前数据面仍需明确治理：部分配置会复用 V1 数据路径和 Hindsight bank。切流前必须确认共享库/独立库策略和回滚方案。
-
-## 当前优先事项
-
-1. 保持工作区可审查：大改动按功能拆 commit，避免混合提交。
-2. 补齐真实端到端 smoke：上传 → 查询召回 → 删除 → 查询不再召回。
-3. 重跑查询质量评估：短测 30 题，稳定后跑 120 题，所有请求使用 `nocache=true`。
-4. 审核 V1 compatibility aliases：未登录 401、登录后方法/参数/Location 兼容。
-5. 明确 V1/V2 数据边界：共享数据库、共享 Hindsight、双写或迁移策略。
-
-## 常用命令
-
-```bash
-# 服务状态
-sudo systemctl status kb2-web.service
-sudo journalctl -u kb2-web.service --since '10 min ago' --no-pager
-
 # 后端测试
-cd /home/ubuntu/kb2-web/backend
-/home/ubuntu/.hermes/hermes-agent/venv/bin/python -m pytest -q
+cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python -m pytest -q
 
 # 前端构建
-cd /home/ubuntu/kb2-web/frontend
-npm run build
+cd frontend && npm run build
 
-# 路由表
-cd /home/ubuntu/kb2-web/backend
-/home/ubuntu/.hermes/hermes-agent/venv/bin/python - <<'PY'
-from app.main import app
-for r in app.routes:
-    methods = ','.join(sorted(getattr(r, 'methods', []) or []))
-    path = getattr(r, 'path', '')
-    if path.startswith('/api') or path == '/health':
-        print(f'{methods:18} {path}')
-PY
+# 服务健康检查
+curl -sS http://127.0.0.1:3027/health
+
+# 66 题质量评估（nocache）
+cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66test_v3.py
 ```
+
+---
+
+## 📊 当前状态（2026-07-01）
+
+| 指标 | 数值 |
+|------|------|
+| 66 题通过率 | **49/66 (74.2%)**（+13.6pp 自 6/30） |
+| 真过拒数 | **2**（CC 审查确认，均检索层修复） |
+| 取费表 D2-B 命中率 | **100%**（idx=37-55 费率表全量注入） |
+| 后端测试 | 374 passed |
+| 文档数 | ~140 篇（跨 6 banks） |
+
+### 三方案整合路线图
+
+已输出 PDF 评估报告 → 执行顺序：
+
+```
+Phase 1 (2周): OKF 底座收尾 + 前端 P0 贴面剂
+Phase 2 (3周): GraphRAG 图谱检索 + 实体抽取
+Phase 3 (2周): 前端深度重构（Loop工程 + 查询工作台）
+```
+
+---
+
+## 🗺️ 相关链接
+
+- [kb2-web Wiki](http://rogerz-ROOT2713-7y3p7v5g8xtq-3006.us.kg/) — 项目架构图/改造档案/更新日志
+- [Hindsight](https://github.com/vectorize-io/hindsight) — 检索后端
+- [MinerU](https://github.com/opendatalab/MinerU) — PDF 文档解析
+- [anti-ai-plastic-ui](https://github.com/NousResearch/hermes-agent) — 前端设计规范参考
+
+## 许可证
+
+MIT
