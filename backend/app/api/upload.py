@@ -391,6 +391,16 @@ async def _process_upload_task(
         item["tags"].append(f"confidence:{profile_conf:.3f}")
         if dr2 and dr2.version:
             item["tags"].append(f"version:{dr2.version}")
+        # ── P2 Step 1: frontmatter metadata tags (non-empty only) ──
+        if dr2:
+            if dr2.source_url:
+                item["tags"].append(f"source_url:{dr2.source_url}")
+            if dr2.published_date:
+                item["tags"].append(f"pub_date:{dr2.published_date.isoformat()}")
+            if dr2.geo_scope:
+                item["tags"].append(f"geo_scope:{dr2.geo_scope}")
+            if dr2.category:
+                item["tags"].append(f"category:{dr2.category}")
 
     _update_upload_task(task_id, progress=0.55, stage="hindsight_indexing")
     hindsight_error = None

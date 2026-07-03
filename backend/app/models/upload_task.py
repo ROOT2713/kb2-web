@@ -26,3 +26,23 @@ class UploadTask(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                         onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+    @classmethod
+    def cleanup_old_tasks(cls, db_session, max_age_days: int = 30) -> int:
+        """Delete completed or failed tasks older than max_age_days.
+
+        Args:
+            db_session: SQLAlchemy session.
+            max_age_days: Maximum age in days before a completed/failed task is deleted.
+
+        Returns:
+            Number of deleted tasks.
+        """
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        deleted = db_session.query(cls).filter(
+            cls.status.in_(["done", "failed"]),
+            cls.updated_at < cutoff,
+        ).delete(synchronize_session=False)
+        db_session.commit()
+        return deleted

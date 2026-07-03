@@ -34,6 +34,9 @@ class ExtractRequest(BaseModel):
     include_stale: bool = False
     min_confidence: float = 0.0
     limit: int = 50
+    page: int = 1
+    page_size: int = 20
+    summarize: bool = False
 
     @field_validator("topic")
     @classmethod
@@ -139,16 +142,23 @@ async def extract_by_topic(
 
     ranked = sorted(doc_groups.items(), key=_doc_score, reverse=True)
 
-    # Step 5: 组装输出
+    # Step 5: 分页
+    total_results = len(ranked)
+    page = max(1, req.page)
+    page_size = max(1, min(req.page_size, 100))
+    total_pages = max(1, (total_results + page_size - 1) // page_size)
+    offset = (page - 1) * page_size
+    page_items = ranked[offset:offset + page_size]
+
     # 批量获取文档元数据（避免 N+1 查询）
-    doc_ids = [doc_id for doc_id, _ in ranked[:req.limit]]
+    doc_ids = [doc_id for doc_id, _ in page_items]
     docs_map = {}
     if doc_ids:
         docs = db.query(Document).filter(Document.doc_id.in_(doc_ids)).all()
         docs_map = {d.doc_id: d for d in docs}
 
     extracted = []
-    for doc_id, doc_concepts in ranked[:req.limit]:
+    for doc_id, doc_concepts in page_items:
         doc = docs_map.get(doc_id)
         title = doc.title if doc else ""
         domain = doc.domain if doc else ""
@@ -174,11 +184,47 @@ async def extract_by_topic(
             "total_chars": sum(len(c.content or "") for c in doc_concepts),
         })
 
+    # Step 6: LLM 摘要 (P2 Step 3b)
+    summary = ""
+    if req.summarize and extracted:
+        try:
+            from app.services.generation import chat
+            summary_texts = []
+            for e in extracted[:5]:
+                snippet = (e.get("title") or "") + ": " + " ".join(
+                    c.get("summary", "") or c.get("title", "")
+                    for c in e.get("concepts", [])[:3]
+                )
+                if snippet.strip():
+                    summary_texts.append(snippet[:300])
+            if summary_texts:
+                prompt = (
+                    "请用中文对以下知识库提取结果生成一段简短摘要（不超过500字），"
+                    "概括主要主题和关键内容：\n\n"
+                    + "\n---\n".join(summary_texts)
+                )
+                summary = await asyncio.wait_for(
+                    chat(messages=[{"role": "user", "content": prompt}], max_tokens=500),
+                    timeout=10,
+                )
+                summary = summary.strip()[:500]
+        except asyncio.TimeoutError:
+            logger.warning("LLM summary timed out after 10s")
+        except Exception as e:
+            logger.warning("LLM summary failed (non-critical): %s", e)
+
     return {
         "topic": topic,
         "total_documents": len(extracted),
         "total_concepts": sum(e["concept_count"] for e in extracted),
         "results": extracted,
+        "summary": summary,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total_results,
+            "total_pages": total_pages,
+        },
     }
 
 
