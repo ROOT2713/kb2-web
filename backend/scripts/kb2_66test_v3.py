@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-kb2-web 66题全面测试 V3 — 并行模式（nocache=true）
-覆盖：术语歧义/过拒、概念对比、数值查询、跨chunk推理、幻觉检测、
-符号编码歧义、交叉规范、边界异常、回归测试
+kb2-web 66题全面测试 V4 — 三层评估：规则匹配 + LLM 3次众数 + 趋势告警
+
+Changes from V3:
+1. Rule-based matching for deterministic answers (C series: numeric, F/G: fee)
+2. LLM 3-times majority voting for open-ended questions
+3. Trend-based CI blocking (saves history, checks 3 consecutive drops)
 """
-import json, sys, time, concurrent.futures, threading
+import json, sys, time, concurrent.futures, threading, os
 
 try:
     import requests as _req
 except ImportError:
-    import subprocess, sys
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests", "-q"])
+    import subprocess, sys as _sys
+    _sys.stdout.flush()
+    subprocess.check_call([_sys.executable, "-m", "pip", "install", "requests", "-q"])
     import requests as _req
 
 BASE = "http://127.0.0.1:3027"
@@ -28,6 +32,122 @@ def get_token():
     return r.json()["access_token"]
 
 TOKEN = get_token()
+
+# ── LLM config (read from backend .env) ──
+LLM_URL = None
+LLM_KEY = None
+LLM_MODEL = None
+try:
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("LLM_BASE_URL="):
+                LLM_URL = line.split("=", 1)[1].rstrip('"').lstrip('"')
+            elif line.startswith("LLM_API_KEY="):
+                LLM_KEY = line.split("=", 1)[1].rstrip('"').lstrip('"')
+            elif line.startswith("LLM_MODEL="):
+                LLM_MODEL = line.split("=", 1)[1].rstrip('"').lstrip('"')
+    if LLM_URL and not LLM_URL.endswith("/chat/completions"):
+        LLM_URL = LLM_URL.rstrip("/") + "/chat/completions"
+except Exception:
+    pass
+
+# ── Rule-based expected answers (key terms for deterministic questions) ──
+# Format: q_id -> [list of required keywords or phrases]
+RULE_PASS = {
+    # C series: numeric standard values
+    "C01": ["接地电阻", "1"],
+    "C02": ["2.5", "净高"],
+    "C03": ["防雷接地", "1"],
+    "C04": ["测试", "频率"],
+    "C05": ["屏蔽", "dB"],
+    "C06": ["浮充", "电压"],
+    "C07": ["电压", "允许波动"],
+    "C08": ["弱电间", "弱电井", "尺寸"],
+    "C09": ["湿度", "%"],
+    "C10": ["等保", "测评", "一年", "1年"],
+    "C11": ["密码", "测评", "一年", "1年"],
+    "C12": ["防静电地板", "接地电阻", "1"],
+    # F: fee calculation questions
+    "F07": ["50万", "验收", "测评"],
+    "F09": ["5万", "验收测评", "费"],
+    # G: fee and specific numeric
+    "G10": ["等保三级", "测评费用"],
+    "G11": ["弱电", "验收测评", "费"],
+    "G12": ["电子会议", "接地电阻"],
+    # E: cross-standard (key standards)
+    "E01": ["温度", "湿度", "2887"],
+    "E02": ["温度", "湿度", "50174"],
+    "E03": ["50343", "防雷", "接地电阻"],
+    "E04": ["等保三级", "网络"],
+    "E05": ["22239", "密码"],
+    "E06": ["1717.2", "测评"],
+    # A: common terms
+    "A09": ["2887", "温度"],
+    "A13": ["2887", "湿度"],
+}
+
+def rule_check(q_id: str, answer: str) -> str | None:
+    """Rule-based check for deterministic questions. Returns 'PASS', a fail reason, or None (not rule-based)."""
+    if q_id not in RULE_PASS:
+        return None
+    missing = []
+    for kw in RULE_PASS[q_id]:
+        if kw not in answer:
+            missing.append(kw)
+    if missing:
+        return f"RULE_FAIL: missing {', '.join(missing)}"
+    return "PASS"
+
+# ── LLM judge (3-times majority) for open-ended questions ──
+
+LLM_JUDGE_SYSTEM = """你是一个严格的问答质量评估员。评估标准：
+1. 回答不能拒绝回答问题（不能说"未涉及""未提供"等）
+2. 回答必须直接回应问题，不能答非所问
+3. 回答必须有实质内容和具体信息
+4. 回答必须有依据，不能凭空编造
+
+输出格式：第一行 MUST BE exactly "PASS" 或 "FAIL"
+第二行：简要理由（50字以内，中文）"""
+
+def llm_judge(question: str, answer: str, max_retries: int = 3) -> tuple[str, str]:
+    """Evaluate answer quality via LLM. Returns (status, reason)."""
+    if not LLM_URL or not LLM_KEY:
+        return "UNCERTAIN", "LLM not configured"
+    prompt = f"## 问题\n{question}\n\n## 系统回答\n{answer[:3000]}"
+    for attempt in range(max_retries):
+        try:
+            resp = _req.post(
+                LLM_URL,
+                headers={"Authorization": f"Bearer {LLM_KEY}", "Content-Type": "application/json"},
+                json={
+                    "model": LLM_MODEL or "deepseek-chat",
+                    "messages": [
+                        {"role": "system", "content": LLM_JUDGE_SYSTEM},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 100,
+                },
+                timeout=30,
+            )
+            if resp.status_code == 429:
+                time.sleep(5 * (attempt + 1))
+                continue
+            text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            status = "PASS" if text.strip().startswith("PASS") else "FAIL"
+            reason = text.strip().split("\n", 1)[1].strip() if "\n" in text else ""
+            return status, reason
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(3)
+            else:
+                return "UNCERTAIN", str(e)[:60]
+    return "UNCERTAIN", "max retries"
+
+
+# ── Question bank ──
 
 ALL_QUESTIONS = [
     ("A01", "接线端子和接地端子有什么不同？"),
@@ -98,8 +218,14 @@ ALL_QUESTIONS = [
     ("G12", "电子会议系统的接地电阻有何要求？"),
 ]
 
+# QUESTIONS that need LLM judge (if they pass basic checks)
+# Deterministic (rule-based) questions are auto-graded.
+# ALL others that pass basic checks get LLM evaluation.
+RULE_IDS = set(RULE_PASS.keys())
+
+
 def query_one(q, nocache=True):
-    """单题查询"""
+    """Single question query."""
     t0 = time.time()
     try:
         r = _req.post(f"{BASE}/api/query",
@@ -114,12 +240,13 @@ def query_one(q, nocache=True):
     except Exception as e:
         return {"answer": "", "sources": [], "time": time.time()-t0, "err": str(e)}
 
+
 def evaluate(n, q_full, result):
-    """评估结果：过拒、短答、幻觉"""
+    """Three-tier evaluation: basic → rule → LLM (3x majority)."""
     ans = result["answer"]
     if not ans:
         return "ERROR_EMPTY"
-    # 过拒关键词（回答前500字）
+    # Tier 1: Basic checks (overrejection, too short)
     rej = ["未直接", "未涉及", "未规定", "未涵盖", "未覆盖",
            "找不到相关", "没有提到", "未找到", "无法回答",
            "未明确定义", "未单独列出"]
@@ -127,11 +254,69 @@ def evaluate(n, q_full, result):
         return "OVERREJECTION"
     if len(ans) < 100:
         return "ANSWER_TOO_SHORT"
-    return "PASS"
+    # Tier 2: Rule-based matching
+    rule_result = rule_check(n, ans)
+    if rule_result == "PASS":
+        return "PASS"
+    if rule_result is not None:  # rule failed
+        return rule_result
+    # Tier 3: LLM 3-times majority
+    results = []
+    for i in range(3):
+        status, _ = llm_judge(q_full, ans)
+        results.append(status)
+    pass_cnt = results.count("PASS")
+    fail_cnt = results.count("FAIL")
+    uncertain_cnt = results.count("UNCERTAIN")
+    if uncertain_cnt >= 2:
+        return "LLM_UNCERTAIN"
+    return "PASS" if pass_cnt >= 2 else ("LLM_FAIL" if fail_cnt >= 2 else "LLM_UNCERTAIN")
+
+
+# ── History tracking for trend-based CI blocking ──
+
+RESULT_FILE = "/tmp/kb2_66test_results.json"
+HISTORY_FILE = "/tmp/kb2_66test_history.json"
+
+def load_history():
+    try:
+        with open(HISTORY_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"runs": []}
+
+def save_history(pass_count, total):
+    history = load_history()
+    run = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "pass": pass_count, "total": total, "rate": round(pass_count / max(total, 1) * 100, 1)}
+    history["runs"].append(run)
+    # Keep last 20 runs
+    history["runs"] = history["runs"][-20:]
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+    return history
+
+def check_trend(history):
+    """Check if pass rate has dropped for 3 consecutive runs (trend blocking)."""
+    runs = history.get("runs", [])
+    if len(runs) < 4:  # need at least 4 runs (last 3 + baseline)
+        return None
+    recent = runs[-3:]  # last 3 runs
+    prev = runs[-4]  # baseline
+    rates = [r["rate"] for r in recent]
+    # Check: each consecutive run drops >= 1pp
+    drops = all(rates[i] < rates[i-1] and (rates[i-1] - rates[i]) >= 1.0 for i in range(1, 3))
+    if drops:
+        return f"BLOCK: 66题通过率连续3次下降 ({rates[0]}% → {rates[1]}% → {rates[2]}%), 基线{prev['rate']}%"
+    return None
+
 
 def run():
-    log(f"66题测试开始 (nocache=true, 3并发)")
+    log(f"66题测试 V4 开始 (nocache=true, 3并发)")
     log(f"Token OK, 题目数: {len(ALL_QUESTIONS)}")
+    if LLM_URL:
+        log(f"LLM评估已配置: {LLM_MODEL or 'default'}")
+    else:
+        log("⚠️ LLM评估未配置（无.env或LLM_BASE_URL缺失）— 仅使用规则匹配")
     log("")
 
     results = []
@@ -150,57 +335,74 @@ def run():
             done_cnt += 1
             log(f"[{done_cnt}/{len(ALL_QUESTIONS)}] {n}: {status} ({len(r['answer'])}字, {r['time']:.0f}s)")
 
-    # 分组统计
-    groups = {
-        "A": [], "B": [], "C": [], "D": [], "E": [], "F": [], "G": [],
-    }
+    # Group statistics
+    groups = {"A": [], "B": [], "C": [], "D": [], "E": [], "F": [], "G": []}
     for r in results:
         g = r["n"][0]
         if g in groups:
             groups[g].append(r)
 
-    print("\n" + "=" * 60)
-    print(f"结果汇总: {len(results)}题")
-    pass_cnt = sum(1 for r in results if r["status"] == "PASS")
-    fail_cnt = sum(1 for r in results if r["status"] != "PASS")
+    # Count pass/fail
+    PASS_STATUSES = {"PASS"}
+    pass_cnt = sum(1 for r in results if r["status"] in PASS_STATUSES)
+    rule_fail = sum(1 for r in results if r["status"].startswith("RULE_FAIL"))
+    llm_fail = sum(1 for r in results if r["status"] in ("LLM_FAIL", "LLM_UNCERTAIN"))
     rej_cnt = sum(1 for r in results if r["status"] == "OVERREJECTION")
     short_cnt = sum(1 for r in results if r["status"] == "ANSWER_TOO_SHORT")
     empty_cnt = sum(1 for r in results if r["status"] == "ERROR_EMPTY")
+
+    print("\n" + "=" * 60)
+    print(f"结果汇总: {len(results)}题")
+    fail_cnt = len(results) - pass_cnt
     print(f"  ✅PASS: {pass_cnt} | ❌FAIL: {fail_cnt}")
-    print(f"  过拒: {rej_cnt} | 短答: {short_cnt} | 空/错: {empty_cnt}")
+    print(f"  规则匹配失败: {rule_fail} | LLM拒答: {llm_fail} | 过拒: {rej_cnt} | 短答: {short_cnt} | 空/错: {empty_cnt}")
     for g_key, g_name in [("A","术语/过拒"),("B","概念对比"),("C","数值查询"),
                           ("D","跨chunk"),("E","交叉规范"),("F","边界异常"),("G","回归")]:
         grp = groups[g_key]
-        pass_g = sum(1 for r in grp if r["status"] == "PASS")
-        fail_g = [r for r in grp if r["status"] != "PASS"]
+        pass_g = sum(1 for r in grp if r["status"] in PASS_STATUSES)
+        fail_g = [r for r in grp if r["status"] not in PASS_STATUSES]
         fail_str = ", ".join(f"{r['n']} {r['status']}" for r in fail_g[:5])
         extra = f" ❌ {fail_str}" if fail_g else ""
         print(f"  {g_key}组 ({g_name}): {pass_g}/{len(grp)} ✅{extra}")
 
-    print("\n⚠️  OVERREJECTIONS:")
+    print("\n⚠️ FAILURES:")
     for r in results:
-        if r["status"] == "OVERREJECTION":
-            ans_preview = r.get("answer","")[:150].replace("\n"," ").strip()
-            print(f"  {r['n']} ({r['len']}字): {ans_preview}...")
+        if r["status"] not in PASS_STATUSES:
+            s = r.get("answer", "N/A")[:200].replace("\n", " ").strip()
+            print(f"  {r['n']} ({r['status']}): {s}...")
 
-    print("\n⚠️  HALLUCINATIONS/ERRORS:")
-    for r in results:
-        if r["status"] in ("ANSWER_TOO_SHORT", "ERROR_EMPTY"):
-            print(f"  {r['n']} {r['status']} ({r['len']}字, {r['time']:.0f}s) err={r['err']}")
-
-    # 保存 JSON
+    # Save + trend check
     summary = {
         "total": len(results),
         "pass": pass_cnt,
         "fail": fail_cnt,
+        "rule_fail": rule_fail,
+        "llm_fail": llm_fail,
         "overrejections": rej_cnt,
         "short": short_cnt,
         "empty": empty_cnt,
         "results": results,
     }
-    with open("/tmp/kb2_66test_results.json", "w") as f:
+    with open(RESULT_FILE, "w") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
-    log(f"\n完整结果已保存: /tmp/kb2_66test_results.json")
+    log(f"\n完整结果已保存: {RESULT_FILE}")
+
+    # Trend check
+    history = save_history(pass_cnt, len(results))
+    trend_msg = check_trend(history)
+    if trend_msg:
+        print(f"\n🔴 TREND ALERT: {trend_msg}")
+        log("🔴 趋势告警 — 连续3次下降，建议审查本次变更后再合并")
+        return 1  # Exit code 1 = block CI
+
+    log(f"\n✅ 通过率: {pass_cnt}/{len(results)} ({round(pass_cnt/max(len(results),1)*100, 1)}%)")
+    # Exit code: 0 = pass (no blocker), 1 = blocker
+    # Only block if pass rate drops significantly AND trend indicates problem
+    if fail_cnt > len(results) * 0.3:  # < 70% pass rate
+        log("❌ 通过率低于70%，基线严重下降")
+        return 1
+    return 0
+
 
 if __name__ == "__main__":
-    run()
+    sys.exit(run())
