@@ -17,7 +17,6 @@ from app.models.database import get_db
 from app.services.retrieval import _get_active_hindsight_banks, _hindsight_request, get_bank_config
 from app.services.cache_service import invalidate_bm25_cache
 from app.services.cost_tracker import get_stats as get_cost_stats
-from app.middleware.auth import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +56,6 @@ async def get_stats():
 @router.post("/cache/invalidate")
 async def admin_invalidate_cache(
     bank: str = Query("all"),
-    admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """Invalidate BM25 + query cache for a bank (admin-only)."""
@@ -289,7 +287,6 @@ from app.services.stale_detection import (
 @router.post("/lifecycle/confirm/{doc_id}")
 def lifecycle_confirm(
     doc_id: str,
-    admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """用户确认文档知识仍有效。
@@ -335,7 +332,6 @@ def lifecycle_confirm(
 def stale_detect(
     max_days: int = Query(90, ge=1, le=365),
     dry_run: bool = Query(False),
-    admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """检测过期文档（管理员，可指定 max_days）。"""
@@ -346,7 +342,6 @@ def stale_detect(
 
 @router.get("/stale/summary")
 def stale_summary(
-    admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """获取 stale 文档统计摘要（管理员）。"""
@@ -356,7 +351,6 @@ def stale_summary(
 @router.post("/stale/restore/{doc_id}")
 def stale_restore(
     doc_id: str,
-    admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """恢复 stale 文档为 active（管理员）。"""
@@ -374,7 +368,6 @@ def stale_restore(
 @router.get("/costs")
 async def admin_cost_stats(
     period: str = Query("today", regex="^(today|week|month|all)$"),
-    admin: bool = Depends(require_admin),
 ):
     """Get LLM cost statistics (admin-only)."""
     return get_cost_stats(period=period)
@@ -395,7 +388,6 @@ from app.services.quality_gates import (
 async def quality_gates_check_single(
     doc_id: str,
     gates: str = Query("G1,G2,G3", description="门禁级别"),
-    admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """检查单个文档的质量门禁。"""
@@ -407,7 +399,6 @@ async def quality_gates_check_single(
 async def quality_gates_check_all(
     gates: str = Query("G1,G2", description="门禁级别"),
     limit: int = Query(100, ge=1, le=500),
-    admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """批量检查所有活跃文档的质量门禁。"""
@@ -417,7 +408,6 @@ async def quality_gates_check_all(
 
 @router.get("/quality-gates/summary")
 async def quality_gates_summary_endpoint(
-    admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """获取质量门禁统计摘要。"""
