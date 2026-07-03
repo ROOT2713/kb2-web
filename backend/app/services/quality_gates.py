@@ -262,6 +262,52 @@ def _check_g3_consistency(db: Session, doc: Document) -> GateResult:
     )
 
 
+def get_quality_gates_summary(db: Session) -> Dict:
+    """Get quality gates summary statistics."""
+    from app.models.concept import QualityGateLog
+    from sqlalchemy import func
+
+    total_checks = db.query(func.count(QualityGateLog.id)).scalar() or 0
+    total_passed = db.query(func.count(QualityGateLog.id)).filter(
+        QualityGateLog.passed == 1
+    ).scalar() or 0
+    total_failed = db.query(func.count(QualityGateLog.id)).filter(
+        QualityGateLog.passed == 0
+    ).scalar() or 0
+
+    # Per-gate breakdown
+    gate_stats = {}
+    for level in ("G1", "G2", "G3"):
+        cnt = db.query(func.count(QualityGateLog.id)).filter(
+            QualityGateLog.gate_level == level
+        ).scalar() or 0
+        passed = db.query(func.count(QualityGateLog.id)).filter(
+            QualityGateLog.gate_level == level,
+            QualityGateLog.passed == 1,
+        ).scalar() or 0
+        gate_stats[level] = {
+            "total": cnt,
+            "passed": passed,
+            "failed": cnt - passed,
+            "pass_rate": round(passed / cnt, 3) if cnt else 0.0,
+        }
+
+    # Recent failures (last 20)
+    recent_failures = db.query(QualityGateLog).filter(
+        QualityGateLog.passed == 0
+    ).order_by(
+        QualityGateLog.checked_at.desc()
+    ).limit(20).all()
+
+    return {
+        "total_checks": total_checks,
+        "total_passed": total_passed,
+        "total_failed": total_failed,
+        "pass_rate": round(total_passed / total_checks, 3) if total_checks else 0.0,
+        "gate_stats": gate_stats,
+        "recent_failures": [r.to_dict() for r in recent_failures],
+    }
+
 def _log_gate_result(db: Session, doc_id: str, results: List[GateResult]):
     """记录门禁结果到 quality_gate_log 表。"""
     from app.models.concept import QualityGateLog

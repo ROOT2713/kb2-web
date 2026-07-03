@@ -789,8 +789,13 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 8000
 # ─── Helpers ──────────────────────────────────────────────────────────
 
 
-def _dicts_to_chunks(dicts: list) -> List[Chunk]:
-    """Convert internal dict format to Chunk dataclass list."""
+def _dicts_to_chunks(dicts: list, doc_id: str = "", concept_id: str = "") -> List[Chunk]:
+    """Convert internal dict format to Chunk dataclass list.
+
+    Supports per-dict fields (from chunking functions) and fallback defaults
+    via doc_id/concept_id kwargs.  Callers should pass doc_id/concept_id
+    once rather than mutating every dict.
+    """
     chunks = []
     for d in dicts:
         chunks.append(Chunk(
@@ -798,6 +803,9 @@ def _dicts_to_chunks(dicts: list) -> List[Chunk]:
             index=d["child_index"],
             heading=d.get("section_hint", ""),
             parent_idx=d.get("parent_index"),
+            concept_id=d.get("concept_id", concept_id),
+            source_doc_id=d.get("source_doc_id", doc_id),
+            tags=d.get("tags", []),
             metadata={
                 "parent": d.get("parent", ""),
                 "section_hint": d.get("section_hint", ""),
@@ -824,6 +832,8 @@ class HeadingChunking(ChunkingStrategy):
         min_child_size = kwargs.get("min_child_size", 200)
         max_parent_size = kwargs.get("max_parent_size", 3000)
         doc_title = kwargs.get("doc_title", filename)
+        doc_id = kwargs.get("doc_id", "")
+        concept_id = kwargs.get("concept_id", "")
 
         profile = profile_document(text)
         dict_results = heading_chunk(text, profile, min_child_size, max_parent_size)
@@ -842,7 +852,7 @@ class HeadingChunking(ChunkingStrategy):
             td["parent_index"] = len(dict_results)
 
         all_dicts = dict_results + table_dicts
-        return _dicts_to_chunks(all_dicts)
+        return _dicts_to_chunks(all_dicts, doc_id=doc_id, concept_id=concept_id)
 
 
 class ParentChildChunking(ChunkingStrategy):
@@ -853,6 +863,8 @@ class ParentChildChunking(ChunkingStrategy):
         parent_size = kwargs.get("parent_size", child_size * 4)
         overlap = kwargs.get("overlap", settings.chunk_overlap)
         doc_title = kwargs.get("doc_title", filename)
+        doc_id = kwargs.get("doc_id", "")
+        concept_id = kwargs.get("concept_id", "")
 
         dict_results = parent_child_chunk(text, child_size, parent_size, overlap, doc_title=doc_title)
 
@@ -863,7 +875,7 @@ class ParentChildChunking(ChunkingStrategy):
             td["parent_index"] = len(dict_results)
 
         all_dicts = dict_results + table_dicts
-        return _dicts_to_chunks(all_dicts)
+        return _dicts_to_chunks(all_dicts, doc_id=doc_id, concept_id=concept_id)
 
 
 class ExcelRowChunking(ChunkingStrategy):
@@ -871,6 +883,8 @@ class ExcelRowChunking(ChunkingStrategy):
 
     def chunk(self, text: str, filename: str = "", **kwargs) -> List[Chunk]:
         doc_title = kwargs.get("doc_title", filename)
+        doc_id = kwargs.get("doc_id", "")
+        concept_id = kwargs.get("concept_id", "")
         dict_results = excel_row_chunk(text, doc_title)
 
         if not dict_results:
@@ -880,7 +894,7 @@ class ExcelRowChunking(ChunkingStrategy):
             overlap = kwargs.get("overlap", settings.chunk_overlap)
             dict_results = parent_child_chunk(text, child_size, parent_size, overlap, doc_title=doc_title)
 
-        return _dicts_to_chunks(dict_results)
+        return _dicts_to_chunks(dict_results, doc_id=doc_id, concept_id=concept_id)
 
 
 def select_strategy(filename: str, text: str) -> ChunkingStrategy:

@@ -37,6 +37,7 @@ from app.services.chunking import (
 from app.services.parsing import parse_document
 from app.services.quality import assess_quality, profile_document
 from app.services.retrieval import get_bank_config, recall
+from app.services.quality_gates import check_document as qg_check_doc, hard_check_g1 as qg_hard_check_g1
 from app.utils.text_cleaning import clean_pipeline, filename_to_title
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,30 @@ def _get_upload_task(task_id: str):
         return db.query(UploadTask).filter(UploadTask.id == task_id).first()
     finally:
         db.close()
+
+
+async def _async_quality_gates_check(doc_id: str, hs_bank: str):
+    """异步执行质量门禁检查（不阻塞上传返回）。"""
+    try:
+        from app.models.database import SessionLocal as _SL
+        db = _SL()
+        try:
+            result = qg_check_doc(db, doc_id, gates="G1,G2")
+            logger.info("[qg] doc=%s passed=%s score=%.3f",
+                        doc_id[:8], result.get("overall_passed"), result.get("overall_score", 0))
+            # 如果门禁未通过，标记 review_required
+            if not result.get("overall_passed", True):
+                from app.repositories.document_repo import DocumentRepository
+                repo = DocumentRepository(db)
+                doc = repo.get(doc_id)
+                if doc:
+                    doc.review_required = 1
+                    db.commit()
+                    logger.info("[qg] doc=%s marked review_required=1", doc_id[:8])
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("[qg] async check failed for doc=%s: %s", doc_id[:8], e)
 
 
 @router.post("")
@@ -460,6 +485,8 @@ async def _process_upload_task(
     if integrity and integrity.get("status") in ("ok", "pending"):
         asyncio.create_task(_verify_searchable(doc_id, doc_title, len(text), hs_bank))
     asyncio.create_task(asyncio.to_thread(kg_index_document, doc_id, doc_title, text, bank))
+    # P2: 异步触发质量门禁检查，不阻塞上传返回
+    asyncio.create_task(_async_quality_gates_check(doc_id, hs_bank))
     invalidate_bm25_cache(bank=bank)
 
     result_dict = {"ok": True, "doc_id": doc_id, "title": doc_title, "category": doc_category, "filename": filename, "chunks": retained, "total_chars": len(text), "preview": text[:200] + ("..." if len(text) > 200 else ""), "quality": {"score": quality["score"], "issues": quality["issues"], "needs_confirm": quality["score"] < 80}, "integrity": integrity, "doc_type": doc_type, "kg_indexed": True}

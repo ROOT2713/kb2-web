@@ -378,3 +378,47 @@ async def admin_cost_stats(
 ):
     """Get LLM cost statistics (admin-only)."""
     return get_cost_stats(period=period)
+
+
+# ═══════════════════════════════════════════════════════
+# Quality Gates — document quality checks
+# ═══════════════════════════════════════════════════════
+
+from app.services.quality_gates import (
+    check_document as qg_check_document,
+    check_all_documents as qg_check_all,
+    get_quality_gates_summary,
+)
+
+
+@router.get("/quality-gates/check/{doc_id}")
+async def quality_gates_check_single(
+    doc_id: str,
+    gates: str = Query("G1,G2,G3", description="门禁级别"),
+    admin: bool = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """检查单个文档的质量门禁。"""
+    result = qg_check_document(db, doc_id, gates=gates)
+    return result
+
+
+@router.post("/quality-gates/check/all")
+async def quality_gates_check_all(
+    gates: str = Query("G1,G2", description="门禁级别"),
+    limit: int = Query(100, ge=1, le=500),
+    admin: bool = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """批量检查所有活跃文档的质量门禁。"""
+    result = qg_check_all(db, gates=gates, limit=limit)
+    return result
+
+
+@router.get("/quality-gates/summary")
+async def quality_gates_summary_endpoint(
+    admin: bool = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """获取质量门禁统计摘要。"""
+    return get_quality_gates_summary(db)
