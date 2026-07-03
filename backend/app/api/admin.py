@@ -16,6 +16,7 @@ from app.config import settings
 from app.models.database import get_db
 from app.services.retrieval import _get_active_hindsight_banks, _hindsight_request, get_bank_config
 from app.services.cache_service import invalidate_bm25_cache
+from app.services.cost_tracker import get_stats as get_cost_stats
 from app.middleware.auth import require_admin
 
 logger = logging.getLogger(__name__)
@@ -319,3 +320,16 @@ async def generate_all_concept_summaries(
     result = await generate_all_summaries(db, limit)
     db.commit()
     return result
+
+
+# ═══════════════════════════════════════════════════
+# Route: GET /costs — LLM cost monitoring
+# ═══════════════════════════════════════════════════
+
+
+@router.get("/costs")
+async def admin_cost_stats(
+    period: str = Query("today", regex="^(today|week|month|all)$"),
+):
+    """Get LLM cost statistics."""
+    return get_cost_stats(period=period)

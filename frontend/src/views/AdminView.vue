@@ -106,22 +106,68 @@
         </details>
       </div>
     </section>
+
+    <!-- 成本监控 -->
+    <section class="card">
+      <h2 class="section-title">成本监控</h2>
+      <div class="period-tabs">
+        <button v-for="p in periods" :key="p.key" :class="{ active: activePeriod === p.key }" @click="switchPeriod(p.key)">
+          {{ p.label }}
+        </button>
+      </div>
+      <div v-if="costsError" class="error-msg">{{ costsError }}</div>
+      <div v-if="costs" class="costs-content">
+        <div class="stats-grid">
+          <div class="stat-item">
+            <span class="stat-value">{{ costs.call_count }}</span>
+            <span class="stat-label">调用次数</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value">{{ formatTokens(costs.total_tokens) }}</span>
+            <span class="stat-label">总 Token</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value">{{ costs.total_cost_yuan.toFixed(4) }}</span>
+            <span class="stat-label">总费用 (¥)</span>
+          </div>
+        </div>
+        <div v-if="costs.by_model.length" class="costs-table">
+          <div class="table-header">
+            <span class="col-model">模型</span>
+            <span class="col-num">调用次数</span>
+            <span class="col-num">Prompt</span>
+            <span class="col-num">Completion</span>
+            <span class="col-num">费用 (¥)</span>
+          </div>
+          <div v-for="m in costs.by_model" :key="m.model" class="table-row">
+            <span class="col-model">{{ m.model }}</span>
+            <span class="col-num">{{ m.calls }}</span>
+            <span class="col-num">{{ formatTokens(m.prompt_tokens) }}</span>
+            <span class="col-num">{{ formatTokens(m.completion_tokens) }}</span>
+            <span class="col-num cost-amount">{{ m.cost_yuan.toFixed(4) }}</span>
+          </div>
+        </div>
+        <div v-else class="empty-hint" style="margin-top: 0.75rem;">暂无成本记录</div>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import {
   getStats,
   getHealth,
   getAudit,
   getRagEval,
+  getCosts,
   type AdminStats,
   type AdminHealth,
   type AuditResponse,
   type AuditDocument,
   type RagEvalResponse,
+  type AdminCosts,
 } from '@/services/admin'
 
 const stats = ref<AdminStats | null>(null)
@@ -138,6 +184,40 @@ const ragLoading = ref(false)
 const ragError = ref('')
 
 const lowQualityDocs = ref<AuditDocument[]>([])
+
+const periods = [
+  { key: 'today', label: '今日' },
+  { key: 'week', label: '近7天' },
+  { key: 'month', label: '本月' },
+  { key: 'all', label: '全部' },
+]
+const activePeriod = ref('today')
+const costs = ref<AdminCosts | null>(null)
+const costsError = ref('')
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
+
+async function loadCosts(period: string = 'today') {
+  costsError.value = ''
+  try {
+    costs.value = await getCosts(period)
+  } catch (e: unknown) {
+    costsError.value = (e as Error).message || '加载失败'
+  }
+}
+
+function switchPeriod(period: string) {
+  activePeriod.value = period
+  loadCosts(period)
+}
+
+onMounted(() => {
+  loadCosts('today')
+})
 
 async function loadStats() {
   statsLoading.value = true
@@ -342,5 +422,52 @@ async function loadRagEval() {
   overflow: auto;
   background: var(--bg-alt);
   padding: 0.5rem;
+}
+
+/* ── 成本监控 ── */
+.period-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.period-tabs button {
+  padding: 0.3rem 0.8rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.period-tabs button.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.costs-content {
+  margin-top: 0.5rem;
+}
+.costs-table {
+  margin-top: 1rem;
+  overflow: hidden;
+}
+.costs-table .table-header,
+.costs-table .table-row {
+  grid-template-columns: 1fr 80px 100px 100px 100px;
+}
+.col-model {
+  font-weight: 500;
+}
+.col-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.cost-amount {
+  font-weight: 600;
+  color: var(--accent);
+}
+.empty-hint {
+  color: var(--fg-muted);
+  font-size: 0.85rem;
 }
 </style>

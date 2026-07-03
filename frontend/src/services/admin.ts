@@ -59,3 +59,24 @@ export async function getRagEval(): Promise<RagEvalResponse> {
   const { data } = await api.get<RagEvalResponse>('/documents/rag-eval')
   return data
 }
+
+export interface AdminCosts {
+  period: string
+  call_count: number
+  total_prompt_tokens: number
+  total_completion_tokens: number
+  total_tokens: number
+  total_cost_yuan: number
+  by_model: Array<{
+    model: string
+    calls: number
+    prompt_tokens: number
+    completion_tokens: number
+    cost_yuan: number
+  }>
+}
+
+export async function getCosts(period: string = 'today'): Promise<AdminCosts> {
+  const { data } = await api.get<AdminCosts>('/admin/costs', { params: { period } })
+  return data
+}
