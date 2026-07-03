@@ -187,6 +187,17 @@ interface UploadResultData {
   [key: string]: unknown
 }
 
+interface AsyncBatchUploadResp {
+  ok: boolean
+  total: number
+  results: {
+    filename: string
+    ok: boolean
+    task_id?: string
+    detail?: string
+  }[]
+}
+
 interface BatchResultItem {
   filename: string
   ok: boolean
@@ -460,40 +471,87 @@ async function handleUpload() {
         uploadPhase.value = `上传中: ${batch[0].name}`
       }
 
-      const { data } = await api.post(endpoint, formData, {
-        onUploadProgress: (e) => {
-          if (e.total) {
-            const batchPct = (e.loaded / e.total) * 100
-            const overallPct = ((bi + batchPct / 100) / batches.length) * 100
-            uploadProgress.value = `${Math.round(overallPct)}%`
-          }
-        },
-      })
+      // -- async upload: POST then poll task status --
+      const { data } = await api.post(endpoint, formData)
+      const MAX_POLL = 300
+      const POLL_MS = 2000
 
-      // 累积到 aggregated
       if (batchIsMulti) {
-        const b = data as BatchUploadResultData
-        aggregated.success += b.success || 0
-        aggregated.failed += b.failed || 0
-        aggregated.results.push(...(b.results || []))
+        const batchResp = data as AsyncBatchUploadResp
+        const taskResults: BatchResultItem[] = []
+        for (const r of batchResp.results || []) {
+          if (!r.ok) {
+            taskResults.push({ filename: r.filename, ok: false, detail: r.detail || 'upload failed' })
+            continue
+          }
+          const taskId = r.task_id!
+          let polled = 0
+          let done = false
+          uploadPhase.value = `processing ${r.filename}`
+          while (polled < MAX_POLL && !done) {
+            polled++
+            await new Promise(r_ => setTimeout(r_, POLL_MS))
+            try {
+              const { data: st } = await api.get(`/upload/tasks/${taskId}`)
+              if (st.status === 'done' && st.result) {
+                taskResults.push({
+                  filename: r.filename, ok: true,
+                  doc_id: st.result.doc_id, title: st.result.title,
+                  chunks: st.result.chunks, quality: st.result.quality,
+                })
+                done = true
+              } else if (st.status === 'failed') {
+                taskResults.push({ filename: r.filename, ok: false, detail: st.error_message || 'process failed' })
+                done = true
+              } else if (st.progress !== undefined) {
+                const pct = Math.round(st.progress * 100)
+                uploadPhase.value = `${r.filename} ${pct}%`
+                uploadProgress.value = `${pct}%`
+              }
+            } catch { /* retry on network hiccup */ }
+          }
+          if (!done) {
+            taskResults.push({ filename: r.filename, ok: false, detail: 'poll timeout' })
+          }
+        }
+        aggregated.success += taskResults.filter(r => r.ok).length
+        aggregated.failed += taskResults.filter(r => !r.ok).length
+        aggregated.results.push(...taskResults)
       } else {
-        const single = data as UploadResultData
-        if (single.ok) {
+        const taskId = data.task_id
+        let polled = 0
+        let singleResult: Record<string, unknown> | null = null
+        let singleError = ''
+        while (polled < MAX_POLL && !singleResult && !singleError) {
+          polled++
+          await new Promise(r_ => setTimeout(r_, POLL_MS))
+          try {
+            const { data: st } = await api.get(`/upload/tasks/${taskId}`)
+            if (st.status === 'done' && st.result) {
+              singleResult = st.result
+            } else if (st.status === 'failed') {
+              singleError = st.error_message || 'process failed'
+            } else if (st.progress !== undefined) {
+              const pct = Math.round(st.progress * 100)
+              uploadPhase.value = `${batch[0].name} ${pct}%`
+              uploadProgress.value = `${pct}%`
+            }
+          } catch { /* retry */ }
+        }
+        if (singleResult) {
           aggregated.success += 1
           aggregated.results.push({
-            filename: batch[0].name,
-            ok: true,
-            doc_id: single.doc_id,
-            title: single.title,
-            chunks: typeof single.chunks === 'number' ? single.chunks : undefined,
-            quality: single.quality,
+            filename: batch[0].name, ok: true,
+            doc_id: singleResult.doc_id as string,
+            title: singleResult.title as string,
+            chunks: typeof singleResult.chunks === 'number' ? singleResult.chunks : undefined,
+            quality: singleResult.quality as UploadQuality,
           })
         } else {
           aggregated.failed += 1
           aggregated.results.push({
-            filename: batch[0].name,
-            ok: false,
-            detail: single.detail || '上传失败',
+            filename: batch[0].name, ok: false,
+            detail: singleError || 'poll timeout',
           })
         }
       }

@@ -55,6 +55,17 @@ const router = createRouter({
       name: 'wiki',
       component: () => import('@/views/WikiView.vue'),
     },
+    {
+      path: '/extract',
+      name: 'extract',
+      component: () => import('@/views/ExtractView.vue'),
+    },
+    {
+      path: '/lifecycle',
+      name: 'lifecycle',
+      component: () => import('@/views/LifecycleView.vue'),
+      meta: { requiresAdmin: true },
+    },
   ],
 })
 

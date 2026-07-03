@@ -35,6 +35,15 @@
           <input v-model="useRerank" type="checkbox" />
           精排
         </label>
+        <label class="option-label" v-if="useRerank">
+          <span>重排模式</span>
+          <select v-model="rerankMode" class="bank-select">
+            <option value="default">默认 (LLM)</option>
+            <option value="multidim">多维重排</option>
+            <option value="confidence">置信度优先</option>
+            <option value="freshness">最新优先</option>
+          </select>
+        </label>
         <label class="option-label">
           <input v-model="useMultiHypothesis" type="checkbox" />
           多假设对比
@@ -95,6 +104,7 @@ const banksStore = useBanksStore()
 const queryText = ref('')
 const selectedBank = ref('all')
 const useRerank = ref(false)
+const rerankMode = ref('default')
 const useMultiHypothesis = ref(false)
 const forceRefresh = ref(false)
 
@@ -108,6 +118,7 @@ function handleQuery() {
     q: queryText.value.trim(),
     bank: selectedBank.value,
     rerank: useRerank.value,
+    rerank_mode: rerankMode.value,
     multiHypothesis: useMultiHypothesis.value,
     nocache: forceRefresh.value,
   })
@@ -128,6 +139,7 @@ function handleSuggestionSearch(nextQuery: string) {
     q: nextQuery,
     bank: selectedBank.value,
     rerank: useRerank.value,
+    rerank_mode: rerankMode.value,
     nocache: forceRefresh.value,
   })
 }
@@ -138,6 +150,7 @@ function handleRefreshFromCache() {
     q: queryText.value.trim(),
     bank: selectedBank.value,
     rerank: useRerank.value,
+    rerank_mode: rerankMode.value,
     multiHypothesis: useMultiHypothesis.value,
     nocache: true,
   })

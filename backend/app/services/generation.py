@@ -11,6 +11,7 @@ from typing import List, Dict, Optional
 import httpx
 
 from app.config import settings
+from app.services.cost_tracker import record_call
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,19 @@ async def chat(
                 raise ValueError(f"LLM API 返回异常: {error_msg or resp.text[:200]}")
 
             try:
+                # ── Cost tracking ──
+                usage = data.get("usage", {})
+                if usage:
+                    try:
+                        record_call(
+                            model=settings.llm_model,
+                            prompt_tokens=usage.get("prompt_tokens", 0),
+                            completion_tokens=usage.get("completion_tokens", 0),
+                            source="chat",
+                        )
+                    except Exception as e:
+                        logger.warning("cost_tracker failed: %s", e)
+
                 content = choices[0]["message"]["content"]
                 # reasoning model: content 可能为空，检查 reasoning_content
                 if not content and choices[0]["message"].get("reasoning_content"):

@@ -20,6 +20,9 @@ class Chunk:
     heading: str = ""
     parent_idx: Optional[int] = None
     metadata: dict = field(default_factory=dict)
+    concept_id: str = ""
+    source_doc_id: str = ""
+    tags: list[str] = field(default_factory=list)
 
 
 # ─── Internal dict-based functions (preserving v1 logic verbatim) ────────

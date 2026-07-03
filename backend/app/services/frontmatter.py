@@ -1,10 +1,13 @@
 """OKF YAML Frontmatter - concept to OKF standard frontmatter view.
 
 Phase B #4: support GET /api/concepts/get?format=frontmatter returning YAML frontmatter.
+Also supports parse_frontmatter() for ingesting frontmatter from uploaded documents.
 """
 
 import logging
 from typing import Optional, List, Dict
+
+import yaml
 
 from sqlalchemy.orm import Session
 
@@ -97,3 +100,54 @@ def _yaml_str(val: str) -> str:
         escaped = val.replace('\\', '\\\\').replace('"', '\\"')
         return f'"{escaped}"'
     return val
+
+
+def parse_frontmatter(text: str) -> dict:
+    """Parse YAML frontmatter from document text.
+
+    Looks for a standard frontmatter block delimited by '---' lines
+    at the start of the document. Returns an empty dict if:
+    - No '---' delimiter found
+    - Content before the first '---' is non-empty (not frontmatter)
+    - YAML parsing fails for any reason
+
+    Returns:
+        dict with parsed frontmatter fields, or empty dict on failure.
+    """
+    if not text or not isinstance(text, str):
+        return {}
+
+    stripped = text.lstrip("\ufeff")  # strip BOM if present
+    if not stripped.startswith("---"):
+        return {}
+
+    # Find the closing '---'
+    end_idx = stripped.find("---", 3)
+    if end_idx == -1:
+        return {}
+
+    yaml_block = stripped[3:end_idx].strip()
+    if not yaml_block:
+        return {}
+
+    try:
+        parsed = yaml.safe_load(yaml_block)
+        if not isinstance(parsed, dict):
+            return {}
+        # Flatten any nested scalar values, filter out non-serializable
+        result = {}
+        for k, v in parsed.items():
+            if isinstance(v, (str, int, float, bool)):
+                result[str(k)] = v
+            elif v is None:
+                result[str(k)] = None
+            elif isinstance(v, (list, dict)):
+                # Keep simple lists/dicts but convert to JSON-compatible
+                result[str(k)] = v
+        return result
+    except yaml.YAMLError:
+        logger.warning("parse_frontmatter: YAML parse failed (len=%d)", len(yaml_block))
+        return {}
+    except Exception as e:
+        logger.warning("parse_frontmatter: unexpected error: %s", e)
+        return {}
