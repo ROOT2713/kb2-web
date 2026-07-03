@@ -180,6 +180,16 @@ async def _process_upload_task(
         text = await parse_document(filename, content)
         text = text.replace("\x00", "")
         text = clean_pipeline(text, source_hint=filename)
+
+        # ── Parse YAML frontmatter from document text (P0 Step 4-5) ──
+        fm = {}
+        try:
+            from app.services.frontmatter import parse_frontmatter
+            fm = parse_frontmatter(text)
+            if fm:
+                logger.info("[upload] frontmatter found for %s: %s", filename, fm)
+        except Exception as e:
+            logger.debug("[upload] frontmatter parse skipped: %s", e)
     except ValueError as e:
         _update_upload_task(task_id, status="failed", stage="parsing", error_message=str(e))
         return
@@ -320,6 +330,25 @@ async def _process_upload_task(
             mark_superseded(db, old_doc_id=exd.doc_id, new_doc_id=doc_id, reason="new_version_upload")
             if dr2:
                 dr2.supersedes = exd.doc_id
+        # ── Apply frontmatter fields to Document (only non-empty, non-override) ──
+        if dr2 and fm:
+            fm_source_url = fm.get("source_url")
+            if fm_source_url and not dr2.source_url:
+                dr2.source_url = str(fm_source_url)
+            fm_pub = fm.get("published_date")
+            if fm_pub and not parsed_pub_date:
+                try:
+                    from datetime import date
+                    ps = str(fm_pub).split("-")
+                    dr2.published_date = date(int(ps[0]), int(ps[1]), int(ps[2]))
+                except (ValueError, IndexError):
+                    logger.debug("[upload] frontmatter published_date=%s unparseable", fm_pub)
+            fm_geo = fm.get("geo_scope")
+            if fm_geo and not geo_scope:
+                dr2.geo_scope = str(fm_geo)[:32]
+            fm_cat = fm.get("category")
+            if fm_cat and not doc_category:
+                dr2.category = str(fm_cat)
         db.commit()
         try:
             for c in db.query(Concept).filter(Concept.doc_id == doc_id, Concept.status == "active").all():
@@ -353,6 +382,15 @@ async def _process_upload_task(
         return
     finally:
         db.close()
+
+    # ── Enhance hindsight memory_items with OKF metadata tags ──
+    for item in memory_items:
+        if con_id:
+            item["tags"].append(f"concept_id:{con_id}")
+        profile_conf = profile.get("confidence", 0.5)
+        item["tags"].append(f"confidence:{profile_conf:.3f}")
+        if dr2 and dr2.version:
+            item["tags"].append(f"version:{dr2.version}")
 
     _update_upload_task(task_id, progress=0.55, stage="hindsight_indexing")
     hindsight_error = None

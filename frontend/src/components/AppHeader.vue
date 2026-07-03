@@ -12,6 +12,7 @@
       <RouterLink to="/synonyms" class="nav-link">同义词</RouterLink>
       <RouterLink v-if="authStore.isAdmin" to="/admin" class="nav-link">管理</RouterLink>
       <RouterLink to="/wiki" class="nav-link">Wiki</RouterLink>
+      <RouterLink to="/extract" class="nav-link">提取</RouterLink>
     </nav>
   </header>
 </template>
