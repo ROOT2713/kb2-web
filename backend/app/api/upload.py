@@ -14,7 +14,7 @@ from pathlib import Path
 
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -148,21 +148,13 @@ async def upload_document(
     task_id = str(uuid.uuid4())
     _create_upload_task(task_id, file.filename)
 
-    if background_tasks is not None:
-        background_tasks.add_task(
-            _process_upload_task,
+    asyncio.create_task(
+        _process_upload_task(
             task_id=task_id, filename=file.filename, content=content,
             title=title, category=category, bank=bank,
             source=source, published_date=published_date, geo_scope=geo_scope,
         )
-    else:
-        asyncio.create_task(
-            _process_upload_task(
-                task_id=task_id, filename=file.filename, content=content,
-                title=title, category=category, bank=bank,
-                source=source, published_date=published_date, geo_scope=geo_scope,
-            )
-        )
+    )
 
     return {"task_id": task_id, "status": "pending", "filename": file.filename}
 
