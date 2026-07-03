@@ -62,6 +62,7 @@ export async function postQuery(params: {
   bank?: string
   history?: string
   rerank?: boolean
+  rerank_mode?: string
   multiHypothesis?: boolean
   nocache?: boolean
 }): Promise<QueryResponse> {
@@ -70,6 +71,7 @@ export async function postQuery(params: {
   if (params.bank) formData.append('bank', params.bank)
   if (params.history) formData.append('history', params.history)
   if (params.rerank) formData.append('rerank', 'true')
+  if (params.rerank_mode) formData.append('rerank_mode', params.rerank_mode)
   if (params.multiHypothesis) formData.append('multi_hypothesis', 'true')
   if (params.nocache) formData.append('nocache', 'true')
   const { data } = await api.post<QueryResponse>('/query', formData)

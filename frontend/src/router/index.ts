@@ -60,6 +60,12 @@ const router = createRouter({
       name: 'extract',
       component: () => import('@/views/ExtractView.vue'),
     },
+    {
+      path: '/lifecycle',
+      name: 'lifecycle',
+      component: () => import('@/views/LifecycleView.vue'),
+      meta: { requiresAdmin: true },
+    },
   ],
 })
 

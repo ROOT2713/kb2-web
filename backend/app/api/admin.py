@@ -143,53 +143,6 @@ async def admin_health():
 
 
 # ═══════════════════════════════════════════════════════
-# P1-2: Stale Detection endpoints
-# ═══════════════════════════════════════════════════════
-
-from app.services.stale_detection import (
-    detect_stale_documents,
-    restore_stale_document,
-    get_stale_summary,
-)
-
-
-@router.get("/stale/summary")
-def stale_summary(db: Session = Depends(get_db)):
-    """获取 stale 文档统计摘要。"""
-    return get_stale_summary(db)
-
-
-@router.post("/stale/detect")
-def run_stale_detection(
-    max_days: int = Query(90, ge=7, le=365, description="超过此天数视为 stale"),
-    dry_run: bool = Query(False, description="仅检测不修改"),
-    db: Session = Depends(get_db),
-):
-    """执行 stale 检测。
-
-    扫描所有活跃文档，将超过 max_days 未确认的标记为 stale。
-    建议通过 cron 定期调用。
-    """
-    result = detect_stale_documents(db, max_days=max_days, dry_run=dry_run)
-    return result
-
-
-@router.post("/stale/restore")
-def restore_stale(
-    doc_id: str = Query(..., description="要恢复的文档 ID"),
-    db: Session = Depends(get_db),
-):
-    """恢复 stale 文档为 active。
-
-    人工确认文档仍有效后调用。
-    """
-    success = restore_stale_document(db, doc_id)
-    if not success:
-        raise HTTPException(400, "Document not found or not stale")
-    return {"ok": True, "doc_id": doc_id, "status": "active"}
-
-
-# ═══════════════════════════════════════════════════════
 # P1-3: Quality Gates endpoints
 # ═══════════════════════════════════════════════════════
 
@@ -322,14 +275,106 @@ async def generate_all_concept_summaries(
     return result
 
 
-# ═══════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
+# P1: Lifecycle endpoints — document lifecycle management
+# ═══════════════════════════════════════════════════════
+
+from app.services.stale_detection import (
+    detect_stale_documents,
+    restore_stale_document,
+    get_stale_summary,
+)
+
+
+@router.post("/lifecycle/confirm/{doc_id}")
+def lifecycle_confirm(
+    doc_id: str,
+    admin: bool = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """用户确认文档知识仍有效。
+
+    更新以下字段:
+    - last_confirmed = 当前时间
+    - review_required = 0
+    - stale_at = None (清除过期标记)
+    - stale_reason = None
+
+    如果文档当前是 stale 状态，同时恢复为 active。
+    """
+    from app.models.document import Document
+    from datetime import datetime, timezone
+
+    doc = db.query(Document).filter(Document.doc_id == doc_id).first()
+    if not doc:
+        raise HTTPException(404, f"文档不存在: {doc_id}")
+
+    now = datetime.now(timezone.utc)
+    doc.last_confirmed = now
+    doc.review_required = 0
+    doc.stale_at = None
+    doc.stale_reason = None
+
+    # 如果当前是 stale，恢复为 active
+    if doc.status == "stale":
+        doc.status = "active"
+        doc.verified_at = now
+
+    db.commit()
+
+    logger.info("Lifecycle confirm: doc=%s status=%s", doc_id[:8], doc.status)
+    return {
+        "ok": True,
+        "doc_id": doc_id,
+        "status": doc.status,
+        "last_confirmed": now.isoformat(),
+    }
+
+
+@router.get("/stale/detect")
+def stale_detect(
+    max_days: int = Query(90, ge=1, le=365),
+    dry_run: bool = Query(False),
+    admin: bool = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """检测过期文档（管理员，可指定 max_days）。"""
+    result = detect_stale_documents(db, max_days=max_days, dry_run=dry_run)
+    db.commit()
+    return result
+
+
+@router.get("/stale/summary")
+def stale_summary(
+    admin: bool = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """获取 stale 文档统计摘要（管理员）。"""
+    return get_stale_summary(db)
+
+
+@router.post("/stale/restore/{doc_id}")
+def stale_restore(
+    doc_id: str,
+    admin: bool = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """恢复 stale 文档为 active（管理员）。"""
+    ok = restore_stale_document(db, doc_id)
+    if not ok:
+        raise HTTPException(404, f"文档不存在或不是 stale 状态: {doc_id}")
+    return {"ok": True, "doc_id": doc_id}
+
+
+# ═══════════════════════════════════════════════════════
 # Route: GET /costs — LLM cost monitoring
-# ═══════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 
 
 @router.get("/costs")
 async def admin_cost_stats(
     period: str = Query("today", regex="^(today|week|month|all)$"),
+    admin: bool = Depends(require_admin),
 ):
-    """Get LLM cost statistics."""
+    """Get LLM cost statistics (admin-only)."""
     return get_cost_stats(period=period)

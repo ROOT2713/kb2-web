@@ -32,6 +32,7 @@ export const useQueryStore = defineStore('query', () => {
     bank?: string
     history?: string
     rerank?: boolean
+    rerank_mode?: string
     multiHypothesis?: boolean
     nocache?: boolean
   }) {

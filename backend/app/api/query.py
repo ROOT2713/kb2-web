@@ -113,11 +113,115 @@ def _extract_high_signal_terms(query_keywords: list[str] | None) -> set[str]:
     return high_signal
 
 
+# ── 按置信度排序 ──
+def _sort_by_confidence(results: list, top_k: int = 20) -> list:
+    """按文档置信度排序（profile_confidence 降序）。"""
+    from app.models.database import SessionLocal
+    from sqlalchemy import text as sa_text
+
+    doc_ids = set()
+    for item in results:
+        found = False
+        for tag in item.get("tags", []):
+            if tag.startswith("doc_id:"):
+                doc_ids.add(tag[7:])
+                found = True
+                break
+        if not found and item.get("doc_id"):
+            doc_ids.add(str(item["doc_id"]))
+
+    if not doc_ids:
+        return results[:top_k]
+
+    conf_map = {}
+    try:
+        db = SessionLocal()
+        try:
+            placeholders = ",".join(f":d{i}" for i in range(len(doc_ids)))
+            params = {f"d{i}": did for i, did in enumerate(doc_ids)}
+            rows = db.execute(
+                sa_text(f"SELECT doc_id, profile_confidence FROM documents WHERE doc_id IN ({placeholders})"),
+                params,
+            ).fetchall()
+            for r in rows:
+                conf_map[r[0]] = r[1] if r[1] is not None else 0.5
+        finally:
+            db.close()
+    except Exception:
+        return results[:top_k]
+
+    def _get_conf(item) -> float:
+        for tag in item.get("tags", []):
+            if tag.startswith("doc_id:"):
+                return conf_map.get(tag[7:], 0.5)
+        did = item.get("doc_id")
+        if did:
+            return conf_map.get(str(did), 0.5)
+        return 0.5
+
+    return sorted(results, key=_get_conf, reverse=True)[:top_k]
+
+
+# ── 按新鲜度排序 ──
+def _sort_by_freshness(results: list, top_k: int = 20) -> list:
+    """按文档更新时间排序（updated_at 最近优先）。"""
+    from app.models.database import SessionLocal
+    from sqlalchemy import text as sa_text
+    from datetime import datetime, timezone
+
+    doc_ids = set()
+    for item in results:
+        found = False
+        for tag in item.get("tags", []):
+            if tag.startswith("doc_id:"):
+                doc_ids.add(tag[7:])
+                found = True
+                break
+        if not found and item.get("doc_id"):
+            doc_ids.add(str(item["doc_id"]))
+
+    if not doc_ids:
+        return results[:top_k]
+
+    time_map = {}
+    default_time = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    try:
+        db = SessionLocal()
+        try:
+            placeholders = ",".join(f":d{i}" for i in range(len(doc_ids)))
+            params = {f"d{i}": did for i, did in enumerate(doc_ids)}
+            rows = db.execute(
+                sa_text(f"SELECT doc_id, updated_at, created_at FROM documents WHERE doc_id IN ({placeholders})"),
+                params,
+            ).fetchall()
+            for r in rows:
+                ts = r[1] or r[2] or default_time
+                if hasattr(ts, "tzinfo") and ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                time_map[r[0]] = ts
+        finally:
+            db.close()
+    except Exception:
+        return results[:top_k]
+
+    def _get_time(item):
+        for tag in item.get("tags", []):
+            if tag.startswith("doc_id:"):
+                return time_map.get(tag[7:], default_time)
+        did = item.get("doc_id")
+        if did:
+            return time_map.get(str(did), default_time)
+        return default_time
+
+    return sorted(results, key=_get_time, reverse=True)[:top_k]
+
+
 async def _build_search_context(
     q: str,
     bank: str,
     history: str,
     use_rerank: bool,
+    rerank_mode: str,
     hs_bank: str,
     q_recalled: str,
     q_bm25: str,
@@ -361,33 +465,93 @@ async def _build_search_context(
             key = tuple(r.get("tags", []))
             exact_bm25_hits.add(key)
 
-    # ── 轻量级关键词 Rerank（在 LLM Rerank 之前） ──
+    # ── 轻量级关键词 Rerank（在任何精排之前）──
     if len(all_results) > 3:
         all_results = keyword_rerank(q, all_results, top_k=20)
 
-    # ── LLM Rerank精排 ──
+    # ── 模式化 Rerank 精排 ──
     if use_rerank and len(all_results) > 2:
-        try:
-            reranked = await asyncio.wait_for(
-                llm_rerank(q, all_results, top_k=15),
-                timeout=30,
-            )
-            if exact_bm25_hits:
-                protected = []
-                others = []
-                for r in reranked:
-                    key = tuple(r.get("tags", []))
-                    if key in exact_bm25_hits:
-                        protected.append(r)
+        if rerank_mode == "multidim":
+            # 多维重排（keyword + dense + confidence + freshness + source_count）
+            try:
+                from app.services.rerank import multidim_rerank
+                all_results = multidim_rerank(
+                    all_results, query=q, bank=bank, top_k=20,
+                )
+            except Exception as e:
+                logger.warning("multidim_rerank failed, falling back to llm: %s", e)
+                # graceful degradation: fallback to LLM rerank
+                try:
+                    reranked = await asyncio.wait_for(
+                        llm_rerank(q, all_results, top_k=15),
+                        timeout=30,
+                    )
+                    if exact_bm25_hits:
+                        protected, others = [], []
+                        for r in reranked:
+                            key = tuple(r.get("tags", []))
+                            if key in exact_bm25_hits:
+                                protected.append(r)
+                            else:
+                                others.append(r)
+                        all_results = protected + others
                     else:
-                        others.append(r)
-                all_results = protected + others
-            else:
-                all_results = reranked
-        except asyncio.TimeoutError:
-            logger.warning("LLM rerank timeout (30s), using RRF order")
-        except Exception as e:
-            logger.warning("LLM rerank skipped: %s", e)
+                        all_results = reranked
+                except asyncio.TimeoutError:
+                    logger.warning("LLM rerank timeout (30s), using RRF order")
+                except Exception as e2:
+                    logger.warning("LLM rerank fallback also failed: %s", e2)
+        elif rerank_mode == "confidence":
+            # 按置信度排序
+            try:
+                all_results = _sort_by_confidence(all_results)
+            except Exception as e:
+                logger.warning("confidence sort failed, fallback to default: %s", e)
+                try:
+                    reranked = await asyncio.wait_for(
+                        llm_rerank(q, all_results, top_k=15),
+                        timeout=30,
+                    )
+                    all_results = reranked
+                except Exception:
+                    pass
+        elif rerank_mode == "freshness":
+            # 按新鲜度排序（updated_at 最新优先）
+            try:
+                all_results = _sort_by_freshness(all_results)
+            except Exception as e:
+                logger.warning("freshness sort failed, fallback to default: %s", e)
+                try:
+                    reranked = await asyncio.wait_for(
+                        llm_rerank(q, all_results, top_k=15),
+                        timeout=30,
+                    )
+                    all_results = reranked
+                except Exception:
+                    pass
+        else:
+            # Default: LLM Rerank精排
+            try:
+                reranked = await asyncio.wait_for(
+                    llm_rerank(q, all_results, top_k=15),
+                    timeout=30,
+                )
+                if exact_bm25_hits:
+                    protected = []
+                    others = []
+                    for r in reranked:
+                        key = tuple(r.get("tags", []))
+                        if key in exact_bm25_hits:
+                            protected.append(r)
+                        else:
+                            others.append(r)
+                    all_results = protected + others
+                else:
+                    all_results = reranked
+            except asyncio.TimeoutError:
+                logger.warning("LLM rerank timeout (30s), using RRF order")
+            except Exception as e:
+                logger.warning("LLM rerank skipped: %s", e)
 
     # ── Tiebreaker: 时间 + 地理层级排序（在 LLM Rerank 之后，doc_facts 之前）──
     # 核心原则：语义相似度永远是主排序，时间和地理只是 tiebreaker。
@@ -1382,6 +1546,7 @@ async def query(
     bank: str = Form("all"),
     history: str = Form(""),
     rerank: str = Form("false"),
+    rerank_mode: str = Form("default"),
     nocache: str = Form(""),
 ):
     """搜索知识库 → 召回 → DeepSeek 合成答案（支持多 bank）"""
@@ -1471,10 +1636,14 @@ async def query(
     # ── 确定是否使用 rerank ──
     use_rerank = rerank.lower() == "true" or (bank == "checklist")
 
+    # ── 确定 rerank_mode ──
+    valid_modes = {"default", "multidim", "confidence", "freshness"}
+    use_rerank_mode = rerank_mode if rerank_mode in valid_modes else "default"
+
     # ── Phase 1: 构建搜索上下文 ──
     ctx = await _build_search_context(
         q=q, bank=bank, history=history,
-        use_rerank=use_rerank, hs_bank=hs_bank,
+        use_rerank=use_rerank, rerank_mode=use_rerank_mode, hs_bank=hs_bank,
         q_recalled=q_recalled, q_bm25=q_bm25,
         query_keywords=query_keywords, _tier_extra=_tier_extra,
         kg_info=kg_info,
