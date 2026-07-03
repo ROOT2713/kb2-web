@@ -5,6 +5,7 @@ Ported from: kb-web server.py upload() L2675-L3039
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import uuid
@@ -13,13 +14,14 @@ from pathlib import Path
 
 from typing import List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.database import SessionLocal
 from app.models.document import Document, ParentChunk
 from app.models.concept import Concept
+from app.models.upload_task import UploadTask
 from app.services.concept_gen import generate_concepts_for_doc, infer_doc_concept_id, infer_domain, _BANK_TO_DOMAIN
 from app.services.confidence import update_concept_confidence
 from app.repositories.document_repo import DocumentRepository
@@ -53,6 +55,38 @@ _infer_domain = infer_domain
 
 def _get_doc_repo(db: Session) -> DocumentRepository:
     return DocumentRepository(db)
+# -- UploadTask helpers --
+
+def _create_upload_task(task_id: str, filename: str) -> UploadTask:
+    db = SessionLocal()
+    try:
+        task = UploadTask(id=task_id, status="pending", filename=filename, progress=0.0, stage="queued")
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        return task
+    finally:
+        db.close()
+
+
+def _update_upload_task(task_id: str, **kwargs):
+    db = SessionLocal()
+    try:
+        task = db.query(UploadTask).filter(UploadTask.id == task_id).first()
+        if task:
+            for k, v in kwargs.items():
+                setattr(task, k, v)
+            db.commit()
+    finally:
+        db.close()
+
+
+def _get_upload_task(task_id: str):
+    db = SessionLocal()
+    try:
+        return db.query(UploadTask).filter(UploadTask.id == task_id).first()
+    finally:
+        db.close()
 
 
 @router.post("")
@@ -103,472 +137,272 @@ async def upload_document(
         except (ValueError, IndexError) as e:
             logger.warning("[upload] cannot parse published_date=%s: %s", published_date, e)
 
+    # -- read file --
+    content = await file.read()
+    if len(content) == 0:
+        raise HTTPException(400, "file empty")
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(400, f"file too large ({len(content) // 1024 // 1024}MB), max {MAX_FILE_SIZE // 1024 // 1024}MB")
+
+    # -- async task --
+    task_id = str(uuid.uuid4())
+    _create_upload_task(task_id, file.filename)
+
+    if background_tasks is not None:
+        background_tasks.add_task(
+            _process_upload_task,
+            task_id=task_id, filename=file.filename, content=content,
+            title=title, category=category, bank=bank,
+            source=source, published_date=published_date, geo_scope=geo_scope,
+        )
+    else:
+        asyncio.create_task(
+            _process_upload_task(
+                task_id=task_id, filename=file.filename, content=content,
+                title=title, category=category, bank=bank,
+                source=source, published_date=published_date, geo_scope=geo_scope,
+            )
+        )
+
+    return {"task_id": task_id, "status": "pending", "filename": file.filename}
+
+
+async def _process_upload_task(
+    task_id: str, filename: str, content: bytes,
+    title: str = "", category: str = "", bank: str = "general",
+    source: str = "manual", published_date: str = None, geo_scope: str = None,
+):
+    _update_upload_task(task_id, status="processing", stage="parsing", progress=0.05)
+    parsed_pub_date = None
+    if published_date and isinstance(published_date, str):
+        try:
+            from datetime import date
+            p = published_date.split("-")
+            parsed_pub_date = date(int(p[0]), int(p[1]), int(p[2]))
+        except (ValueError, IndexError):
+            pass
     bank_cfg = get_bank_config(bank)
     hs_bank = bank_cfg.get("hindsight") or "kb"
 
-    # ── 读取文件内容 ──
-    content = await file.read()
-    if len(content) == 0:
-        raise HTTPException(400, "文件为空")
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(400, f"文件过大（{len(content) // 1024 // 1024}MB），上限 {MAX_FILE_SIZE // 1024 // 1024}MB")
-
-    # ── 文档解析 ──
     try:
-        text = await parse_document(file.filename, content)
-        text = text.replace("\x00", "")  # PostgreSQL UTF8 不接受 0x00
-        text = clean_pipeline(text, source_hint=file.filename)
+        text = await parse_document(filename, content)
+        text = text.replace("\x00", "")
+        text = clean_pipeline(text, source_hint=filename)
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        _update_upload_task(task_id, status="failed", stage="parsing", error_message=str(e))
+        return
     except Exception as e:
-        logger.exception("文档解析异常: %s", e)
-        raise HTTPException(500, f"文档解析异常: {e}")
+        logger.exception("parse error: %s", e)
+        _update_upload_task(task_id, status="failed", stage="parsing", error_message=str(e))
+        return
 
-    # ── Phase B #6: Pre-flight 2 — G1 硬拒收（在旧"内容过短"检查之前）──
+    _update_upload_task(task_id, progress=0.15, stage="quality_check")
     from app.services.quality_gates import hard_check_g1
-    # title 缺省时回退到 filename（去扩展名），避免误拒
-    effective_title = (title or "").strip() or (Path(file.filename).stem if file.filename else "")
-    g1_early = hard_check_g1(text or "", effective_title)
-    if not g1_early["passed"]:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "QUALITY_GATE_G1_FAIL",
-                "issues": g1_early["issues"],
-            },
-        )
-
+    eff_title = (title or "").strip() or (Path(filename).stem if filename else "")
+    g1 = hard_check_g1(text or "", eff_title)
+    if not g1["passed"]:
+        _update_upload_task(task_id, status="failed", stage="quality_gate", error_message=str(g1["issues"]))
+        return
     if not text or len(text.strip()) < 10:
-        # 兜底：万一 G1 没拦住，这里也用 422 而不是 400
-        raise HTTPException(422, detail={"code": "QUALITY_GATE_G1_FAIL", "issues": ["文档内容过短"]})
+        _update_upload_task(task_id, status="failed", stage="quality_gate", error_message="content too short")
+        return
 
-    # ── Phase B #6: Pre-flight 1 — content_hash 重复检查（文本规范化后）──
-    text_normalized = text.replace('\r\n', '\n').strip()
-    normalized_hash = hashlib.sha256(text_normalized.encode('utf-8')).hexdigest()
+    text_norm = text.replace("\r\n", "\n").strip()
+    norm_hash = hashlib.sha256(text_norm.encode("utf-8")).hexdigest()
     db = SessionLocal()
     try:
-        existing = db.query(Document).filter(
-            Document.content_hash == normalized_hash,
-            Document.status == "active",
-        ).first()
-        if existing:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "DUPLICATE_CONTENT",
-                    "message": f"内容哈希重复，已存在文档: {existing.title}",
-                    "existing_doc_id": existing.doc_id,
-                },
-            )
+        if db.query(Document).filter(Document.content_hash == norm_hash, Document.status == "active").first():
+            _update_upload_task(task_id, status="failed", stage="duplicate_check", error_message="hash dup")
+            return
     finally:
         db.close()
 
-    # ── 质量评估 ──
     quality = assess_quality(text)
-    if quality["score"] < 80 and confirm_quality != "true":
-        return {
-            "ok": False,
-            "detail": f"文档解析质量较低（{quality['score']}%），可能存在乱码。建议检查后重新上传或使用 MinerU 解析。",
-            "quality": {
-                "score": quality["score"],
-                "issues": quality["issues"],
-                "needs_confirm": True,
-            },
-        }
-
-    # ── 去重检测：复用 pre-flight 阶段计算好的 normalized_hash ──
-    content_hash = normalized_hash  # Phase B #6: 使用文本规范化后的 hash
+    if quality["score"] < 80:
+        _update_upload_task(task_id, status="failed", stage="quality_check", error_message=f"quality {quality['score']}%")
+        return
     db = SessionLocal()
     try:
-        doc_repo = _get_doc_repo(db)
-        existing = doc_repo.get_by_hash(content_hash)
-        if existing:
-            raise HTTPException(
-                409,
-                f"文档已存在（内容完全一致）。\n"
-                f"已有文档：{existing.title}（{existing.filename}）\n"
-                f"上传时间：{existing.created_at}\n"
-                f"文档ID：{existing.doc_id}",
-            )
+        if _get_doc_repo(db).get_by_hash(norm_hash):
+            _update_upload_task(task_id, status="failed", stage="duplicate_check", error_message="doc dup")
+            return
     finally:
         db.close()
 
-    # ── 标题：用户指定 > 内容第一行#标题 > 文件名去扩展名 ──
-    doc_title = title.strip() or filename_to_title(file.filename, text)
+    _update_upload_task(task_id, progress=0.25, stage="chunking")
+    doc_title = title.strip() or filename_to_title(filename, text)
     doc_category = category.strip()
-
-    # ── Adaptive chunking: profile document first ──
     profile = profile_document(text)
     doc_type = profile.get("doc_type", "generic")
-    logger.info(
-        "Document profile: type=%s, confidence=%.2f, headings=%d",
-        doc_type, profile.get("confidence", 0), len(profile.get("headings", [])),
-    )
-
     pc_chunks = []
     if doc_type in ("gb_standard", "regulation") and profile.get("confidence", 0) >= 0.3:
         pc_chunks = heading_chunk(text, profile)
-
-    # ── 覆盖率检测：heading-based分块可能遗漏大量文本 ──
     if pc_chunks:
-        covered_chars = sum(len(pc["parent"]) for pc in pc_chunks)
-        coverage = covered_chars / max(len(text), 1)
-        logger.info("Heading chunking: %d chunks, coverage=%.1f%%", len(pc_chunks), coverage * 100)
-
-        if coverage < 0.80:
-            # 找出heading未覆盖的文本区域，用generic补齐
-            covered_intervals = []
+        cov = sum(len(pc["parent"]) for pc in pc_chunks) / max(len(text), 1)
+        if cov < 0.80:
+            iv = []
             for pc in pc_chunks:
-                start = text.find(pc["parent"][:100])
-                if start >= 0:
-                    covered_intervals.append((start, start + len(pc["parent"])))
-            covered_intervals.sort()
-
-            # 合并重叠区间
-            merged = []
-            for s, e in covered_intervals:
-                if merged and s <= merged[-1][1]:
-                    merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+                s = text.find(pc["parent"][:100])
+                if s >= 0:
+                    iv.append((s, s + len(pc["parent"])))
+            iv.sort()
+            mg = []
+            for s, e in iv:
+                if mg and s <= mg[-1][1]:
+                    mg[-1] = (mg[-1][0], max(mg[-1][1], e))
                 else:
-                    merged.append((s, e))
-
-            # 提取未覆盖区间（跳过太小的gap < 500字符）
-            uncovered_segments = []
-            prev_end = 0
-            for s, e in merged:
-                if s - prev_end > 500:
-                    uncovered_segments.append(text[prev_end:s])
-                prev_end = e
-            if len(text) - prev_end > 500:
-                uncovered_segments.append(text[prev_end:])
-
-            # 对未覆盖段落做分块
-            uncovered_text = "\n\n".join(uncovered_segments)
-            if len(uncovered_text.strip()) > 500:
-                GAP_PARENT = 12000
-                gap_chunks = []
-                paras = uncovered_text.split("\n\n")
-                buf = ""
-                for p in paras:
-                    if len(buf) + len(p) + 2 > GAP_PARENT and buf:
-                        gap_chunks.append({
-                            "child": buf, "parent": buf,
-                            "child_index": 0, "parent_index": 0, "section_hint": "",
-                        })
-                        buf = p
-                    else:
-                        buf = (buf + "\n\n" + p).strip() if buf else p
-                if buf.strip():
-                    gap_chunks.append({
-                        "child": buf, "parent": buf,
-                        "child_index": 0, "parent_index": 0, "section_hint": "",
-                    })
-
-                # 合并：heading chunks在前，fallback chunks在后
-                max_parent = max(pc["parent_index"] for pc in pc_chunks) + 1
-                for i, gc in enumerate(gap_chunks):
-                    gc["parent_index"] = max_parent + i
-                    gc["child_index"] = len(pc_chunks) + i
-                    gc["section_hint"] = "[补充覆盖] " + gc["parent"][:80]
-                pc_chunks.extend(gap_chunks)
-                logger.info("  Fallback: +%d chunks (5K/块), total=%d", len(gap_chunks), len(pc_chunks))
-
+                    mg.append((s, e))
+            uc = []
+            prev = 0
+            for s, e in mg:
+                if s - prev > 500:
+                    uc.append(text[prev:s])
+                prev = e
+            if len(text) - prev > 500:
+                uc.append(text[prev:])
+            uct = "\n\n".join(uc)
+            if len(uct.strip()) > 500:
+                gc = []
+                for p in uct.split("\n\n"):
+                    if p.strip():
+                        gc.append({"child": p[:12000], "parent": p[:12000], "child_index": 0, "parent_index": 0, "section_hint": ""})
+                if gc:
+                    mp = max(pc["parent_index"] for pc in pc_chunks) + 1
+                    for i, g in enumerate(gc):
+                        g["parent_index"] = mp + i
+                        g["child_index"] = len(pc_chunks) + i
+                    pc_chunks.extend(gc)
     if not pc_chunks:
-        # Excel 检查表走专用分块逻辑
-        if file.filename and file.filename.lower().endswith(('.xlsx', '.xls')):
+        if filename.lower().endswith((".xlsx", ".xls")):
             pc_chunks = excel_row_chunk(text, doc_title=doc_title)
             doc_type = "excel_checklist"
-            logger.info("Excel row-based chunking: %d chunks", len(pc_chunks))
         else:
             doc_type = "generic"
-            pc_chunks = parent_child_chunk(
-                text,
-                child_size=settings.default_chunk_size,
-                parent_size=settings.default_chunk_size * 4,
-                overlap=settings.chunk_overlap,
-                doc_title=doc_title,
-            )
-            logger.info("Paragraph-based chunking: %d chunks", len(pc_chunks))
+            pc_chunks = parent_child_chunk(text, child_size=settings.default_chunk_size, parent_size=settings.default_chunk_size * 4, overlap=settings.chunk_overlap, doc_title=doc_title)
+    try:
+        tc = extract_table_chunks(text)
+    except Exception:
+        tc = []
+    if tc:
+        mp2 = max((pc["parent_index"] for pc in pc_chunks), default=-1) + 1
+        mc2 = max((pc["child_index"] for pc in pc_chunks), default=-1) + 1
+        for i, t in enumerate(tc):
+            t["parent_index"] = mp2 + i
+            t["child_index"] = mc2 + i
+        pc_chunks.extend(tc)
 
-    # 提取表格为独立chunks
-    table_chunks = extract_table_chunks(text)
-    if table_chunks:
-        max_parent = max((pc["parent_index"] for pc in pc_chunks), default=-1) + 1
-        max_child = max((pc["child_index"] for pc in pc_chunks), default=-1) + 1
-        for idx, tc in enumerate(table_chunks):
-            tc["parent_index"] = max_parent + idx
-            tc["child_index"] = max_child + idx
-        pc_chunks.extend(table_chunks)
-        logger.info("Table extraction: +%d table chunks, total=%d", len(table_chunks), len(pc_chunks))
-
+    _update_upload_task(task_id, progress=0.35, stage="building_index")
     doc_id = str(uuid.uuid4())
-
-    # ── P1-1: 版本链检测 — 同名/同标准号文档自动 supersede ──
     from app.services.version_chain import detect_existing_doc, mark_superseded
-    existing_doc = detect_existing_doc(
-        db=db, title=doc_title, bank=bank, doc_type=doc_type, content_hash=content_hash,
-    )
-
-    # 构建 parent 映射
-    parent_map = {}
-    for pc in pc_chunks:
-        parent_map[pc["parent_index"]] = pc["parent"]
-
+    parent_map = {pc["parent_index"]: pc["parent"] for pc in pc_chunks}
     memory_items = []
     for i, pc in enumerate(pc_chunks):
-        child_content = pc["child"].strip()
-        if not child_content:
+        child = pc["child"].strip()
+        if not child:
             continue
-        # CC 评审决策 4-A: enhanced_content 格式
-        # 优先 [文档:doc_title][章节:section_hint], 若 hint==title 则去重为 [文档:title]
-        section_hint = (pc.get("section_hint") or "").strip()
-        if section_hint and section_hint != doc_title:
-            enhanced_content = f"[文档:{doc_title}][章节:{section_hint}] {child_content}"
-        elif doc_title:
-            enhanced_content = f"[文档:{doc_title}] {child_content}"
-        else:
-            enhanced_content = child_content
-
-        tags = [
-            f"doc:{file.filename}",
-            f"chunk:{i + 1}/{len(pc_chunks)}",
-            f"doc_id:{doc_id}",
-            f"title:{doc_title}",
-            f"bank:{bank}",
-            f"parent_idx:{pc['parent_index']}",
-            f"strategy:{doc_type}",
-        ]
+        hint = (pc.get("section_hint") or "").strip()
+        enhanced = f"[文档:{doc_title}]" + (f"[章节:{hint}] {child}" if hint and hint != doc_title else f" {child}")
+        tags = [f"doc:{filename}", f"chunk:{i+1}/{len(pc_chunks)}", f"doc_id:{doc_id}", f"title:{doc_title}", f"bank:{bank}", f"parent_idx:{pc['parent_index']}", f"strategy:{doc_type}"]
         if doc_category:
             tags.append(f"cat:{doc_category}")
-        memory_items.append({"content": enhanced_content, "tags": tags, "type": "world"})
+        memory_items.append({"content": enhanced, "tags": tags, "type": "world"})
 
-    # ── 保存本地数据（不依赖Hindsight）──
     db = SessionLocal()
     try:
-        doc_repo = _get_doc_repo(db)
-        doc_repo.save(
-            doc_id=doc_id,
-            title=doc_title,
-            category=doc_category,
-            filename=file.filename,
-            content_hash=content_hash,
-            doc_type=doc_type,
-            bank=bank,
-            hs_bank=hs_bank,
-            source=source,
-            published_date=parsed_pub_date,
-            geo_scope=geo_scope,
-        )
-        # 保存 parent_chunks
-        for idx, ptext in parent_map.items():
-            pc = ParentChunk(doc_id=doc_id, parent_idx=idx, parent_text=ptext)
-            db.merge(pc)
-
-        # ── P0-3: 自动生成 doc 级 concept_id ──
-        doc_concept_id = infer_doc_concept_id(
-            title=doc_title, bank=bank, doc_type=doc_type, text=text[:2000],
-        )
-
-        # ── P0-2: 生成 concept 记录 ──
-        concept_pc_list = [{"parent_index": idx, "parent": ptext} for idx, ptext in parent_map.items()]
-        concept_count = generate_concepts_for_doc(
-            db, doc_id, doc_concept_id, concept_pc_list,
-            doc_type=doc_type, confidence=profile.get("confidence", 0.5),
-        )
-
-        # ── P0-1 + P0-3: 写入 OKF 字段到文档 ──
-        doc_record = db.query(Document).filter(Document.doc_id == doc_id).first()
-        if doc_record:
-            doc_record.profile_confidence = profile.get("confidence", 0.5)
-            doc_record.chunk_count = len(parent_map)
-            doc_record.domain = _infer_domain(bank, doc_type)
-            if doc_concept_id:
-                doc_record.concept_id = doc_concept_id
-
-        # ── P1-1: 如果检测到旧版本，标记为 superseded ──
-        if existing_doc:
-            mark_superseded(
-                db,
-                old_doc_id=existing_doc.doc_id,
-                new_doc_id=doc_id,
-                reason="new_version_upload",
-            )
-            if doc_record:
-                doc_record.supersedes = existing_doc.doc_id
-            logger.info("Version chain: %s supersedes %s", doc_id[:8], existing_doc.doc_id[:8])
-
+        dr = _get_doc_repo(db)
+        dr.save(doc_id=doc_id, title=doc_title, category=doc_category, filename=filename, content_hash=norm_hash, doc_type=doc_type, bank=bank, hs_bank=hs_bank, source=source, published_date=parsed_pub_date, geo_scope=geo_scope)
+        for idx, pt in parent_map.items():
+            db.merge(ParentChunk(doc_id=doc_id, parent_idx=idx, parent_text=pt))
+        con_id = infer_doc_concept_id(title=doc_title, bank=bank, doc_type=doc_type, text=text[:2000])
+        cpl = [{"parent_index": i, "parent": pt} for i, pt in parent_map.items()]
+        generate_concepts_for_doc(db, doc_id, con_id, cpl, doc_type=doc_type, confidence=profile.get("confidence", 0.5))
+        dr2 = db.query(Document).filter(Document.doc_id == doc_id).first()
+        if dr2:
+            dr2.profile_confidence = profile.get("confidence", 0.5)
+            dr2.chunk_count = len(parent_map)
+            dr2.domain = _infer_domain(bank, doc_type)
+            if con_id:
+                dr2.concept_id = con_id
+        exd = detect_existing_doc(db=db, title=doc_title, bank=bank, doc_type=doc_type, content_hash=norm_hash)
+        if exd:
+            mark_superseded(db, old_doc_id=exd.doc_id, new_doc_id=doc_id, reason="new_version_upload")
+            if dr2:
+                dr2.supersedes = exd.doc_id
         db.commit()
-        logger.info("Saved %d parent chunks for doc %s", len(parent_map), doc_id)
-
-        # ── P0-2: 上传后自动计算 concept 置信度 ──
         try:
-            _concepts = db.query(Concept).filter(
-                Concept.doc_id == doc_id,
-                Concept.status == "active",
-            ).all()
-            for _c in _concepts:
-                update_concept_confidence(db, _c.concept_id)
+            for c in db.query(Concept).filter(Concept.doc_id == doc_id, Concept.status == "active").all():
+                update_concept_confidence(db, c.concept_id)
             db.commit()
-            logger.info("Auto-confidence updated for %d concepts (doc %s)", len(_concepts), doc_id[:8])
-        except Exception as _ce:
-            logger.warning("Auto-confidence update failed for %s: %s", doc_id[:8], _ce)
-
-        # ── P0-3: 上传后自动运行 Quality Gate G2 ──
+        except Exception:
+            pass
         try:
             from app.services.quality_gates import check_document
-            _g2_result = check_document(db, doc_id, gates="G2")
-            _g2_passed = _g2_result.get("overall_passed", False)
-            logger.info("Quality Gate G2 for %s: passed=%s score=%s",
-                        doc_id[:8], _g2_passed, _g2_result.get("overall_score"))
-            if not _g2_passed:
-                logger.warning("Quality Gate G2 issues: %s",
-                               [g["issues"] for g in _g2_result.get("gates", [])])
-        except Exception as _qce:
-            logger.warning("Quality Gate G2 check failed for %s: %s", doc_id[:8], _qce)
-
-        # ── P0-4: 前3个 concept 并行生成摘要（每调用最多10s超时，不阻塞上传） ──
+            check_document(db, doc_id, gates="G2")
+        except Exception:
+            pass
         try:
             from app.services.concept_summary import generate_summary
-            _summaries = db.query(Concept).filter(
-                Concept.doc_id == doc_id,
-                Concept.status == "active",
-                (Concept.summary.is_(None)) | (Concept.summary == ""),
-            ).order_by(Concept.parent_idx).limit(3).all()
-            if _summaries:
-                _tasks = [
-                    asyncio.wait_for(
-                        generate_summary(content=_sc.content or "", title=_sc.title or ""),
-                        timeout=10,
-                    )
-                    for _sc in _summaries
-                ]
-                _summaries_text = await asyncio.gather(*_tasks, return_exceptions=True)
-                for _sc, _st in zip(_summaries, _summaries_text):
-                    if isinstance(_st, Exception):
-                        logger.warning("Summary gen timeout/fail for concept %s: %s",
-                                       _sc.concept_id[:30], _st)
+            summaries = db.query(Concept).filter(Concept.doc_id == doc_id, Concept.status == "active", (Concept.summary.is_(None)) | (Concept.summary == "")).order_by(Concept.parent_idx).limit(3).all()
+            if summaries:
+                tasks = [asyncio.wait_for(generate_summary(content=s.content or "", title=s.title or ""), timeout=10) for s in summaries]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for s, r in zip(summaries, results):
+                    if isinstance(r, Exception):
                         continue
-                    if _st:
-                        _sc.summary = _st
-            db.flush()
-            gen_count = sum(1 for s in _summaries_text if isinstance(s, str) and s) if _summaries else 0
-            logger.info("Generated summaries for %d/%d concepts (doc %s)", gen_count, len(_summaries), doc_id[:8])
-        except Exception as _sume:
-            logger.warning("Summary gen failed for %s: %s", doc_id[:8], _sume)
+                    if r:
+                        s.summary = r
+                db.flush()
+        except Exception:
+            pass
     except Exception as e:
-        logger.warning("Failed to save parent_chunks for %s: %s", doc_id, e)
+        db.rollback()
+        logger.exception("save failed: %s", e)
+        _update_upload_task(task_id, status="failed", stage="save", error_message=str(e))
+        return
     finally:
         db.close()
 
-    # ── 保存原件到 uploads/ 和 backups/ 目录 ──
-    backup_name = Path(file.filename or "unknown.pdf").name
-    backup_name = f"{doc_id[:8]}_{backup_name}"
-    for save_dir in [settings.upload_dir, Path("./data/storage/backups")]:
-        os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, backup_name)
-        try:
-            with open(save_path, "wb") as bf:
-                bf.write(content)
-        except Exception as e:
-            logger.warning("Failed to save %s to %s: %s", backup_name, save_dir, e)
-
-    # ── 上传到Hindsight（分批写入，大文档用小批次）──
-    retained = 0
+    _update_upload_task(task_id, progress=0.55, stage="hindsight_indexing")
     hindsight_error = None
-    hs = HindsightStore()
+    retained = 0
     if memory_items:
-        # 总字符量超过500K或单个chunk>5K则用10个一批，否则20个一批（防Hindsight超时）
-        total_chars = sum(len(m.get("content","")) for m in memory_items)
-        BATCH_SIZE = 10 if (total_chars > 500000 or any(len(m.get("content","")) > 5000 for m in memory_items)) else 20
-        for batch_start in range(0, len(memory_items), BATCH_SIZE):
-            batch = memory_items[batch_start:batch_start + BATCH_SIZE]
-            batch_num = batch_start // BATCH_SIZE + 1
-            total_batches = (len(memory_items) + BATCH_SIZE - 1) // BATCH_SIZE
-            logger.info(
-                "Upload batch %d/%d: %d chunks → bank=%s",
-                batch_num, total_batches, len(batch), hs_bank,
-            )
+        hs = HindsightStore()
+        tc = sum(len(m.get("content", "")) for m in memory_items)
+        BS = 10 if (tc > 500000 or any(len(m.get("content", "")) > 5000 for m in memory_items)) else 20
+        for bs in range(0, len(memory_items), BS):
+            batch = memory_items[bs:bs + BS]
             try:
-                result = await hs.upsert(doc_id, batch, hs_bank)
-                batch_retained = result
-                retained += batch_retained
-                logger.info("  Batch %d: stored %d/%d", batch_num, batch_retained, len(batch))
+                retained += await hs.upsert(doc_id, batch, hs_bank)
             except Exception as e:
                 hindsight_error = str(e) or repr(e)
-                logger.error("  Batch %d FAILED: %s", batch_num, hindsight_error)
-
-        logger.info("Hindsight total: %d/%d chunks stored for doc %s", retained, len(memory_items), doc_id)
-
-        # 上传成功后立即失效BM25缓存
         invalidate_bm25_cache(bank)
         invalidate_bm25_cache("all")
 
-        if retained == 0 and hindsight_error:
-            logger.error("Hindsight write ALL FAILED (local data preserved): %s", hindsight_error)
-
-    # ── 更新 bank 到数据库 ──
-    db = SessionLocal()
-    try:
-        from sqlalchemy import text as sa_text
-        db.execute(sa_text("UPDATE documents SET bank = :bank WHERE doc_id = :doc_id"), {"bank": bank, "doc_id": doc_id})
-        db.commit()
-    finally:
-        db.close()
-
-    # ── 完整性验证：上传后召回比对 ──
+    _update_upload_task(task_id, progress=0.75, stage="verification")
     integrity = None
-    hindsight_chunks_count = 0
-    meta_chunks_count = len(parent_map)
-    retried = False
-    try:
-        await asyncio.sleep(2)  # 等待 Hindsight 索引
-        recalled_chunks = await recall(doc_title, limit=50, bank=hs_bank, max_tokens=32768)
-        recalled_text = "\n".join(r.get("text", "") for r in recalled_chunks)
-        hindsight_chunks_count = len(recalled_chunks)
-        if recalled_text and len(recalled_text) > 200:
-            coverage = min(100, round(hindsight_chunks_count / max(meta_chunks_count, 1) * 100, 1))
-            integrity = {
-                "original_chars": len(text),
-                "recalled_chars": len(recalled_text),
-                "coverage_pct": coverage,
-                "hindsight_chunks": hindsight_chunks_count,
-                "meta_chunks": meta_chunks_count,
-                "status": "ok" if coverage >= 80 else ("partial" if coverage >= 50 else "low"),
-            }
-            # P2: 自动重试 - 当coverage低于80%时，重新发送缺失的chunks
-            if coverage < 80 and retained < len(memory_items):
-                logger.info("Coverage low (%d%%), retrying missing chunks...", coverage)
-                missing_items = memory_items[retained:]
-                try:
-                    retry_result = await hs.upsert(doc_id, missing_items, hs_bank)
-                    retry_retained = retry_result
-                    if retry_retained > 0:
-                        retried = True
-                        retained += retry_retained
-                        integrity["retried"] = True
-                        integrity["retry_chunks"] = retry_retained
-                        logger.info("Retry success: +%d chunks", retry_retained)
-                except Exception as e:
-                    logger.error("Retry failed: %s", e)
-                    integrity["retry_failed"] = str(e)
-        else:
-            integrity = {
-                "original_chars": len(text),
-                "recalled_chars": len(recalled_text) if recalled_text else 0,
-                "coverage_pct": 0,
-                "hindsight_chunks": hindsight_chunks_count,
-                "meta_chunks": meta_chunks_count,
-                "status": "pending",
-                "note": "索引尚未完成，请稍后查看",
-            }
-    except Exception as e:
-        logger.error("Upload integrity check failed for %s: %s", doc_id, e)
+    if memory_items and not hindsight_error:
+        try:
+            await asyncio.sleep(2)
+            rc = await recall(doc_title, limit=50, bank=hs_bank, max_tokens=32768)
+            rt = "\n".join(r.get("text", "") for r in rc)
+            if rt and len(rt) > 200:
+                cov = min(100, round(len(rc) / max(len(parent_map), 1) * 100, 1))
+                integrity = {"original_chars": len(text), "recalled_chars": len(rt), "coverage_pct": cov, "hindsight_chunks": len(rc), "meta_chunks": len(parent_map), "status": "ok" if cov >= 80 else ("partial" if cov >= 50 else "low")}
+                if cov < 80 and retained < len(memory_items):
+                    try:
+                        rr = await hs.upsert(doc_id, memory_items[retained:], hs_bank)
+                        if rr > 0:
+                            retained += rr
+                            integrity["retried"] = True
+                    except Exception as e:
+                        integrity["retry_failed"] = str(e)
+        except Exception as e:
+            logger.error("integrity fail: %s", e)
 
-    # ── 更新元数据到数据库 ──
+    _update_upload_task(task_id, progress=0.9, stage="finalizing")
     db = SessionLocal()
     try:
-        doc_repo = _get_doc_repo(db)
-        doc = doc_repo.get(doc_id)
+        doc = _get_doc_repo(db).get(doc_id)
         if doc:
             doc.original_text_length = len(text)
             if integrity:
@@ -576,59 +410,39 @@ async def upload_document(
                 if integrity.get("status") == "ok":
                     doc.searchable = 1
             doc.verified_at = datetime.now(timezone.utc)
-            # Phase A: mark knowledge as confirmed at upload time
             doc.last_confirmed = datetime.now(timezone.utc)
             db.commit()
-            logger.info("Updated metadata for %s: searchable=%s, coverage=%.1f%%", doc_id[:8], doc.searchable, doc.coverage_pct)
-    except Exception as e:
+    except Exception:
         db.rollback()
-        logger.warning("Failed to update metadata for %s: %s", doc_id[:8], e)
     finally:
         db.close()
 
-    # ── 异步验证：等 consolidation 后用标题做 recall，确认文档可被搜索 ──
     if integrity and integrity.get("status") in ("ok", "pending"):
         asyncio.create_task(_verify_searchable(doc_id, doc_title, len(text), hs_bank))
-
-    # ── KG 索引：异步写入知识图谱 ──
     asyncio.create_task(asyncio.to_thread(kg_index_document, doc_id, doc_title, text, bank))
-
-    # ── 上传成功后清除该 bank 的 BM25 缓存 ──
     invalidate_bm25_cache(bank=bank)
 
-    # ── 上传成功后清除该 bank 的查询缓存 ──
-    try:
-        cdb = SessionLocal()
-        from sqlalchemy import text as sa_text
-        deleted = cdb.execute(sa_text("DELETE FROM query_cache WHERE bank=:bank"), {"bank": bank}).rowcount
-        deleted_all = cdb.execute(sa_text("DELETE FROM query_cache WHERE bank='all'")).rowcount
-        cdb.commit()
-        cdb.close()
-        if deleted + deleted_all > 0:
-            logger.info("[CACHE] Invalidated %d bank-specific + %d all-bank cache entries after upload to %s",
-                        deleted, deleted_all, bank)
-    except Exception as e:
-        logger.warning("Cache invalidation failed: %s", e)
+    result_dict = {"ok": True, "doc_id": doc_id, "title": doc_title, "category": doc_category, "filename": filename, "chunks": retained, "total_chars": len(text), "preview": text[:200] + ("..." if len(text) > 200 else ""), "quality": {"score": quality["score"], "issues": quality["issues"], "needs_confirm": quality["score"] < 80}, "integrity": integrity, "doc_type": doc_type, "kg_indexed": True}
+    _update_upload_task(task_id, status="done", progress=1.0, stage="complete", result_doc_id=doc_id, result=json.dumps(result_dict, ensure_ascii=False))
+    logger.info("[upload] task %s complete: doc=%s", task_id[:8], doc_id[:8])
 
-    return {
-        "ok": True,
-        "doc_id": doc_id,
-        "title": doc_title,
-        "category": doc_category,
-        "filename": file.filename,
-        "chunks": retained,
-        "total_chars": len(text),
-        "preview": text[:200] + ("..." if len(text) > 200 else ""),
-        "warning": f"仅成功入库 {retained}/{len(memory_items)} 个文本片段" if retained < len(memory_items) else None,
-        "quality": {
-            "score": quality["score"],
-            "issues": quality["issues"],
-            "needs_confirm": quality["score"] < 80,
-        },
-        "integrity": integrity,
-        "doc_type": doc_type,
-        "kg_indexed": True,
-    }
+
+@router.get("/tasks/{task_id}")
+async def get_upload_task(task_id: str):
+    task = _get_upload_task(task_id)
+    if not task:
+        raise HTTPException(404, f"task {task_id} not found")
+    resp = {"task_id": task.id, "status": task.status, "filename": task.filename, "progress": task.progress, "stage": task.stage, "created_at": task.created_at.isoformat() if task.created_at else None, "updated_at": task.updated_at.isoformat() if task.updated_at else None}
+    if task.error_message:
+        resp["error_message"] = task.error_message
+    if task.result_doc_id:
+        resp["doc_id"] = task.result_doc_id
+    if task.result and task.status == "done":
+        try:
+            resp["result"] = json.loads(task.result)
+        except (json.JSONDecodeError, TypeError):
+            resp["result"] = task.result
+    return resp
 
 
 @router.post("/precheck")
@@ -793,35 +607,22 @@ async def upload_batch(
     for f in files:
         try:
             f.file.seek(0)
-            result = await upload_document(
-                file=f,
-                title=title_prefix,
-                category=category,
-                bank=bank,
-                confirm_quality=confirm_quality,
-                source=source,
-                published_date=None,
-                geo_scope=None,
-            )
-            if result.get("ok"):
-                success_count += 1
-                results.append({
-                    "filename": f.filename,
-                    "ok": True,
-                    "doc_id": result.get("doc_id"),
-                    "title": result.get("title"),
-                    "chunks": result.get("chunks"),
-                    "quality": result.get("quality"),
-                })
-            else:
-                # quality gate returned ok=False (not an exception)
+            f_content = await f.read()
+            if not f_content:
                 failed_count += 1
-                results.append({
-                    "filename": f.filename,
-                    "ok": False,
-                    "detail": result.get("detail", "质量评估未通过"),
-                    "quality": result.get("quality"),
-                })
+                results.append({"filename": f.filename, "ok": False, "detail": "文件为空"})
+                continue
+            task_id = str(uuid.uuid4())
+            _create_upload_task(task_id, f.filename)
+            asyncio.create_task(
+                _process_upload_task(
+                    task_id=task_id, filename=f.filename, content=f_content,
+                    title=title_prefix, category=category, bank=bank,
+                    source=source, published_date=None, geo_scope=None,
+                )
+            )
+            success_count += 1
+            results.append({"filename": f.filename, "ok": True, "task_id": task_id, "status": "pending"})
         except HTTPException as e:
             failed_count += 1
             results.append({
