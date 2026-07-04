@@ -84,6 +84,7 @@
       :suggestions="queryStore.suggestions"
       :standard-contents="queryStore.standardContents"
       :bank="selectedBank"
+      :query-keywords="searchKeywords"
       @search-suggestion="handleSuggestionSearch"
       @refresh="handleRefreshFromCache"
     />
@@ -91,7 +92,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useQueryStore } from '@/stores/query'
 import { useBanksStore } from '@/stores/banks'
 import ResultCard from '@/components/ResultCard.vue'
@@ -103,6 +104,16 @@ const banksStore = useBanksStore()
 
 const queryText = ref('')
 const selectedBank = ref('all')
+
+/** SourceCard: 从当前查询文本提取关键词用于高亮 */
+const searchKeywords = computed(() => {
+  const raw = queryText.value
+  if (!raw) return []
+  // 中文按分词或取2+字词
+  const tokens = raw.split(/[\s,，、；;。.？?！!]+/).filter(t => t.length >= 2)
+  // 去重取前8个
+  return [...new Set(tokens)].slice(0, 8)
+})
 const useRerank = ref(false)
 const rerankMode = ref('default')
 const useMultiHypothesis = ref(false)

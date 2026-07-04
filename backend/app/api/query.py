@@ -1409,6 +1409,18 @@ async def _generate_answer(
             if len(parent_preview) > len(merged_text):
                 merged_text = parent_preview
 
+        # SourceCard: 取费档位标签检测
+        _fee_tier = ""
+        _fees = ["取费", "费率", "费用", "收费标准", "概算", "造价", "计价"]
+        if any(f in doc_name for f in _fees):
+            _fee_tier = "💰 取费"
+
+        # SourceCard: 关键词命中数
+        _kw_matches = 0
+        if query_keywords:
+            _text_lower = (combined or "").lower()
+            _kw_matches = sum(1 for kw in query_keywords if kw.lower() in _text_lower)
+
         snippet = extract_keyword_snippet(merged_text, query_keywords, 1500) if query_keywords else merged_text[:3000]
         doc_rank = list(doc_facts.keys()).index(doc_id) if doc_id in doc_facts else 99
         relevance_score = round(max(0.1, 1.0 - doc_rank * 0.08), 3)
@@ -1418,6 +1430,8 @@ async def _generate_answer(
             "score": relevance_score,
             "chunk": f"{len(facts)} 条相关",
             "text": _clean_source_text(snippet[:3000]),
+            "fee_tier": _fee_tier,
+            "keyword_matches": _kw_matches,
         })
 
     # ── T1-3: 摘要文档后置（非摘要在前，摘要在后）──

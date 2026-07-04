@@ -6,6 +6,8 @@ export interface Source {
   score?: number
   chunk?: string
   text?: string
+  fee_tier?: string
+  keyword_matches?: number
 }
 
 export interface TermHint {

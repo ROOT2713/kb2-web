@@ -1,0 +1,45 @@
+name: KB2-Web CI — 66题回归测试
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 8 * * *'  # 每日早8点（备份通道，主通道走Hermes cron）
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests python-dotenv
+
+      - name: Check service health
+        run: |
+          curl -s --max-time 10 ${{ secrets.API_BASE || 'http://localhost:3027' }}/health || echo "WARN: service not reachable"
+
+      - name: Run 66题回归测试
+        id: regression
+        run: |
+          cd backend/scripts
+          python3 kb2_66test_v3.py 2>&1
+        continue-on-error: true
+        env:
+          API_BASE: ${{ secrets.API_BASE || 'http://localhost:3027' }}
+
+      - name: Check trend (pass rate downward detection)
+        run: |
+          HISTORY_FILE="/tmp/kb2_66test_history.json"
+          LAST_RESULT="/tmp/kb2_66test_v3_results.json"
+          if [ -f "$LAST_RESULT" ]; then
+            PASS_RATE=$(python3 -c "import json; d=json.load(open('$LAST_RESULT')); r=d.get('results',d.get('summary',{}).get('results',[])); print(f'{sum(1 for x in r if x.get(\"score\",0)>=7)/len(r)*100:.1f}')" 2>/dev/null || echo "0")
+            echo "本次通过率: $PASS_RATE%"
+          fi

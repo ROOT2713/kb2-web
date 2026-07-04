@@ -77,9 +77,13 @@
               {{ src.doc }}
             </router-link>
             <span v-else class="source-doc">{{ src.doc }}</span>
-            <span v-if="src.score" class="source-score">{{ src.score }}</span>
+            <span class="source-badges">
+              <span v-if="src.fee_tier" class="badge fee-badge">{{ src.fee_tier }}</span>
+              <span v-if="src.keyword_matches && queryKeywords" class="badge kw-badge">{{ src.keyword_matches }}/{{ queryKeywords.length }}关键词</span>
+              <span v-if="src.score" class="source-score">{{ src.score }}</span>
+            </span>
           </div>
-          <div v-if="src.text" class="source-text">{{ cleanSourceText(src.text) }}</div>
+          <div v-if="src.text" class="source-text" v-html="highlightKeywords(cleanSourceText(src.text))"></div>
           <span v-else-if="src.chunk" class="source-chunk-info">{{ src.chunk }}</span>
         </div>
       </div>
@@ -132,6 +136,7 @@ const props = withDefaults(
     suggestions?: QuerySuggestions | null
     standardContents?: StandardContent[]
     bank?: string
+    queryKeywords?: string[]
   }>(),
   {
     label: '回答',
@@ -140,6 +145,7 @@ const props = withDefaults(
     suggestions: null,
     standardContents: () => [],
     bank: 'all',
+    queryKeywords: () => [],
   },
 )
 
@@ -185,6 +191,16 @@ function cleanSourceText(raw: string): string {
     .replace(/<[^>]*>/g, '')
     .trim()
     .substring(0, 300)
+}
+
+/** 高亮来源文本中的关键词 — SourceCard 证据级可解释性 */
+function highlightKeywords(text: string): string {
+  const kws = props.queryKeywords
+  if (!kws || !kws.length) return text
+  const escaped = kws.filter(k => k.length > 1).map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  if (!escaped.length) return text
+  const pattern = new RegExp(`(${escaped.join('|')})`, 'gi')
+  return text.replace(pattern, '<mark class="kw-highlight">$1</mark>')
 }
 
 function formatSize(chars: number): string {
@@ -616,5 +632,39 @@ function renderStdText(text: string): string {
   color: var(--fg-muted);
   font-size: 0.8rem;
   padding: 1rem;
+}
+
+/* ── SourceCard 证据级可解释性 ── */
+.source-badges {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+.badge {
+  font-size: 0.6rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.fee-badge {
+  background: #fff3e0;
+  color: #e65100;
+  border: 1px solid #ffe0b2;
+}
+.kw-badge {
+  background: #e3f2fd;
+  color: #1565c0;
+  border: 1px solid #bbdefb;
+}
+.source-text :deep(mark.kw-highlight) {
+  background: #fff176;
+  color: #333;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+.source-text :deep(mark.kw-highlight)::before,
+.source-text :deep(mark.kw-highlight)::after {
+  content: none;
 }
 </style>

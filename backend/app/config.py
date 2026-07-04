@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     top_k: int = 20
     rrf_k: int = 60
 
+    # ── Feature Flags (Phase 1 OKF) ──
+    okf_domain_routing_enabled: bool = True     # 启用 domain 路由分流
+    graphrag_enabled: bool = False               # GraphRAG 开关（Phase 2 决策门）
+
     @property
     def db_url(self) -> str:
         return f"sqlite:///{self.db_path}"
