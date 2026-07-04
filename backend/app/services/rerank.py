@@ -22,11 +22,12 @@ logger = logging.getLogger(__name__)
 
 # Default dimension weights
 DEFAULT_WEIGHTS = {
-    "keyword": 0.45,
-    "dense": 0.45,
-    "confidence": 0.05,
-    "freshness": 0.03,
-    "source_count": 0.02,
+    "keyword": 0.43,
+    "dense": 0.43,
+    "confidence": 0.025,
+    "freshness": 0.015,
+    "source_count": 0.01,
+    "chunk_position": 0.10,
 }
 
 # Freshness half-life in days
@@ -92,6 +93,7 @@ def multidim_rerank(
             + w.get("confidence", 0) * confidence
             + w.get("freshness", 0) * freshness
             + w.get("source_count", 0) * source_count
+            + w.get("chunk_position", 0) * _calc_chunk_position(item)  # T2-1
         )
 
         scored.append((composite, rank, item))
@@ -221,6 +223,23 @@ def _calc_source_count(meta: dict) -> float:
         except (ValueError, TypeError):
             pass
     return 0.0
+
+
+def _calc_chunk_position(item: dict) -> float:
+    """计算chunk位置得分 (0-1)。
+    
+    位置信号：文档中的早期chunk（parent_idx小）更可能是关键内容头部。
+    用于解决同一文档内关键chunk排名靠后的问题（T2-1）。
+    """
+    for tag in item.get("tags", []):
+        if tag.startswith("parent_idx:"):
+            try:
+                idx = int(tag.split(":", 1)[1])
+                return max(0.1, 1.0 - idx / 50.0)
+            except (ValueError, IndexError):
+                pass
+    # Fallback: rank-based estimate
+    return 0.5
 
 
 def _fetch_doc_metadata(results: List[dict]) -> Dict[str, dict]:

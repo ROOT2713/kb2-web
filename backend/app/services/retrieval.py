@@ -519,6 +519,14 @@ def keyword_rerank(query: str, candidates: list, top_k: int = 20) -> list:
     if not query_tokens:
         return candidates[:top_k]
 
+    # ── [T2-2] Section header 正则检测 ──
+    _SECTION_PATTERN = re.compile(
+        r'(第[一二三四五六七八九十百千零\d]+[条章节]|'
+        r'\d+\.\d+|'
+        r'检查项|检查要求|评分要点|核查力度|'
+        r'表\s*[\d]+|附录\s*[A-Z一二三四五六七八九十])'
+    )
+
     def _doc_id(item: dict) -> str:
         if item.get("doc_id"):
             return str(item.get("doc_id"))
@@ -526,6 +534,23 @@ def keyword_rerank(query: str, candidates: list, top_k: int = 20) -> list:
             if tag.startswith("doc_id:"):
                 return tag[7:]
         return ""
+
+    # ── [T2-4] 构建 doc_id → parent_idx 映射（连续性检测用）──
+    _doc_pidx_map = defaultdict(list)
+    for _item in candidates:
+        _did = _doc_id(_item)
+        _pidx = None
+        for _t in _item.get("tags", []):
+            if _t.startswith("parent_idx:"):
+                try:
+                    _pidx = int(_t.split(":", 1)[1])
+                except (ValueError, IndexError):
+                    pass
+                break
+        if _did and _pidx is not None:
+            _doc_pidx_map[_did].append(_pidx)
+    for _did in _doc_pidx_map:
+        _doc_pidx_map[_did].sort()
 
     scored = []
     for original_rank, item in enumerate(candidates):
@@ -561,13 +586,47 @@ def keyword_rerank(query: str, candidates: list, top_k: int = 20) -> list:
         # 5. 原始 RRF 排名保序项，避免语义召回被词面得分完全覆盖
         rank_prior = 1.0 / (original_rank + 1)
 
-        # 综合评分：词面信号 + RRF先验
+        # 6. [T2-2] Section header boost: 含章节标识的chunk优先
+        _section_hits = len(_SECTION_PATTERN.findall(text[:500]))
+        section_boost = min(_section_hits * 0.02, 0.10)
+
+        # 7. [T2-4] 连续性奖励: 同一文档内连续parent_idx的chunks加分
+        _contiguity_bonus = 0.0
+        _did = _doc_id(item)
+        _parent_idx = None
+        for _t in item.get("tags", []):
+            if _t.startswith("parent_idx:"):
+                try:
+                    _parent_idx = int(_t.split(":", 1)[1])
+                except (ValueError, IndexError):
+                    pass
+                break
+        if _did and _parent_idx is not None and _did in _doc_pidx_map:
+            _pidxs = _doc_pidx_map[_did]
+            try:
+                _pos = _pidxs.index(_parent_idx)
+                _consecutive = 1
+                _i = _pos
+                while _i + 1 < len(_pidxs) and _pidxs[_i + 1] == _pidxs[_i] + 1:
+                    _consecutive += 1
+                    _i += 1
+                _i = _pos
+                while _i - 1 >= 0 and _pidxs[_i - 1] == _pidxs[_i] - 1:
+                    _consecutive += 1
+                    _i -= 1
+                _contiguity_bonus = min(_consecutive * 0.03, 0.12)
+            except ValueError:
+                pass
+
+        # 综合评分：词面信号 + RRF先验 + section + 连续性
         score = (
-            coverage * 0.30
+            coverage * 0.25      # was 0.30 → -0.05 for section_boost
             + density * 0.20
             + title_boost
             + length_quality * 0.10
             + rank_prior * 0.25
+            + section_boost      # T2-2: 0~0.10
+            + _contiguity_bonus  # T2-4: 0~0.12
         )
         scored.append((score, original_rank, item))
 
@@ -616,6 +675,21 @@ def rrf_merge(dense_results: list, bm25_results: list, k: int = 60, query_keywor
 
     query_keywords: 查询关键词列表，BM25结果的text包含关键词时加权2.0倍
     """
+    # ── [T2-3] 标准号查询动态 k 值 ──
+    # 标准号查询用 k=30（更激进地突出头排精确文档）
+    # 非标准号查询用 k=60（保持多样性）
+    _STD_DETECT = re.compile(
+        r'(?:GB|ISO|YD|SJ|GA|HJ|CJJ|JGJ|WS|DB)/?\s*T?\s*\d+|'
+        r'第.*[条章节]|'
+        r'检查(?:项|要求|标准|要点|力度|内容)|'
+        r'附录\s*[A-Z一二三四五六七八九十]'
+    )
+    query_text = " ".join(query_keywords) if query_keywords else ""
+    if query_text and _STD_DETECT.search(query_text):
+        effective_k = min(k, 30)
+    else:
+        effective_k = k
+
     chunk_scores = {}
     chunk_data = {}
 
@@ -634,7 +708,7 @@ def rrf_merge(dense_results: list, bm25_results: list, k: int = 60, query_keywor
     # Dense 结果按排名打分
     for rank, r in enumerate(dense_results):
         key = _make_key(r)
-        chunk_scores[key] = chunk_scores.get(key, 0) + 1.0 / (k + rank + 1)
+        chunk_scores[key] = chunk_scores.get(key, 0) + 1.0 / (effective_k + rank + 1)
         if key not in chunk_data:
             chunk_data[key] = r
 
