@@ -1457,6 +1457,39 @@ async def _generate_answer(
     context = "\n\n---\n\n".join(context_parts)
     sources = sources[:12]
 
+    # ── [P1] 文档元数据信息卡（独立block，不污染来源标签）──
+    # 在 context 中附加每个文档的版本/地域信息，让 LLM 在需要时参考。
+    # 设计原则：独立结构化block，不做 inline 标签（避免V8退化）。
+    _meta_lines = []
+    _doc_ids_meta = list(doc_facts.keys())[:12]
+    if _doc_ids_meta:
+        try:
+            _meta_db = SessionLocal()
+            try:
+                _meta_rows = _meta_db.execute(sa_text("""
+                    SELECT doc_id, published_date, geo_scope
+                    FROM documents WHERE doc_id IN ({})
+                """.format(",".join(f"'{d}'" for d in _doc_ids_meta)))).fetchall()
+                _meta_map = {r[0]: (r[1], r[2]) for r in _meta_rows}
+                _meta_lines.append("## 文档信息卡（版本/地域参考）")
+                for _d_id in _doc_ids_meta:
+                    _d_name = doc_facts[_d_id][0][1] if doc_facts[_d_id] else _d_id
+                    _pd, _gs = _meta_map.get(_d_id, (None, None))
+                    _parts = []
+                    if _pd:
+                        _year = str(_pd)[:4]
+                        _parts.append(f"{_year}版")
+                    if _gs:
+                        _parts.append(f"地域:{_gs}")
+                    if _parts:
+                        _meta_lines.append(f"- {_d_name} ({', '.join(_parts)})")
+            finally:
+                _meta_db.close()
+        except Exception:
+            pass
+    if _meta_lines:
+        context += "\n\n" + "\n".join(_meta_lines)
+
     # ── Phase C2: Core Claims 速查卡 — 注入命中文档的 concept.summary ──
     # 对每个出现在 doc_facts 中的文档，拉取其 top-3 个有 summary 的 concept，
     # 构建一个"速查卡"段落，让 LLM 在阅读原文 chunks 之前先获得结构化核心事实。
