@@ -194,4 +194,53 @@ def boost_exact_standards(
                 title[:60], len(chunks), std_num,
             )
 
+    # ── Supplement scan: also find docs whose parent_chunks reference the std number ──
+    _supplement_sql = """
+        SELECT DISTINCT d.doc_id, d.title
+        FROM parent_chunks p
+        JOIN documents d ON p.doc_id = d.doc_id
+        WHERE d.status='active' AND d.searchable=1
+          AND p.parent_text LIKE :like_pattern
+    """
+    _supplement_params = {}
+    if bank != "all":
+        _supplement_sql += " AND d.bank=:bank"
+        _supplement_params["bank"] = bank
+    for std_num in std_nums:
+        # Use a short identifying fragment of the std number for LIKE match
+        _fragment = std_num.strip().split()[-1] if std_num.strip() else std_num
+        if len(_fragment) < 4:
+            continue
+        _like = f"%{_fragment}%"
+        try:
+            _srows = db.execute(sa_text(_supplement_sql), {"like_pattern": _like, **_supplement_params}).fetchall()
+        except Exception:
+            _srows = []
+        for _sid, _stitle in _srows:
+            if _sid in seen_doc_ids:
+                continue
+            _schunks = fetch_doc_chunks(db, _sid, max_chunks=max_chunks_per_doc)
+            if not _schunks:
+                continue
+            # Inject into title_map
+            if _sid not in title_map:
+                title_map[_sid] = _stitle
+            _chunks_to_inject = []
+            for _stext, _sidx in _schunks:
+                _cleaned = _stext[:500]
+                _chunks_to_inject.append((_stext, _stitle, _cleaned, _sidx))
+            _new_facts = {_sid: _chunks_to_inject}
+            for _did, _facts in doc_facts.items():
+                if _did != _sid:
+                    _new_facts[_did] = _facts
+            doc_facts.clear()
+            doc_facts.update(_new_facts)
+            seen_doc_ids.add(_sid)
+            stats["docs_injected"] += 1
+            stats["chunks_injected"] += len(_chunks_to_inject)
+            logger.info(
+                "[C1-StdBoost] Supplement-injected '%s' (%d chunks) for std '%s' (body match)",
+                _stitle[:60], len(_schunks), std_num,
+            )
+
     return stats

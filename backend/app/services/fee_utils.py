@@ -44,6 +44,20 @@ _FEE_TABLE_KEYWORDS = [
     "D×g×",      # V = D × g × (1-Z) pattern
     "V=D",        # V = D × formula pattern
     "V=D×g",      # V = D × g pattern (验收评测费)
+    "商用密码",   # commercial cryptography
+    "商密评估",   # commercial crypto assessment
+    "密评",       # crypto assessment (abbr)
+    "密码应用",   # crypto application
+]
+
+# Mismatch penalty keywords — chunks containing these are likely NOT the fee table
+# but instead metadata / front-matter / adjustment instructions that distract LLM
+_FEE_MISMATCH_KEYWORDS = [
+    "调整系数",
+    "编制说明",
+    "前言",
+    "编委会",
+    "封面",
 ]
 
 # Formula definition keywords — chunks near these contain the actual formula text
@@ -76,18 +90,27 @@ def _score_fee_chunk(text: str, amount_keywords: list[str]) -> int:
     text_lower = text.lower()
     
     # Fee table keywords
+    _fee_kw_count = 0
     for kw in _FEE_TABLE_KEYWORDS:
         if kw in text:
-            if kw in ("表 ", "费率", "计费额"):
+            if kw in ("表 ", "费率", "计费额", "密码"):
                 score += 2  # Stronger signal
             else:
                 score += 1
+            _fee_kw_count += 1
+            if _fee_kw_count >= 5:  # Cap at 5 matches
+                break
     
     # Formula keywords — strong signal
     for kw in _FORMULA_KEYWORDS:
         if kw in text:
             score += 3
             break  # cap at one formula bonus
+    
+    # Mismatch penalty — if chunk has WRONG fee type metadata/front-matter
+    for kw in _FEE_MISMATCH_KEYWORDS:
+        if kw in text:
+            score -= 5
     
     # Amount alignment — the query's amount value
     for akw in amount_keywords:
@@ -97,6 +120,10 @@ def _score_fee_chunk(text: str, amount_keywords: list[str]) -> int:
     # Penalize very short fragments
     if len(text) < 200:
         score -= 2
+    
+    # Size normalization — penalize huge but sparse chunks
+    if len(text) > 2000:
+        score = int(score * (2000 / len(text)))  # Linear penalty for chunks > 2KB
 
     return score
 
@@ -167,6 +194,17 @@ def find_fee_relevant_chunks(
                     "score": score,
                     "source": "industry_fallback",
                 })
+        
+        # Dedup by content prefix — keep only highest-scored per doc+content
+        seen_prefixes = {}
+        deduped = []
+        for r in results:
+            key = f"{r['doc_id']}:{r['text'][:200]}"
+            if key in seen_prefixes:
+                continue
+            seen_prefixes[key] = True
+            deduped.append(r)
+        results = deduped
         
         # Sort by score descending, then by parent_idx (within same score)
         results.sort(key=lambda r: (-r["score"], r["parent_idx"]))

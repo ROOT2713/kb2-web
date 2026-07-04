@@ -22,11 +22,11 @@ logger = logging.getLogger(__name__)
 
 # Default dimension weights
 DEFAULT_WEIGHTS = {
-    "keyword": 0.30,
-    "dense": 0.30,
-    "confidence": 0.20,
-    "freshness": 0.10,
-    "source_count": 0.10,
+    "keyword": 0.45,
+    "dense": 0.45,
+    "confidence": 0.05,
+    "freshness": 0.03,
+    "source_count": 0.02,
 }
 
 # Freshness half-life in days

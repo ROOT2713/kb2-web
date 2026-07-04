@@ -575,6 +575,7 @@ async def _build_search_context(
         "验收测评", "验收评测", "检测费", "测评费", "评测费",
         "审计费", "管理费", "设计费", "监理费", "招标",
         "等保", "密评", "咨询费",
+        "商密", "商用密码", "密码应用",
     ])
     if _fee_q:
         try:
@@ -613,7 +614,7 @@ async def _build_search_context(
         
         # Extract fee type keywords from query for boosting
         _fee_type_kw = []
-        _fee_type_patterns = re.findall(r'(验收测评|验收评测|监理|设计|等保|咨询|审计|招标|检测|评测|评估|造价|管理费)', q)
+        _fee_type_patterns = re.findall(r'(验收测评|验收评测|监理|设计|等保|咨询|审计|招标|检测|评测|评估|造价|管理费|商密|商用密码|密评|密码应用)', q)
         if _fee_type_patterns:
             _fee_type_kw = list(set(_fee_type_patterns))
             logger.info("[D2-B] Fee type detected: %s", _fee_type_kw)
@@ -1427,6 +1428,7 @@ async def _generate_answer(
         "验收测评", "验收评测", "检测费", "测评费", "评测费",
         "审计费", "管理费", "设计费", "监理费", "招标",
         "等保", "密评", "咨询费",
+        "商密", "商用密码", "密码应用",
     ]):
         _fee_rules = (
             "5. **计费类查询强制计算规则**：当「文档内容」中包含费率表（分档百分比/基价表）、计算公式（V=Dxgx(1-Z)/直线内插等）或具体计费数据时，你必须基于文档中的公式和数据执行以下操作：\n"
