@@ -694,6 +694,26 @@ def rrf_merge(dense_results: list, bm25_results: list, k: int = 60, query_keywor
         sorted_keys = sorted(chunk_scores.keys(), key=lambda x: chunk_scores[x], reverse=True)
         merged = [chunk_data[k] for k in sorted_keys]
 
+    # ── RRF per-doc score cap: 防止大文档靠chunk数量碾压小文档 ──
+    # 任何文档的累计 RRF 得分上限为 _MAX_DOC_SCORE，超出部分的低分 chunk 归零
+    _MAX_DOC_SCORE = 1.5  # ≈ rank1(1/61≈0.0164) + rank2(0.0161) + ... ~90 chunks
+    _doc_accum = defaultdict(float)
+    for _key in list(chunk_scores.keys()):
+        _item = chunk_data[_key]
+        _did = None
+        for _t in _item.get("tags", []):
+            if _t.startswith("doc_id:"):
+                _did = _t[7:]
+                break
+        if not _did:
+            _did = f"_no_{_item.get('text', '')[:20]}"
+        _prev = _doc_accum[_did]
+        _new = min(chunk_scores[_key], _MAX_DOC_SCORE - _prev) if _prev < _MAX_DOC_SCORE else 0.0
+        chunk_scores[_key] = _new
+        _doc_accum[_did] += _new
+    sorted_keys = sorted(chunk_scores.keys(), key=lambda x: chunk_scores[x], reverse=True)
+    merged = [chunk_data[k] for k in sorted_keys if chunk_scores[k] > 0]
+
     # ── 文档多样性保障 ──
     # 限制每个文档最多取N个chunks，防止大文档完全淹没小文档
     doc_counts = defaultdict(int)  # doc_id → 已取数量

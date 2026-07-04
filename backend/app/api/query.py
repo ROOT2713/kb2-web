@@ -113,6 +113,56 @@ def _extract_high_signal_terms(query_keywords: list[str] | None) -> set[str]:
     return high_signal
 
 
+# ═══════════════════════════════════════════════════════════════════
+# 摘要文档检测
+# ═══════════════════════════════════════════════════════════════════
+
+_SUMMARY_INDICATORS = frozenset({
+    "本文介绍了", "本文包含", "本文档包含", "摘要", "概  述", "概述",
+    "前言", "范围", "scope", "page_count:", "总页数:", "总页数",
+    "本文件规定了", "本文件适用于", "本文主要介绍",
+    "基本信息", "文件信息", "文档描述",
+})
+
+_CLAUSE_PATTERN = re.compile(r'(第[一二三四五六七八九十百千零\d]+[条章节]|\d+\.\d+)')
+
+
+def _is_summary_doc(chunk_text: str, doc_name: str) -> bool:
+    """检测文档 chunk 是否为摘要/概述级内容（不含具体条款细节）。
+
+    组合检测:
+    1. 关键词命中: chunk_text 含 _SUMMARY_INDICATORS 中 ≥1 个
+    2. 无条款结构: chunk_text 不含 第X条/X.X 等条款编号模式
+    3. 长度约束: chunk_text < 300 字符（短文本）
+
+    返回 True 表示应标记为「摘要级文档」。
+    """
+    text_clean = chunk_text.strip()
+    if not text_clean:
+        return False
+
+    # 条款级文档: 包含章节号/条款号 → 非摘要
+    if _CLAUSE_PATTERN.search(text_clean):
+        return False
+
+    # 标题本身含条款号 → 非摘要（如 "5.2 接地端子要求"）
+    if _CLAUSE_PATTERN.search(doc_name):
+        return False
+
+    # 摘要关键词检测
+    has_indicator = any(ind in text_clean for ind in _SUMMARY_INDICATORS)
+    if not has_indicator:
+        return False
+
+    # 长文本但有摘要关键词 → 可能是完整文档的开头段，不是纯摘要
+    if len(text_clean) >= 500:
+        return False
+
+    # 摘要→全文扩展检查（T0-1 已做）：如果 text 已被 parent_chunks 扩展 > 300 字符，非摘要
+    # （扩展后的 text 已包含完整条款内容）
+    return True
+
+
 # ── 按置信度排序 ──
 def _sort_by_confidence(results: list, top_k: int = 20) -> list:
     """按文档置信度排序（profile_confidence 降序）。"""
@@ -723,6 +773,40 @@ async def _build_search_context(
             doc_facts[doc_id] = []
         doc_facts[doc_id].append((text_val, doc_name, cleaned, parent_idx))
 
+    # ── T1-2: 版本感知 doc_facts 去重 ──
+    # 同一标准号多版本时只保留最新版本（除非查询明确提及旧版年份）
+    _query_has_year = bool(re.search(r'(?:19|20)\d{2}', q or ''))
+    _version_map = {}
+    for _did in list(doc_facts.keys()):
+        _dname = doc_facts[_did][0][1] if doc_facts[_did] else ""
+        _base, _year = _extract_standard_base_and_year(_dname)
+        if _base and _year:
+            _version_map[_did] = (_base, _year)
+
+    _base_groups = defaultdict(list)
+    for _did, (_base, _year) in _version_map.items():
+        _base_groups[_base].append((_did, _year))
+
+    _dids_to_drop = set()
+    for _base, _entries in _base_groups.items():
+        if len(_entries) <= 1:
+            continue
+        _entries.sort(key=lambda x: x[1], reverse=True)
+        _newest_did = _entries[0][0]
+        _newest_year = _entries[0][1]
+        for _did, _year in _entries:
+            if _did == _newest_did:
+                continue
+            _old_year_str = str(_year)
+            if _query_has_year and _old_year_str in (q or ""):
+                continue  # 查询明确要旧版，保留
+            _dids_to_drop.add(_did)
+            logger.info("[T1-2] Drop old version %s (base=%s, year=%d), keep %s (newest=%d)",
+                        _did, _base, _year, _newest_did, _newest_year)
+
+    for _did in _dids_to_drop:
+        doc_facts.pop(_did, None)
+
     # ── Phase H: Query-doc title 相关度重排 ──
     # 当 bank="all" 触发多 bank 分散查询时，Dense (Hindsight) 返回的各 bank
     # top 结果可能包含与 query 主题完全无关的文档（BM25 IDF 分布变化后更明显）。
@@ -809,6 +893,63 @@ def _normalize_standard_keyword(raw: str) -> str:
     kw = re.sub(r"ISO\s*/\s*IEC", "ISO/IEC", kw, flags=re.IGNORECASE)
     kw = re.sub(r"\s*([\—\-–])\s*", r"\1", kw)
     return kw
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 版本感知 — 标准号版本提取
+# ═══════════════════════════════════════════════════════════════════
+
+_STD_VERSION_PATTERN = re.compile(
+    r'(?P<prefix>'
+    r'GB(?:/T)?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
+    r'|ISO(?:\s*/\s*IEC)?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
+    r'|YD\s*/?\s*T?\s*\d+'
+    r'|SJ\s*/?\s*T?\s*\d+'
+    r'|GA\s*/?\s*T?\s*\d+'
+    r'|HJ\s*/?\s*T?\s*\d+'
+    r'|CJJ\s*/?\s*T?\s*\d+'
+    r'|JGJ\s*/?\s*T?\s*\d+'
+    r'|WS\s*/?\s*T?\s*\d+'
+    r'|T\s*/\s*EGAG\s*\d+'
+    r'|TEGAG\s*\d+'
+    r'|GDZW\s*\d+'
+    r'|STC[\w\-]+'
+    r'|DB\d+[\w\-]*'
+    r')'
+    r'\s*[\-–—]?\s*'
+    r'(?P<year>(?:19|20)\d{2})?'
+)
+
+
+def _extract_standard_base_and_year(doc_name: str) -> tuple[str | None, int | None]:
+    """从文档标题中提取标准号基准 + 年份。
+
+    例如:
+      "GB 50462-2015 数据中心基础设施施工及验收标准" → ("GB50462", 2015)
+      "GB 50462-2024 数据中心基础设施施工及验收标准" → ("GB50462", 2024)
+      "T/EGAG 010-2022 监理服务规范" → ("TEGAG010", 2022)
+      "粤府办〔2020〕9号 管理办法" → ("粤府办", 2020)
+      "小红书笔记" → (None, None)
+
+    返回:
+        (base_standard, year): base_standard = 去除空格/分隔符的标准号基准
+                               year = 4位数字年份或 None
+    """
+    if not doc_name:
+        return None, None
+    normalized = _normalize_doc_title_for_standard(doc_name)
+    m = _STD_VERSION_PATTERN.search(normalized)
+    if not m:
+        # 尝试匹配中文年份格式: 粤府办〔2020〕9号
+        cn_m = re.search(r'([一-鿿]+)〔(\d{4})〕', doc_name)
+        if cn_m:
+            return (cn_m.group(1).strip(), int(cn_m.group(2)))
+        return None, None
+
+    prefix = re.sub(r'\s*', '', m.group('prefix'))  # "GB/T 50462" → "GB/T50462"
+    year_str = m.group('year')
+    year = int(year_str) if year_str else None
+    return (prefix, year)
 
 
 def _assemble_standard_contents_meta(sources: list, bank: str = "all") -> list[dict]:
@@ -1203,11 +1344,19 @@ async def _generate_answer(
 
     # ── 按文档合并：每个文档取 top-2 fact，拼接 ──
     context_parts = []
+    _summary_context_parts = []  # T1-3: 摘要文档的 context 后置
     sources = []
+    _summary_doc_ids = set()  # T1-3: 检测为摘要的 doc_id
 
     for doc_id, facts in doc_facts.items():
         top_facts = facts[:3]
         doc_name = top_facts[0][1]
+
+        # T1-3: 摘要文档检测（取首个 chunk 判断）
+        if doc_id not in _summary_doc_ids and top_facts:
+            _first_chunk = top_facts[0][0]
+            if _is_summary_doc(_first_chunk, doc_name):
+                _summary_doc_ids.add(doc_id)
 
         seen_texts = set()
         fact_summaries = []
@@ -1246,7 +1395,13 @@ async def _generate_answer(
             _kw_pct = min(_kw_hits / max(len(query_keywords), 1), 1.0)
             _kw_signal = f" (相关度: {int(_kw_pct*100)}% | 关键词匹配: {_kw_hits}/{len(query_keywords)})"
             logger.info("[RPO-kw] doc=%s hits=%d/%d pct=%.0f%%", doc_name[:40], _kw_hits, len(query_keywords), _kw_pct*100)
-        context_parts.append(f"[来源: {doc_name}{_kw_signal}]\n{combined}")
+        # T1-3: 摘要文档标记 + 后置
+        _summary_tag = " [摘要概要]" if doc_id in _summary_doc_ids else ""
+        _context_entry = f"[来源: {doc_name}{_summary_tag}{_kw_signal}]\n{combined}"
+        if doc_id in _summary_doc_ids:
+            _summary_context_parts.append(_context_entry)
+        else:
+            context_parts.append(_context_entry)
 
         merged_text = "；".join([c for _, _, c, _ in facts[:3]])
         if parent_texts_for_doc:
@@ -1264,6 +1419,9 @@ async def _generate_answer(
             "chunk": f"{len(facts)} 条相关",
             "text": _clean_source_text(snippet[:3000]),
         })
+
+    # ── T1-3: 摘要文档后置（非摘要在前，摘要在后）──
+    context_parts.extend(_summary_context_parts)
 
     # ── 限制 context 总量 ──
     total_chars = sum(len(p) for p in context_parts)
