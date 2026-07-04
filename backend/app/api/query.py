@@ -1348,6 +1348,22 @@ async def _generate_answer(
     sources = []
     _summary_doc_ids = set()  # T1-3: 检测为摘要的 doc_id
 
+    # ── [P1] 批量查询 doc_meta（published_date + geo_scope）──
+    _doc_meta = {}
+    try:
+        _meta_db = SessionLocal()
+        _all_dids = list(doc_facts.keys())
+        _placeholders = ",".join(f":d{i}" for i in range(len(_all_dids)))
+        _rows = _meta_db.execute(
+            sa_text(f"SELECT doc_id, published_date, geo_scope FROM documents WHERE doc_id IN ({_placeholders})"),
+            {f"d{i}": did for i, did in enumerate(_all_dids)}
+        ).fetchall()
+        for _r in _rows:
+            _doc_meta[_r[0]] = {"published_date": _r[1], "geo_scope": _r[2]}
+        _meta_db.close()
+    except Exception as e:
+        logger.warning("[P1] doc_meta query failed: %s", e)
+
     for doc_id, facts in doc_facts.items():
         top_facts = facts[:3]
         doc_name = top_facts[0][1]
@@ -1397,7 +1413,18 @@ async def _generate_answer(
             logger.info("[RPO-kw] doc=%s hits=%d/%d pct=%.0f%%", doc_name[:40], _kw_hits, len(query_keywords), _kw_pct*100)
         # T1-3: 摘要文档标记 + 后置
         _summary_tag = " [摘要概要]" if doc_id in _summary_doc_ids else ""
-        _context_entry = f"[来源: {doc_name}{_summary_tag}{_kw_signal}]\n{combined}"
+        # [P1] 注入元数据信号
+        _meta = _doc_meta.get(doc_id, {})
+        _date_signal = ""
+        _pd = _meta.get("published_date")
+        if _pd and str(_pd)[:4].isdigit():
+            _date_signal = f" [{str(_pd)[:4]}版]"
+        _geo_signal = ""
+        _gs = _meta.get("geo_scope")
+        if _gs and _gs not in ("", "(空)"):
+            _geo_map = {"national":"国标","provincial":"省","guangzhou":"广州","shenzhen":"深圳","dongguan":"东莞","foshan":"佛山"}
+            _geo_signal = f" [{_geo_map.get(_gs, _gs)}]"
+        _context_entry = f"[来源: {doc_name}{_summary_tag}{_date_signal}{_geo_signal}{_kw_signal}]\n{combined}"
         if doc_id in _summary_doc_ids:
             _summary_context_parts.append(_context_entry)
         else:
