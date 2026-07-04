@@ -258,10 +258,10 @@ def expand_query_synonyms(q: str) -> str:
 # ═══════════════════════════════════════════════════════════════════
 
 async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int = 4096,
-                  max_chunks_per_doc: int = 5) -> list:
+                  max_chunks_per_doc: int = 8) -> list:
     """语义召回 — 支持多 bank 映射和并行查询
 
-    max_chunks_per_doc: 每个文档最多保留的 chunk 数（默认 5），防止单文档淹没结果
+    max_chunks_per_doc: 每个文档最多保留的 chunk 数（默认 8），防止单文档淹没结果
     """
     # 1. Resolve frontend bank key → Hindsight bank name
     #    兼容：调用方可能传前端 key（industry_docs）或 Hindsight 名（kb_industry）
@@ -750,6 +750,7 @@ async def llm_rerank(query: str, candidates: list, top_k: int = 15) -> list:
 1. 优先选择标题和内容都与查询最直接相关的文档
 2. 区分近义词差异，例如"接地端子"（电气连接器件）和"接地电阻"（电气参数）是不同概念
 3. 查询中包含标准号时，标准文档优先于一般性指导文档
+4. 当多个文档是同一标准的不同版本（如GB50462-2015和GB50462-2024），优先选择最新版本（年份数字最大的），除非查询明确要求旧版本
 
 查询: {query}
 

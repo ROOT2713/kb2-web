@@ -367,43 +367,6 @@ async def _build_search_context(
     except Exception as e:
         logger.warning("BM25 fallback: %s", e)
 
-    # ── 短摘要检测：从 parent_chunks 取回原文 ──
-    try:
-        _pdb = SessionLocal()
-        for _ri, _r in enumerate(raw_results[:30]):
-            _text = _r.get("text", "") or ""
-            if len(_text) >= 150:
-                continue
-            _doc_id = None
-            _parent_idx = None
-            for _t in _r.get("tags", []):
-                if _t.startswith("doc_id:"):
-                    _doc_id = _t[7:]
-                elif _t.startswith("parent_idx:"):
-                    try:
-                        _parent_idx = int(_t.split(":", 1)[1])
-                    except (ValueError, IndexError):
-                        pass
-            if not _doc_id:
-                continue
-            if _parent_idx is not None:
-                _row = _pdb.execute(
-                    sa_text("SELECT parent_text FROM parent_chunks WHERE doc_id=:did AND parent_idx=:pidx"),
-                    {"did": _doc_id, "pidx": _parent_idx},
-                ).fetchone()
-            else:
-                _row = _pdb.execute(
-                    sa_text("SELECT parent_text FROM parent_chunks WHERE doc_id=:did ORDER BY parent_idx LIMIT 1"),
-                    {"did": _doc_id},
-                ).fetchone()
-            if _row and _row[0]:
-                _full_text = _row[0]
-                if len(_full_text) > len(_text) * 2:
-                    raw_results[_ri] = {**_r, "text": _full_text}
-        _pdb.close()
-    except Exception as e:
-        logger.warning("short summary enrichment failed: %s", e)
-
     # 精确结果排在最前面
     all_results = exact_results + bm25_merged
 
@@ -561,6 +524,44 @@ async def _build_search_context(
             all_results = apply_tiebreaker_sort(all_results, query=q)
         except Exception as e:
             logger.warning("tiebreaker sort failed: %s", e)
+
+    # ── 短摘要扩展：从 parent_chunks 取回全文（在 rerank 之后，D2-B 之前）──
+    # [T0-1] 从 raw_results[:30] 移到此处，确保 rerank 后的全量结果都被覆盖
+    try:
+        _pdb = SessionLocal()
+        for _ri, _r in enumerate(all_results):
+            _text = _r.get("text", "") or ""
+            if len(_text) >= 150:
+                continue
+            _doc_id = None
+            _parent_idx = None
+            for _t in _r.get("tags", []):
+                if _t.startswith("doc_id:"):
+                    _doc_id = _t[7:]
+                elif _t.startswith("parent_idx:"):
+                    try:
+                        _parent_idx = int(_t.split(":", 1)[1])
+                    except (ValueError, IndexError):
+                        pass
+            if not _doc_id:
+                continue
+            if _parent_idx is not None:
+                _row = _pdb.execute(
+                    sa_text("SELECT parent_text FROM parent_chunks WHERE doc_id=:did AND parent_idx=:pidx"),
+                    {"did": _doc_id, "pidx": _parent_idx},
+                ).fetchone()
+            else:
+                _row = _pdb.execute(
+                    sa_text("SELECT parent_text FROM parent_chunks WHERE doc_id=:did ORDER BY parent_idx LIMIT 1"),
+                    {"did": _doc_id},
+                ).fetchone()
+            if _row and _row[0]:
+                _full_text = _row[0]
+                if len(_full_text) > len(_text) * 2:
+                    all_results[_ri] = {**_r, "text": _full_text}
+        _pdb.close()
+    except Exception as e:
+        logger.warning("short summary enrichment (post-rerank) failed: %s", e)
 
     # ── D2-B: 金额类查询定向注入费率表chunk ──
     # 旧方案: LIMIT 3 parent_chunks → 命中封面/编委会，不含费率表。
