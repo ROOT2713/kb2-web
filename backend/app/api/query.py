@@ -22,6 +22,7 @@ from fastapi import APIRouter, Form, HTTPException
 from sqlalchemy import text as sa_text
 
 from app.models.database import SessionLocal
+from app.services.standard_boost import extract_standard_numbers
 from app.services.cache_service import (
     get_exact as cache_get_exact,
     get_semantic as cache_get_semantic,
@@ -1804,6 +1805,14 @@ async def query(
         logger.info("[D8] 同义词扩展: '%s' → '%s'", q[:40], q_recalled[:60])
     else:
         q_recalled = q
+
+    # D9: 多轮锚词注入 — 从 history 提取标准号/文号追加到 recall query
+    if history:
+        _hist_terms = extract_standard_numbers(history)
+        if _hist_terms:
+            _hist_q = q_recalled + " " + " ".join(sorted(set(_hist_terms)))
+            logger.info("[D9] 多轮锚词注入: '%s' + %s", q_recalled[:40], sorted(set(_hist_terms)))
+            q_recalled = _hist_q
 
     # T7: 金额档位扩展 — 只用于BM25召回
     q_bm25 = expand_amount_tiers(q_recalled)
