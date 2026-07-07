@@ -1045,3 +1045,98 @@ def apply_tiebreaker_sort(
     )
 
     return [s["result"] for s in scored]
+
+
+# ══════════════════════════════════════════════════════════════════
+# Cross-Encoder Rerank (SiliconFlow BGE-Reranker-v2-M3)
+# ══════════════════════════════════════════════════════════════════
+
+_CROSS_ENCODER_URL = "https://api.siliconflow.cn/v1/rerank"
+_CROSS_ENCODER_MODEL = "BAAI/bge-reranker-v2-m3"
+
+
+async def cross_encoder_rerank(
+    query: str,
+    candidates: list,
+    top_k: int = 15,
+    max_truncate: int = 800,
+) -> list:
+    """Rerank using SiliconFlow cross-encoder API (BGE-Reranker-v2-M3).
+
+    Much faster and cheaper than LLM rerank, with better calibrated scores.
+    Falls back to original order (RRF) on API failure.
+
+    Args:
+        query: Original query string.
+        candidates: List of candidate dicts (must have 'text' key).
+        top_k: Max results to return.
+        max_truncate: Max chars per doc passed to rerank API.
+
+    Returns:
+        Re-ranked candidates list (same format, top_k items).
+    """
+    if not candidates or len(candidates) < 2:
+        return candidates[:top_k]
+
+    api_key = settings.embedding_api_key  # shares SiliconFlow key
+    if not api_key:
+        logger.warning("[RERANK] No SiliconFlow API key, falling back to RRF order")
+        return candidates[:top_k]
+
+    # Build document list — truncate each to save tokens
+    docs = []
+    doc_map = {}  # index -> original item
+    for i, item in enumerate(candidates):
+        text = (item.get("text", "") or "")[:max_truncate]
+        if text.strip():
+            docs.append(text)
+            doc_map[len(docs) - 1] = i
+
+    if not docs:
+        return candidates[:top_k]
+
+    try:
+        payload = {
+            "model": _CROSS_ENCODER_MODEL,
+            "query": query,
+            "documents": docs,
+        }
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                _CROSS_ENCODER_URL,
+                json=payload,
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            if resp.status_code != 200:
+                logger.warning(
+                    "[RERANK] API returned %d: %s",
+                    resp.status_code, resp.text[:200],
+                )
+                return candidates[:top_k]
+            result = resp.json()
+    except Exception as e:
+        logger.warning(
+            "[RERANK] API call failed: %s, falling back to RRF order", e,
+        )
+        return candidates[:top_k]
+
+    # Map back to original items sorted by relevance_score descending
+    reranked = []
+    seen = set()
+    for r in result.get("results", []):
+        idx = r.get("index")
+        orig_idx = doc_map.get(idx)
+        if orig_idx is not None and orig_idx not in seen:
+            seen.add(orig_idx)
+            reranked.append(candidates[orig_idx])
+
+    # Append any candidates not covered by API (safety)
+    for i, item in enumerate(candidates):
+        if i not in seen:
+            reranked.append(item)
+
+    logger.info(
+        "[RERANK] Cross-encoder reranked %d → %d items",
+        len(candidates), len(reranked),
+    )
+    return reranked[:top_k]

@@ -40,6 +40,7 @@ from app.services.retrieval import (
     expand_query_synonyms,
     keyword_rerank,
     llm_rerank,
+    cross_encoder_rerank,
     get_bank_config,
     recall,
     rrf_merge,
@@ -543,6 +544,29 @@ async def _build_search_context(
                     all_results = reranked
                 except Exception:
                     pass
+        elif rerank_mode == "cross_encoder":
+            # Cross-encoder rerank via SiliconFlow (fast, cheap, calibrated)
+            try:
+                reranked = await asyncio.wait_for(
+                    cross_encoder_rerank(q, all_results, top_k=15),
+                    timeout=15,
+                )
+                if exact_bm25_hits:
+                    protected = []
+                    others = []
+                    for r in reranked:
+                        key = tuple(r.get("tags", []))
+                        if key in exact_bm25_hits:
+                            protected.append(r)
+                        else:
+                            others.append(r)
+                    all_results = protected + others
+                else:
+                    all_results = reranked
+            except asyncio.TimeoutError:
+                logger.warning("[RERANK] Cross-encoder timeout (15s), falling back to RRF order")
+            except Exception as e:
+                logger.warning("[RERANK] Cross-encoder failed: %s, falling back to RRF order", e)
         else:
             # Default: LLM Rerank精排
             try:
@@ -1856,7 +1880,7 @@ async def query(
     use_rerank = rerank.lower() == "true" or (bank == "checklist")
 
     # ── 确定 rerank_mode ──
-    valid_modes = {"default", "multidim", "confidence", "freshness"}
+    valid_modes = {"default", "multidim", "confidence", "freshness", "cross_encoder"}
     use_rerank_mode = rerank_mode if rerank_mode in valid_modes else "default"
 
     # ── Phase 1: 构建搜索上下文 ──
