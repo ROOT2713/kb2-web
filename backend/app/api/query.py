@@ -1807,7 +1807,9 @@ async def query(
         q_recalled = q
 
     # D9: 多轮锚词注入 — 从 history 提取标准号/文号追加到 recall query
-    if history:
+    # Guard: 只对短追问（<30字）注入，长query有足够自身信号
+    #        长query注入会带偏已跨域的问题（如从"项目管理"跨到"密码应用"）
+    if history and len(q) < 30:
         _hist_terms = extract_standard_numbers(history)
         if _hist_terms:
             _hist_q = q_recalled + " " + " ".join(sorted(set(_hist_terms)))

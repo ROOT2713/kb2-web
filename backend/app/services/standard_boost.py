@@ -243,4 +243,24 @@ def boost_exact_standards(
                 _stitle[:60], len(_schunks), std_num,
             )
 
+    # ── 最终排序：按发布时间倒序，最新版排最前 ──
+    # 防止补充扫描注入的旧版本把主扫描注入的新版本推到后面
+    if len(doc_facts) > 1 and seen_doc_ids:
+        try:
+            _date_rows = db.execute(
+                sa_text("SELECT doc_id, published_date FROM documents WHERE doc_id IN :ids"),
+                {"ids": tuple(seen_doc_ids)},
+            ).fetchall()
+            _date_map = {row[0]: row[1] or "0000-01-01" for row in _date_rows}
+            _sorted = sorted(
+                doc_facts.items(),
+                key=lambda x: _date_map.get(x[0], "0000-01-01"),
+                reverse=True,
+            )
+            doc_facts.clear()
+            doc_facts.update(dict(_sorted))
+            logger.info("[C1-StdBoost] Sorted %d docs by published_date (newest first)", len(_sorted))
+        except Exception as e:
+            logger.warning("[C1-StdBoost] Sort skipped: %s", e)
+
     return stats
