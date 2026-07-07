@@ -401,14 +401,14 @@ async def _build_search_context(
     all_recall_results = []
     if bank != "all" and hs_bank and hs_bank != "kb":
         try:
-            all_recall_results = await recall(q_recalled, limit=40, bank=hs_bank, doc_ids=session_doc_ids)
+            all_recall_results = await recall(q_recalled, limit=40, bank=hs_bank)
         except Exception as e:
             logger.warning("recall(%s) failed: %s", hs_bank, e)
     else:
         active_banks = await _get_active_hindsight_banks()
         for _hs_bank in active_banks:
             try:
-                bank_results = await recall(q_recalled, limit=40, bank=_hs_bank, doc_ids=session_doc_ids)
+                bank_results = await recall(q_recalled, limit=40, bank=_hs_bank)
                 all_recall_results.extend(bank_results)
             except Exception:
                 pass
@@ -417,7 +417,7 @@ async def _build_search_context(
     if all_recall_results:
         raw_results = all_recall_results
     elif bank == "all":
-        raw_results = await recall(q_recalled, limit=25, bank="kb", doc_ids=session_doc_ids)
+        raw_results = await recall(q_recalled, limit=25, bank="kb")
     else:
         raw_results = []
 
@@ -428,22 +428,7 @@ async def _build_search_context(
         bm25_index, bm25_docs = await build_bm25_index(bank)
         if bm25_index:
             bm25_hits = bm25_search(q_bm25, bm25_index, bm25_docs, top_k=30)
-            if bm25_hits:
-                # Filter BM25 hits by session doc_ids if domain-locked
-                if session_doc_ids:
-                    _filtered_bm25 = []
-                    for _hit in bm25_hits:
-                        _did = _hit.get("doc_id")
-                        if not _did:
-                            for _t in _hit.get("tags", []):
-                                if _t.startswith("doc_id:"):
-                                    _did = _t[7:]
-                                    break
-                        if _did and _did in session_doc_ids:
-                            _filtered_bm25.append(_hit)
-                    if _filtered_bm25:
-                        bm25_hits = _filtered_bm25
-                bm25_merged = rrf_merge(raw_results, bm25_hits, k=60, query_keywords=query_keywords, bank=bank)
+            bm25_merged = rrf_merge(raw_results, bm25_hits, k=60, query_keywords=query_keywords, bank=bank)
     except Exception as e:
         logger.warning("BM25 fallback: %s", e)
 
@@ -760,6 +745,19 @@ async def _build_search_context(
             )
         else:
             logger.info("[D2-B] No fee chunks found for query: %s", q[:60])
+
+    # ── 会话域锁定：软偏向（非硬过滤）──
+    # 将 session_doc_ids 中的 doc 分数 +100，使其优先于非锁定文档
+    if session_doc_ids:
+        for r in all_results:
+            r_doc_id = None
+            for t in r.get("tags", []):
+                if t.startswith("doc_id:"):
+                    r_doc_id = t[7:]
+                    break
+            if r_doc_id and r_doc_id in session_doc_ids:
+                r["score"] = r.get("score", 0) + 100
+        all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
 
     # ── 清洗 + 过滤 + 去重合并 ──
     doc_facts = {}
@@ -1809,6 +1807,7 @@ def _assess_recall_confidence(
     ctx: dict,
     q: str,
     query_keywords: list,
+    session_doc_ids: set = None,
 ) -> dict | None:
     """三级门控置信度评估。
 
@@ -1838,6 +1837,10 @@ def _assess_recall_confidence(
             "reject_type": "knowledge_gap",
             "message": _REJECT_MSG_KNOWLEDGE_GAP,
         }
+
+    # ── 域锁定状态：跳过 L2（模糊追问在域锁定下 coverage 低是正常的）──
+    if session_doc_ids:
+        return None
 
     # ── Level 2: 召回极少或质量差 → 计算覆盖率和精确匹配 ──
     # coverage: 顶部的 top-K chunk 中关键词覆盖率（避免跨文档碎片拼凑）
@@ -2039,11 +2042,13 @@ async def query(
         session_doc_ids_from_ctx = set(ctx["doc_facts"].keys())
         if session_doc_ids_from_ctx:
             if session_doc_ids is None:
-                # 首轮查询：doc_facts 中的 doc_ids 即白名单
-                session_update(session_id, session_doc_ids_from_ctx, bank)
-                session_doc_ids = session_doc_ids_from_ctx
+                # 首轮查询：锁 top-15 最相关文档（按 doc_facts 中 chunk 数排序）
+                doc_chunk_counts = {doc_id: len(chunks) for doc_id, chunks in ctx["doc_facts"].items()}
+                top_docs = set(sorted(doc_chunk_counts, key=doc_chunk_counts.get, reverse=True)[:15])
+                session_update(session_id, top_docs, bank)
+                session_doc_ids = top_docs
                 logger.info(
-                    "[SESSION] Initialized session %s with %d doc_ids",
+                    "[SESSION] Initialized session %s with %d doc_ids (top-15 by chunk count)",
                     session_id[:8], len(session_doc_ids),
                 )
             else:
@@ -2104,7 +2109,7 @@ async def query(
             logger.warning("KG traversal failed: %s", e)
 
     # ── Confidence Gate (L1+L2): 召回置信度评估 — 三级门控 ──
-    reject = _assess_recall_confidence(ctx, q, query_keywords)
+    reject = _assess_recall_confidence(ctx, q, query_keywords, session_doc_ids)
     if reject:
         logger.info(
             "[CONFIDENCE] Gate triggered: %s (q=%s, source_count=%d)",
