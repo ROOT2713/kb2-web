@@ -33,5 +33,6 @@ def init_db():
     import app.models.synonym      # noqa: F401
     import app.models.user         # noqa: F401 — User (admin/viewer)
     import app.models.upload_task  # noqa: F401 — UploadTask
+    import app.models.audit        # noqa: F401 — AuditLog
 
     Base.metadata.create_all(bind=engine)

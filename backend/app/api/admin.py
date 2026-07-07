@@ -5,8 +5,8 @@ Ported from: kb-web server.py stats() L4253-L4275,
              _get_active_hindsight_banks() L1803-L1823 (re-export from retrieval)
              get_bank_config() L1824-L1829 (re-export from retrieval)
 """
-
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text as sa_text
@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.database import get_db
+from app.models.audit import AuditLog
 from app.services.retrieval import _get_active_hindsight_banks, _hindsight_request, get_bank_config
 from app.services.cache_service import invalidate_bm25_cache
 from app.services.cost_tracker import get_stats as get_cost_stats
@@ -412,3 +413,51 @@ async def quality_gates_summary_endpoint(
 ):
     """获取质量门禁统计摘要。"""
     return get_quality_gates_summary(db)
+
+
+@router.get("/audit")
+async def get_audit_logs(
+    user_id: str = Query(None, description="按用户筛选"),
+    from_date: str = Query(None, description="起始日期 (YYYY-MM-DD)"),
+    to_date: str = Query(None, description="截止日期 (YYYY-MM-DD)"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """查询审计日志（仅 admin）。"""
+    query = db.query(AuditLog)
+    if user_id:
+        query = query.filter(AuditLog.user_id == user_id)
+    if from_date:
+        try:
+            dt = datetime.strptime(from_date, "%Y-%m-%d")
+            query = query.filter(AuditLog.created_at >= dt)
+        except ValueError:
+            raise HTTPException(400, "from_date 格式错误，应为 YYYY-MM-DD")
+    if to_date:
+        try:
+            dt = datetime.strptime(to_date, "%Y-%m-%d")
+            query = query.filter(AuditLog.created_at < dt.replace(hour=23, minute=59, second=59))
+        except ValueError:
+            raise HTTPException(400, "to_date 格式错误，应为 YYYY-MM-DD")
+
+    total = query.count()
+    logs = query.order_by(AuditLog.id.desc()).offset(offset).limit(limit).all()
+
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "logs": [
+            {
+                "id": log.id,
+                "user_id": log.user_id,
+                "query": log.query,
+                "answer": log.answer[:200] if log.answer else None,
+                "cache_hit": log.cache_hit,
+                "rejected": log.rejected,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+            }
+            for log in logs
+        ],
+    }

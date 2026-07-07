@@ -19,6 +19,15 @@ from app.models.user import User
 _bearer = HTTPBearer(auto_error=False)
 
 
+def get_username_from_token(token: str) -> str | None:
+    """Decode JWT token and return username. Returns None if invalid/expired."""
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        return payload.get("sub", "")
+    except Exception:
+        return None
+
+
 def create_access_token(username: str) -> str:
     """Create a JWT access token."""
     payload = {

@@ -14,12 +14,13 @@ Architecture:
 import asyncio
 import html as _html_mod
 import logging
+import json
 import os
 import re
 import uuid
 from collections import defaultdict
 
-from fastapi import APIRouter, Form, HTTPException
+from fastapi import APIRouter, Form, HTTPException, Request
 from sqlalchemy import text as sa_text
 
 from app.models.database import SessionLocal
@@ -28,6 +29,8 @@ from app.services.session_manager import (
     create_or_update_session as session_update,
     release_session as session_release,
 )
+from app.middleware.jwt_auth import get_username_from_token
+from app.models.audit import AuditLog
 from app.services.standard_boost import extract_standard_numbers
 from app.services.cache_service import (
     get_exact as cache_get_exact,
@@ -1896,6 +1899,7 @@ def _assess_recall_confidence(
 
 @router.post("")
 async def query(
+    request: Request,
     q: str = Form(...),
     bank: str = Form("all"),
     history: str = Form(""),
@@ -1931,6 +1935,11 @@ async def query(
     else:
         session_id = uuid.uuid4().hex[:12]  # generate new short session ID
         logger.info("[SESSION] New session %s", session_id[:8])
+
+    # ── 审计日志跟踪变量 ──
+    cache_hit = 0
+    reject = None
+    _t_start = 0.0
 
     # T6: 标准号规范化
     q = normalize_standard_numbers(q)
@@ -2179,6 +2188,33 @@ async def query(
         result["kg_context"] = kg_context_list
     if session_id:
         result["session_id"] = session_id
+
+    # ── 审计日志（异步写入，不阻塞返回）──
+    try:
+        _auth_header = request.headers.get("Authorization", "")
+        _username = "unknown"
+        if _auth_header.startswith("Bearer "):
+            _u = get_username_from_token(_auth_header[7:])
+            if _u:
+                _username = _u
+        _audit_db = SessionLocal()
+        try:
+            _audit_db.add(AuditLog(
+                user_id=_username,
+                query=q,
+                answer=answer,
+                sources=json.dumps(sources, ensure_ascii=False)[:2000] if sources else None,
+                cache_hit=1 if cache_hit else 0,
+                rejected=reject["reject_type"] if reject else None,
+            ))
+            _audit_db.commit()
+        except Exception:
+            pass
+        finally:
+            _audit_db.close()
+    except Exception:
+        pass
+
     return result
 
 
