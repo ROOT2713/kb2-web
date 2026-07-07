@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 1440  # 24 hours
 
     # ── CORS ──
-    cors_origins: List[str] = ["*"]
+    cors_origins: List[str] = ["http://localhost:5173", "http://localhost:3027"]
 
     # ── Paths ──
     data_dir: Path = Path("./data")
@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     # ── Feature Flags (Phase 1 OKF) ──
     okf_domain_routing_enabled: bool = True     # 启用 domain 路由分流
     graphrag_enabled: bool = False               # GraphRAG 开关（Phase 2 决策门）
+
+    # ── Confidence Rejection (Wave 0) ──
+    confidence_reject_enabled: bool = True
+    confidence_reject_threshold_l1: int = 0     # source_count=0 → 拒答
+    confidence_reject_threshold_l2_coverage: float = 0.3
+    confidence_reject_threshold_l3_validate: float = 0.4
 
     @property
     def db_url(self) -> str:

@@ -52,6 +52,13 @@ from app.utils.text_cleaning import (
 )
 from app.utils.tokenizer import expand_keywords, extract_keyword_snippet
 
+from app.config import settings
+
+# ── Confidence Rejection Messages ──
+_REJECT_MSG_KNOWLEDGE_GAP = "知识库中未找到与您问题直接相关的信息。请尝试换一种方式提问，或确认您的查询范围。"
+
+_REJECT_MSG_LOW_COVERAGE = "知识库中未找到与您问题直接相关的信息。请尝试换一种方式提问，或确认您的查询范围。"
+
 from app.services.fee_utils import (
     find_fee_relevant_chunks,
 )
@@ -1769,7 +1776,93 @@ async def _generate_answer(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# 置信度评估
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _assess_recall_confidence(
+    ctx: dict,
+    q: str,
+    query_keywords: list,
+) -> dict | None:
+    """三级门控置信度评估。
+
+    Args:
+        ctx: _build_search_context() 返回值
+        q: 原始查询
+        query_keywords: 查询关键词列表
+
+    Returns:
+        None 表示通过门控（可以继续生成答案）；
+        dict 表示拒绝，格式: {"reject_type": str, "message": str}
+    """
+    if not settings.confidence_reject_enabled:
+        return None
+
+    doc_facts = ctx.get("doc_facts", {}) or {}
+    source_count = len(doc_facts)
+
+    # ── Level 1: doc_facts 为空 → 直接拒答 ──
+    if source_count <= settings.confidence_reject_threshold_l1:
+        logger.info(
+            "[CONFIDENCE] Level 1 reject: source_count=%d (threshold=%d)",
+            source_count,
+            settings.confidence_reject_threshold_l1,
+        )
+        return {
+            "reject_type": "knowledge_gap",
+            "message": _REJECT_MSG_KNOWLEDGE_GAP,
+        }
+
+    # ── Level 2: 召回极少或质量差 → 计算覆盖率和精确匹配 ──
+    # coverage: 顶部的 top-K chunk 中关键词覆盖率（避免跨文档碎片拼凑）
+    all_texts = []
+    for doc_fact_list in doc_facts.values():
+        for fact in doc_fact_list:
+            text = fact[0] if isinstance(fact, (list, tuple)) and len(fact) > 0 else ""
+            all_texts.append(text)
+
+    # 只看 top-3 chunk 的联合文本（最高质量的部分）
+    top_texts = all_texts[:3]
+    combined_text = " ".join(top_texts).lower()
+
+    kw_match_count = sum(1 for kw in query_keywords if kw.lower() in combined_text)
+    coverage = kw_match_count / max(len(query_keywords), 1)
+
+    # 是否包含精确匹配（查询标准号在文档名称中）
+    q_lower = q.lower()
+    has_exact_match = False
+    for doc_fact_list in doc_facts.values():
+        for fact in doc_fact_list:
+            doc_name = fact[1] if isinstance(fact, (list, tuple)) and len(fact) > 1 else ""
+            if q_lower in doc_name.lower() or doc_name.lower() in q_lower:
+                has_exact_match = True
+                break
+        if has_exact_match:
+            break
+
+    # 混合拒答条件: source_count 少 OR 覆盖率低 → 拒答
+    if (
+        source_count < 2
+        or (coverage < settings.confidence_reject_threshold_l2_coverage and not has_exact_match)
+    ):
+        logger.info(
+            "[CONFIDENCE] Level 2 reject: source_count=%d, coverage=%.2f, exact_match=%s",
+            source_count,
+            coverage,
+            has_exact_match,
+        )
+        return {
+            "reject_type": "low_coverage",
+            "message": _REJECT_MSG_LOW_COVERAGE,
+        }
+
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # API 端点
+# ═══════════════════════════════════════════════════════════════════════
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -1937,6 +2030,21 @@ async def query(
         except Exception as e:
             logger.warning("KG traversal failed: %s", e)
 
+    # ── Confidence Gate (L1+L2): 召回置信度评估 — 三级门控 ──
+    reject = _assess_recall_confidence(ctx, q, query_keywords)
+    if reject:
+        logger.info(
+            "[CONFIDENCE] Gate triggered: %s (q=%s, source_count=%d)",
+            reject["reject_type"], q[:40], len(ctx.get("doc_facts", {}) or {}),
+        )
+        # 空结果不在缓存中存储，避免缓存污染
+        return {
+            "answer": reject["message"],
+            "sources": [],
+            "confidence_reject": reject["reject_type"],
+            "suggestions": _generate_query_suggestions(q, bank, bank_prompt, ctx.get("title_map", {})),
+        }
+
     # ── Phase 2: 生成答案 ──
     gen = await _generate_answer(
         q=q, bank=bank, bank_prompt=bank_prompt,
@@ -1952,6 +2060,21 @@ async def query(
     sources = gen["sources"]
     validation_result = gen["validation_result"]
     suggestions = gen.get("suggestions")
+
+    # ── Confidence Gate (L3): LLM 生成后质量校验 ──
+    if (
+        settings.confidence_reject_enabled
+        and validation_result is not None
+        and validation_result.get("score", 100) < settings.confidence_reject_threshold_l3_validate * 100
+    ):
+        logger.info(
+            "[CONFIDENCE] Level 3 reject: validation_score=%d (threshold=%d)",
+            validation_result.get("score", 100),
+            int(settings.confidence_reject_threshold_l3_validate * 100),
+        )
+        # Level 3: 替换 answer 为拒答内容，保留 sources 供用户参考
+        answer = _REJECT_MSG_KNOWLEDGE_GAP
+        suggestions = _generate_query_suggestions(q, bank, bank_prompt, ctx.get("title_map", {}))
 
     # ── 缓存写入 ──
     # 有文档事实的查询可缓存；空结果不缓存；缓存命中时动态重建 suggestions
