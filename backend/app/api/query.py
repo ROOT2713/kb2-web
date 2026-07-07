@@ -2115,6 +2115,7 @@ async def query(
             "answer": reject["message"],
             "sources": [],
             "confidence_reject": reject["reject_type"],
+            "session_id": session_id,
             "suggestions": _generate_query_suggestions(q, bank, bank_prompt, ctx.get("title_map", {})),
         }
 
