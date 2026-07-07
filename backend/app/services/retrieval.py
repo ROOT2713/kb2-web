@@ -258,10 +258,12 @@ def expand_query_synonyms(q: str) -> str:
 # ═══════════════════════════════════════════════════════════════════
 
 async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int = 4096,
-                  max_chunks_per_doc: int = 8) -> list:
+                  max_chunks_per_doc: int = 8,
+                  doc_ids: set = None) -> list:
     """语义召回 — 支持多 bank 映射和并行查询
 
     max_chunks_per_doc: 每个文档最多保留的 chunk 数（默认 8），防止单文档淹没结果
+    doc_ids: 可选的文档 ID 白名单，仅返回这些文档的 recall 结果
     """
     # 1. Resolve frontend bank key → Hindsight bank name
     #    兼容：调用方可能传前端 key（industry_docs）或 Hindsight 名（kb_industry）
@@ -282,10 +284,13 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
 
         async def _recall_one(hs: str):
             try:
+                recall_body = {"query": query, "max_tokens": max_tokens, "limit": per_bank_limit}
+                if doc_ids:
+                    recall_body["doc_ids"] = list(doc_ids)
                 r = await _hindsight_request(
                     f"/v1/default/banks/{hs}/memories/recall",
                     "POST",
-                    {"query": query, "max_tokens": max_tokens, "limit": per_bank_limit},
+                    recall_body,
                     timeout=15,  # Reduced from 30s to prevent long waits
                 )
                 return r.get("results", [])
@@ -311,6 +316,9 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
                         if t.startswith("doc_id:"):
                             doc_id = t[7:]
                             break
+                    # doc_ids 白名单过滤
+                    if doc_ids and doc_id and doc_id not in doc_ids:
+                        continue
                     if doc_id:
                         if doc_counts.get(doc_id, 0) >= max_chunks_per_doc:
                             continue
@@ -320,12 +328,29 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
         return merged[:limit]
 
     # 3. Specific bank → use resolved Hindsight bank name
+    # Try to pass doc_ids to Hindsight API if supported
+    recall_body = {"query": query, "max_tokens": max_tokens, "limit": limit}
+    if doc_ids:
+        recall_body["doc_ids"] = list(doc_ids)
     result = await _hindsight_request(
         f"/v1/default/banks/{hs_bank}/memories/recall",
         "POST",
-        {"query": query, "max_tokens": max_tokens, "limit": limit},
+        recall_body,
     )
     results = result.get("results", [])
+    # Post-filter by doc_ids if Hindsight didn't respect the filter
+    if doc_ids and results:
+        _filtered_by_doc = []
+        for _r in results:
+            _did = None
+            for _t in _r.get("tags", []):
+                if _t.startswith("doc_id:"):
+                    _did = _t[7:]
+                    break
+            if _did and _did in doc_ids:
+                _filtered_by_doc.append(_r)
+        if _filtered_by_doc:
+            results = _filtered_by_doc
     # per-doc 限制
     if results and max_chunks_per_doc > 0:
         _dc_raw = {}

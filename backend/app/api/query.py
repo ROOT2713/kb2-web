@@ -16,12 +16,18 @@ import html as _html_mod
 import logging
 import os
 import re
+import uuid
 from collections import defaultdict
 
 from fastapi import APIRouter, Form, HTTPException
 from sqlalchemy import text as sa_text
 
 from app.models.database import SessionLocal
+from app.services.session_manager import (
+    get_session as session_get,
+    create_or_update_session as session_update,
+    release_session as session_release,
+)
 from app.services.standard_boost import extract_standard_numbers
 from app.services.cache_service import (
     get_exact as cache_get_exact,
@@ -280,6 +286,7 @@ async def _build_search_context(
     query_keywords: list,
     _tier_extra: list,
     kg_info: dict,
+    session_doc_ids: set = None,
 ) -> dict:
     """
     构建搜索上下文 — recall + BM25 + RRF + rerank。
@@ -339,7 +346,7 @@ async def _build_search_context(
                 continue
             if bank_map.get(tr[0]) == "skip":
                 continue
-            targeted = await recall(tr[1], limit=2, bank=hs_bank)
+            targeted = await recall(tr[1], limit=2, bank=hs_bank, doc_ids=session_doc_ids)
             for r in targeted:
                 tags = r.get("tags", [])
                 doc_tag = None
@@ -371,7 +378,7 @@ async def _build_search_context(
                         best_doc = row
                 if best_doc and best_score >= 2 and best_doc[0]:
                     if bank == "all" or bank_map.get(best_doc[0]) == bank:
-                        targeted = await recall(best_doc[1][:50], limit=3, bank=hs_bank)
+                        targeted = await recall(best_doc[1][:50], limit=3, bank=hs_bank, doc_ids=session_doc_ids)
                         for tr in targeted:
                             tr_doc_id = None
                             for t in tr.get("tags", []):
@@ -387,14 +394,14 @@ async def _build_search_context(
     all_recall_results = []
     if bank != "all" and hs_bank and hs_bank != "kb":
         try:
-            all_recall_results = await recall(q_recalled, limit=40, bank=hs_bank)
+            all_recall_results = await recall(q_recalled, limit=40, bank=hs_bank, doc_ids=session_doc_ids)
         except Exception as e:
             logger.warning("recall(%s) failed: %s", hs_bank, e)
     else:
         active_banks = await _get_active_hindsight_banks()
         for _hs_bank in active_banks:
             try:
-                bank_results = await recall(q_recalled, limit=40, bank=_hs_bank)
+                bank_results = await recall(q_recalled, limit=40, bank=_hs_bank, doc_ids=session_doc_ids)
                 all_recall_results.extend(bank_results)
             except Exception:
                 pass
@@ -403,7 +410,7 @@ async def _build_search_context(
     if all_recall_results:
         raw_results = all_recall_results
     elif bank == "all":
-        raw_results = await recall(q_recalled, limit=25, bank="kb")
+        raw_results = await recall(q_recalled, limit=25, bank="kb", doc_ids=session_doc_ids)
     else:
         raw_results = []
 
@@ -415,6 +422,20 @@ async def _build_search_context(
         if bm25_index:
             bm25_hits = bm25_search(q_bm25, bm25_index, bm25_docs, top_k=30)
             if bm25_hits:
+                # Filter BM25 hits by session doc_ids if domain-locked
+                if session_doc_ids:
+                    _filtered_bm25 = []
+                    for _hit in bm25_hits:
+                        _did = _hit.get("doc_id")
+                        if not _did:
+                            for _t in _hit.get("tags", []):
+                                if _t.startswith("doc_id:"):
+                                    _did = _t[7:]
+                                    break
+                        if _did and _did in session_doc_ids:
+                            _filtered_bm25.append(_hit)
+                    if _filtered_bm25:
+                        bm25_hits = _filtered_bm25
                 bm25_merged = rrf_merge(raw_results, bm25_hits, k=60, query_keywords=query_keywords, bank=bank)
     except Exception as e:
         logger.warning("BM25 fallback: %s", e)
@@ -762,6 +783,10 @@ async def _build_search_context(
             mapped = bank_map.get(doc_id)
             if mapped is not None and mapped != bank:
                 continue
+
+        # 过滤会话域锁定（session doc_ids 白名单）
+        if session_doc_ids and doc_id not in session_doc_ids:
+            continue
 
         # 提取文档名
         doc_name = ""
@@ -1781,6 +1806,7 @@ async def query(
     rerank: str = Form("false"),
     rerank_mode: str = Form("default"),
     nocache: str = Form(""),
+    session_id: str = Form(""),
 ):
     """搜索知识库 → 召回 → DeepSeek 合成答案（支持多 bank）"""
     if not q.strip():
@@ -1790,6 +1816,25 @@ async def query(
     if bank not in BANKS:
         valid = list(BANKS.keys())
         raise HTTPException(400, f"未知 bank '{bank}'，可选: {valid}")
+
+    # ── 多轮域锁定：获取会话状态 ──
+    session_doc_ids = None
+    session_bank = None
+    if session_id:
+        session_state = session_get(session_id)
+        if session_state:
+            session_doc_ids = session_state["doc_ids"]
+            session_bank = session_state["bank"]
+            logger.info(
+                "[SESSION] Locked session %s: %d doc_ids, bank=%s",
+                session_id[:8], len(session_doc_ids), session_bank,
+            )
+        else:
+            logger.info("[SESSION] Unknown/expired session %s, creating new", session_id[:8])
+            session_id = ""  # reset so a new one is created below
+    else:
+        session_id = uuid.uuid4().hex[:12]  # generate new short session ID
+        logger.info("[SESSION] New session %s", session_id[:8])
 
     # T6: 标准号规范化
     q = normalize_standard_numbers(q)
@@ -1804,6 +1849,7 @@ async def query(
                     "answer": cached["answer"],
                     "sources": cached["sources"],
                     "cache_hit": "exact",
+                    "session_id": session_id,
                     "suggestions": _build_persistent_suggestions(q, cached["sources"]),
                 }
             cached = await cache_get_semantic(q, bank)
@@ -1814,6 +1860,7 @@ async def query(
                     "sources": cached["sources"],
                     "cache_hit": "semantic",
                     "similarity": cached.get("similarity"),
+                    "session_id": session_id,
                     "suggestions": _build_persistent_suggestions(q, cached["sources"]),
                 }
         except Exception as e:
@@ -1890,7 +1937,33 @@ async def query(
         q_recalled=q_recalled, q_bm25=q_bm25,
         query_keywords=query_keywords, _tier_extra=_tier_extra,
         kg_info=kg_info,
+        session_doc_ids=session_doc_ids,
     )
+    # ── 会话域锁定：更新文档ID白名单 ──
+    # 将本次查询的 doc_facts 中的文档ID写入会话状态
+    # 首次查询创建白名单，后续查询在此基础上追加
+    if ctx.get("doc_facts") and session_id:
+        session_doc_ids_from_ctx = set(ctx["doc_facts"].keys())
+        if session_doc_ids_from_ctx:
+            if session_doc_ids is None:
+                # 首轮查询：doc_facts 中的 doc_ids 即白名单
+                session_update(session_id, session_doc_ids_from_ctx, bank)
+                session_doc_ids = session_doc_ids_from_ctx
+                logger.info(
+                    "[SESSION] Initialized session %s with %d doc_ids",
+                    session_id[:8], len(session_doc_ids),
+                )
+            else:
+                # 多轮查询：合并新旧 doc_ids
+                merged = session_doc_ids | session_doc_ids_from_ctx
+                session_update(session_id, merged, bank)
+                session_doc_ids = merged
+                logger.info(
+                    "[SESSION] Updated session %s: merged %d + %d = %d doc_ids",
+                    session_id[:8], len(session_doc_ids - session_doc_ids_from_ctx),
+                    len(session_doc_ids_from_ctx), len(merged),
+                )
+
     # ── Phase C1: Standard Number Exact Match Boost ──
     # Detect standard numbers in query (GB/T 22239, JJF 1059.1, etc.) and force-inject
     # matched DB docs into doc_facts. Fixes recall=0 cases where doc exists in DB
@@ -1975,6 +2048,8 @@ async def query(
         result["standard_contents"] = standard_contents
     if kg_context_list:
         result["kg_context"] = kg_context_list
+    if session_id:
+        result["session_id"] = session_id
     return result
 
 
