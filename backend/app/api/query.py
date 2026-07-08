@@ -1794,6 +1794,7 @@ def _assess_recall_confidence(
     q: str,
     query_keywords: list,
     session_doc_ids: set = None,
+    is_multi_turn: bool = False,
 ) -> dict | None:
     """三级门控置信度评估。
 
@@ -1823,39 +1824,38 @@ def _assess_recall_confidence(
             "message": _REJECT_MSG_KNOWLEDGE_GAP,
         }
 
-    # ── 地理位置缺失检测（无论是否域锁定，始终执行）──
-    # 如果查询提到地点但召回文档不包含该地点 → 明确拒答
-    _location_pattern = re.compile(
-        r'(?:[^\s]{1,5}[省市区域]|'
-        r'广州|北京|深圳|上海|浙江|杭州|东莞|佛山|南沙|珠海|中山|'
-        r'江苏|南京|四川|成都|湖北|武汉|福建|厦门|天津|重庆)'
-    )
-    _query_locations = _location_pattern.findall(q)
-    _en_locations = ['gdpr', 'european', 'california', 'new york', 'london', 'tokyo']
-    _query_locations += [loc for loc in _en_locations if loc in q.lower()]
+    if not is_multi_turn:
+        _location_pattern = re.compile(
+            r'(?:[^\s]{1,5}[省市区域]|'
+            r'广州|北京|深圳|上海|浙江|杭州|东莞|佛山|南沙|珠海|中山|'
+            r'江苏|南京|四川|成都|湖北|武汉|福建|厦门|天津|重庆)'
+        )
+        _query_locations = _location_pattern.findall(q)
+        _en_locations = ['gdpr', 'european', 'california', 'new york', 'london', 'tokyo']
+        _query_locations += [loc for loc in _en_locations if loc in q.lower()]
 
-    if _query_locations:
-        _doc_names_lower = set()
-        for doc_fact_list in doc_facts.values():
-            for fact in doc_fact_list:
-                doc_name = fact[1] if isinstance(fact, (list, tuple)) and len(fact) > 1 else ""
-                if doc_name:
-                    _doc_names_lower.add(doc_name.lower())
-        _doc_names_text = " ".join(_doc_names_lower)
-        _has_any_location = False
-        for loc in _query_locations:
-            if loc.lower() in _doc_names_text:
-                _has_any_location = True
-                break
-        if not _has_any_location:
-            logger.info(
-                "[CONFIDENCE] Level 2 location mismatch: q_locations=%s not in docs",
-                _query_locations,
-            )
-            return {
-                "reject_type": "low_coverage",
-                "message": _REJECT_MSG_LOW_COVERAGE,
-            }
+        if _query_locations:
+            _doc_names_lower = set()
+            for doc_fact_list in doc_facts.values():
+                for fact in doc_fact_list:
+                    doc_name = fact[1] if isinstance(fact, (list, tuple)) and len(fact) > 1 else ""
+                    if doc_name:
+                        _doc_names_lower.add(doc_name.lower())
+            _doc_names_text = " ".join(_doc_names_lower)
+            _has_any_location = False
+            for loc in _query_locations:
+                if loc.lower() in _doc_names_text:
+                    _has_any_location = True
+                    break
+            if not _has_any_location:
+                logger.info(
+                    "[CONFIDENCE] Level 2 location mismatch: q_locations=%s not in docs",
+                    _query_locations,
+                )
+                return {
+                    "reject_type": "low_coverage",
+                    "message": _REJECT_MSG_LOW_COVERAGE,
+                }
 
     # ── 域锁定状态：跳过 L2 coverage 检查（模糊追问在域锁定下覆盖率低是正常的）──
     if session_doc_ids:
@@ -1972,6 +1972,7 @@ async def query(
     # ── 多轮域锁定：获取会话状态 ──
     session_doc_ids = None
     session_bank = None
+    _user_supplied_session = bool(session_id)
     if session_id:
         session_state = session_get(session_id)
         if session_state:
@@ -2170,7 +2171,7 @@ async def query(
             logger.warning("KG traversal failed: %s", e)
 
     # ── Confidence Gate (L1+L2): 召回置信度评估 — 三级门控 ──
-    reject = _assess_recall_confidence(ctx, q, query_keywords, session_doc_ids)
+    reject = _assess_recall_confidence(ctx, q, query_keywords, session_doc_ids, _user_supplied_session)
     if reject:
         logger.info(
             "[CONFIDENCE] Gate triggered: %s (q=%s, source_count=%d)",
