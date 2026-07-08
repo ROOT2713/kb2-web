@@ -1856,15 +1856,27 @@ def _assess_recall_confidence(
         _has_substantive_content = bool(_substance_re.search(_combined_chunks))
 
         if _has_citation_pattern and not _has_substantive_content:
-            # 只引用了标准名但无实质条款 → 属于"文档中提及但未包含正文"模式
-            logger.info(
-                "[CONFIDENCE] Level 1.5 substance gate: citation pattern detected without substantive content (q=%s, source_count=%d)",
-                q, source_count,
-            )
-            return {
-                "reject_type": "low_coverage",
-                "message": _REJECT_MSG_LOW_COVERAGE,
-            }
+            # 精确匹配 bypass：如果查询的标准号直接在文档标题中 → 文档确在KB内，跳过 L1.5
+            q_lower = q.lower()
+            _has_exact_doc_match = False
+            for doc_fact_list in doc_facts.values():
+                for fact in doc_fact_list:
+                    doc_name = fact[1] if isinstance(fact, (list, tuple)) and len(fact) > 1 else ""
+                    if doc_name and (q_lower in doc_name.lower() or doc_name.lower() in q_lower):
+                        _has_exact_doc_match = True
+                        break
+                if _has_exact_doc_match:
+                    break
+            if not _has_exact_doc_match:
+                # 只引用了标准名但无实质条款 → 属于"文档中提及但未包含正文"模式
+                logger.info(
+                    "[CONFIDENCE] Level 1.5 substance gate: citation pattern without content, no exact doc match (q=%s, source_count=%d)",
+                    q, source_count,
+                )
+                return {
+                    "reject_type": "low_coverage",
+                    "message": _REJECT_MSG_LOW_COVERAGE,
+                }
 
     if not is_multi_turn:
         _location_pattern = re.compile(
