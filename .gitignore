@@ -46,6 +46,8 @@ MinerU_markdown_*
 
 # Analysis / code review artifacts
 code-review-findings.md
+eval-*.md
+eval-*.pdf
 backend/tests/kb2_diagnostic_report.md
 backend/tests/graphrag_p0_merged_plan.md
 backend/_cron_stale_*.py
