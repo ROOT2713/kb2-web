@@ -779,10 +779,6 @@ async def _build_search_context(
             if mapped is not None and mapped != bank:
                 continue
 
-        # 过滤会话域锁定（session doc_ids 白名单）
-        if session_doc_ids and doc_id not in session_doc_ids:
-            continue
-
         # 提取文档名
         doc_name = ""
         for t in tags:
