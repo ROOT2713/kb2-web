@@ -1953,6 +1953,18 @@ def _assess_recall_confidence(
         if has_exact_match:
             break
 
+    # B02 强化: 如果 source_count 很高（≥3）但关键词密度低（<0.3），降级拒答
+    # 场景：有很多文档匹配查询词，但只是引用/提及，没有具体技术内容
+    if source_count >= 3 and coverage < 0.3 and not has_exact_match:
+        logger.info(
+            "[CONFIDENCE] Level 2 keyword density reject: source_count=%d, coverage=%.2f, kw=%d",
+            source_count, coverage, len(query_keywords),
+        )
+        return {
+            "reject_type": "low_coverage",
+            "message": _REJECT_MSG_LOW_COVERAGE,
+        }
+
     # 混合拒答条件: source_count 少 OR 覆盖率低 → 拒答
     if (
         source_count < 2
