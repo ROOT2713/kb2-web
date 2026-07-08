@@ -2132,14 +2132,31 @@ async def query(
                     session_id[:8], len(session_doc_ids),
                 )
             else:
-                # 多轮查询：合并新旧 doc_ids
+                # 多轮查询：合并新旧 doc_ids，限制在 cap 以内
+                MAX_SESSION_DOCS = 15
                 merged = session_doc_ids | session_doc_ids_from_ctx
+                if len(merged) > MAX_SESSION_DOCS:
+                    # 优先保留当前轮次文档，再从旧文档按 chunk 排序补充
+                    doc_chunk_counts = {doc_id: len(ctx["doc_facts"].get(doc_id, [])) for doc_id in session_doc_ids_from_ctx}
+                    # 当前轮次文档
+                    kept = set(session_doc_ids_from_ctx)
+                    # 按 chunk 数排序旧文档
+                    old_sorted = sorted(
+                        [d for d in session_doc_ids if d not in kept],
+                        key=lambda d: doc_chunk_counts.get(d, 0) if d in doc_chunk_counts else len(ctx.get("doc_facts", {}).get(d, [])),
+                        reverse=True,
+                    )
+                    for d in old_sorted:
+                        if len(kept) >= MAX_SESSION_DOCS:
+                            break
+                        kept.add(d)
+                    merged = kept
                 session_update(session_id, merged, bank)
                 session_doc_ids = merged
                 logger.info(
-                    "[SESSION] Updated session %s: merged %d + %d = %d doc_ids",
+                    "[SESSION] Updated session %s: merged %d + %d = %d doc_ids (capped at %d)",
                     session_id[:8], len(session_doc_ids - session_doc_ids_from_ctx),
-                    len(session_doc_ids_from_ctx), len(merged),
+                    len(session_doc_ids_from_ctx), len(merged), MAX_SESSION_DOCS,
                 )
 
     # ── Phase C1: Standard Number Exact Match Boost ──
