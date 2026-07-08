@@ -1786,6 +1786,34 @@ async def _generate_answer(
     }
 
 
+def _write_audit_log(request, q: str, answer: str, sources: list, cache_hit: int = 0, reject: str = None):
+    """写入审计日志（独立工具函数，供缓存命中路径和主路径共用）"""
+    try:
+        _auth_header = request.headers.get("Authorization", "")
+        _username = "unknown"
+        if _auth_header.startswith("Bearer "):
+            _u = get_username_from_token(_auth_header[7:])
+            if _u:
+                _username = _u
+        _audit_db = SessionLocal()
+        try:
+            _audit_db.add(AuditLog(
+                user_id=_username,
+                query=q,
+                answer=answer,
+                sources=json.dumps(sources, ensure_ascii=False)[:2000] if sources else None,
+                cache_hit=cache_hit,
+                rejected=reject,
+            ))
+            _audit_db.commit()
+        except Exception:
+            pass
+        finally:
+            _audit_db.close()
+    except Exception:
+        pass
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # 置信度评估
 # ═══════════════════════════════════════════════════════════════════════
@@ -2046,7 +2074,10 @@ async def query(
         try:
             cached = cache_get_exact(q, bank)
             if cached:
+                # 写入审计日志（缓存命中路径）
+                _write_audit_log(request, q, cached["answer"], cached.get("sources", []), cache_hit=1)
                 logger.info("[CACHE] L1 exact hit for: %s", q[:50])
+                cache_hit = 1
                 return {
                     "answer": cached["answer"],
                     "sources": cached["sources"],
@@ -2056,6 +2087,8 @@ async def query(
                 }
             cached = await cache_get_semantic(q, bank)
             if cached:
+                # 写入审计日志（缓存命中路径）
+                _write_audit_log(request, q, cached["answer"], cached.get("sources", []), cache_hit=1)
                 logger.info("[CACHE] L2 semantic hit for: %s", q[:50])
                 return {
                     "answer": cached["answer"],
@@ -2303,31 +2336,8 @@ async def query(
     if session_id:
         result["session_id"] = session_id
 
-    # ── 审计日志（异步写入，不阻塞返回）──
-    try:
-        _auth_header = request.headers.get("Authorization", "")
-        _username = "unknown"
-        if _auth_header.startswith("Bearer "):
-            _u = get_username_from_token(_auth_header[7:])
-            if _u:
-                _username = _u
-        _audit_db = SessionLocal()
-        try:
-            _audit_db.add(AuditLog(
-                user_id=_username,
-                query=q,
-                answer=answer,
-                sources=json.dumps(sources, ensure_ascii=False)[:2000] if sources else None,
-                cache_hit=1 if cache_hit else 0,
-                rejected=reject["reject_type"] if reject else None,
-            ))
-            _audit_db.commit()
-        except Exception:
-            pass
-        finally:
-            _audit_db.close()
-    except Exception:
-        pass
+    # ── 审计日志（使用共用工具函数）──
+    _write_audit_log(request, q, answer, sources, cache_hit=1 if cache_hit else 0, reject=reject["reject_type"] if reject else None)
 
     return result
 
