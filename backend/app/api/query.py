@@ -1902,6 +1902,17 @@ def _assess_recall_confidence(
                     _has_any_location = True
                     break
             if not _has_any_location:
+                # 检查 chunk_text 正文（标题不含地点但正文可能包含）
+                _all_chunk_texts_body = " ".join([
+                    fact[0] for doc_fact_list in doc_facts.values()
+                    for fact in doc_fact_list
+                    if isinstance(fact, (list, tuple)) and len(fact) > 0 and fact[0]
+                ]).lower()
+                for loc in _query_locations:
+                    if loc.lower() in _all_chunk_texts_body:
+                        _has_any_location = True
+                        break
+            if not _has_any_location:
                 logger.info(
                     "[CONFIDENCE] Level 2 location mismatch: q_locations=%s not in docs",
                     _query_locations,
