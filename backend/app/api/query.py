@@ -1811,7 +1811,6 @@ def _assess_recall_confidence(
 
     doc_facts = ctx.get("doc_facts", {}) or {}
     source_count = len(doc_facts)
-
     # ── Level 1: doc_facts 为空 → 直接拒答 ──
     if source_count <= settings.confidence_reject_threshold_l1:
         logger.info(
@@ -1824,7 +1823,41 @@ def _assess_recall_confidence(
             "message": _REJECT_MSG_KNOWLEDGE_GAP,
         }
 
-    # ── 域锁定状态：跳过 L2（模糊追问在域锁定下 coverage 低是正常的）──
+    # ── 地理位置缺失检测（无论是否域锁定，始终执行）──
+    # 如果查询提到地点但召回文档不包含该地点 → 明确拒答
+    _location_pattern = re.compile(
+        r'(?:[^\s]{1,5}[省市区域]|'
+        r'广州|北京|深圳|上海|浙江|杭州|东莞|佛山|南沙|珠海|中山|'
+        r'江苏|南京|四川|成都|湖北|武汉|福建|厦门|天津|重庆)'
+    )
+    _query_locations = _location_pattern.findall(q)
+    _en_locations = ['gdpr', 'european', 'california', 'new york', 'london', 'tokyo']
+    _query_locations += [loc for loc in _en_locations if loc in q.lower()]
+
+    if _query_locations:
+        _doc_names_lower = set()
+        for doc_fact_list in doc_facts.values():
+            for fact in doc_fact_list:
+                doc_name = fact[1] if isinstance(fact, (list, tuple)) and len(fact) > 1 else ""
+                if doc_name:
+                    _doc_names_lower.add(doc_name.lower())
+        _doc_names_text = " ".join(_doc_names_lower)
+        _has_any_location = False
+        for loc in _query_locations:
+            if loc.lower() in _doc_names_text:
+                _has_any_location = True
+                break
+        if not _has_any_location:
+            logger.info(
+                "[CONFIDENCE] Level 2 location mismatch: q_locations=%s not in docs",
+                _query_locations,
+            )
+            return {
+                "reject_type": "low_coverage",
+                "message": _REJECT_MSG_LOW_COVERAGE,
+            }
+
+    # ── 域锁定状态：跳过 L2 coverage 检查（模糊追问在域锁定下覆盖率低是正常的）──
     if session_doc_ids:
         return None
 
