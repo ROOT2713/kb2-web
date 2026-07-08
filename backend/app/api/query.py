@@ -2007,6 +2007,9 @@ async def query(
         session_id = uuid.uuid4().hex[:12]  # generate new short session ID
         logger.info("[SESSION] New session %s", session_id[:8])
 
+    # 多轮检测：用户提供了有效 session 或者历史记录非空 → 多轮查询
+    _is_multi_turn = bool(session_id) or bool(history)
+
     # ── 审计日志跟踪变量 ──
     cache_hit = 0
     reject = None
@@ -2206,7 +2209,7 @@ async def query(
             logger.warning("KG traversal failed: %s", e)
 
     # ── Confidence Gate (L1+L2): 召回置信度评估 — 三级门控 ──
-    reject = _assess_recall_confidence(ctx, q, query_keywords, session_doc_ids, _user_supplied_session)
+    reject = _assess_recall_confidence(ctx, q, query_keywords, session_doc_ids, _is_multi_turn)
     if reject:
         logger.info(
             "[CONFIDENCE] Gate triggered: %s (q=%s, source_count=%d)",
