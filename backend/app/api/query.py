@@ -1847,13 +1847,13 @@ def _assess_recall_confidence(
             _combined_chunks
         ))
         # 实质性条款内容信号
-        _has_substantive_content = bool(re.search(
-            r'(?:第[\d零一二三四五六七八九十百千]+[条章节款]|'
-            r'(?:\d+\.\d+(?:\.\d+)?[条款]|'
-            r'(?:[\d.]+(?:℃|mm|kV|m²|%|Pa|Hz|Ω|V|A|W))|'
-            r'(?:应符合|不应小于|不得大于|必须设置|应满足))',
-            _combined_chunks
-        ))
+        _substance_re = re.compile(
+            r"(?:第[0-9零一二三四五六七八九十百千]+[条章节款]|"
+            r"(?:[0-9]+[.][0-9]+(?:[.][0-9]+)?[条款]|"
+            r"(?:[0-9.]+(?:℃|mm|kV|m2|%|Pa|Hz|Ω|V|A|W))|"
+            r"(?:应符合|不应小于|不得大于|必须设置|应满足)))"
+        )
+        _has_substantive_content = bool(_substance_re.search(_combined_chunks))
 
         if _has_citation_pattern and not _has_substantive_content:
             # 只引用了标准名但无实质条款 → 属于"文档中提及但未包含正文"模式
