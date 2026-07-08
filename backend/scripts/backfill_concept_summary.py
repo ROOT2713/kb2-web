@@ -75,15 +75,22 @@ async def main():
     parser.add_argument("--limit", type=int, default=None, help="Max concepts to process this run")
     parser.add_argument("--concurrency", type=int, default=5)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--include-superseded", action="store_true",
+                        help="Also process superseded concepts with empty summary")
     args = parser.parse_args()
 
     db = SessionLocal()
 
     # Find concepts without summary
-    q = db.query(Concept).filter(
-        Concept.status == "active",
-        (Concept.summary == None) | (Concept.summary == ""),
-    ).order_by(Concept.doc_id)
+    if args.include_superseded:
+        q = db.query(Concept).filter(
+            (Concept.summary == None) | (Concept.summary == ""),
+        ).order_by(Concept.doc_id)
+    else:
+        q = db.query(Concept).filter(
+            Concept.status == "active",
+            (Concept.summary == None) | (Concept.summary == ""),
+        ).order_by(Concept.doc_id)
     if args.limit:
         concepts = q.limit(args.limit).all()
     else:
