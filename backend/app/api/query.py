@@ -2113,14 +2113,17 @@ async def query(
         q_recalled = q
 
     # D9: 多轮锚词注入 — 从 history 提取标准号/文号追加到 recall query
-    # Guard: 只对短追问（<30字）注入，长query有足够自身信号
-    #        长query注入会带偏已跨域的问题（如从"项目管理"跨到"密码应用"）
-    if history and len(q) < 30:
+    # Guard: 只对短至中等查询（<50字）注入；对非常长的自我描述查询跳过
+    if history and len(q) < 50:
         _hist_terms = extract_standard_numbers(history)
         if _hist_terms:
-            _hist_q = q_recalled + " " + " ".join(sorted(set(_hist_terms)))
-            logger.info("[D9] 多轮锚词注入: '%s' + %s", q_recalled[:40], sorted(set(_hist_terms)))
-            q_recalled = _hist_q
+            # 避免冗余：如果当前查询已包含提取出的标准号，跳过
+            _q_lower = q.lower()
+            _new_terms = [t for t in sorted(set(_hist_terms)) if t.lower() not in _q_lower]
+            if _new_terms:
+                _hist_q = q_recalled + " " + " ".join(_new_terms)
+                logger.info("[D9] 多轮锚词注入: '%s' + %s", q_recalled[:40], _new_terms)
+                q_recalled = _hist_q
 
     # T7: 金额档位扩展 — 只用于BM25召回
     q_bm25 = expand_amount_tiers(q_recalled)
