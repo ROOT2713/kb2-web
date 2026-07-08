@@ -248,7 +248,7 @@ def boost_exact_standards(
     if len(doc_facts) > 1 and seen_doc_ids:
         try:
             _date_rows = db.execute(
-                sa_text("SELECT doc_id, published_date FROM documents WHERE doc_id IN :ids"),
+                sa_text("SELECT doc_id, published_date FROM documents WHERE doc_id IN (:ids)"),
                 {"ids": tuple(seen_doc_ids)},
             ).fetchall()
             _date_map = {row[0]: row[1] or "0000-01-01" for row in _date_rows}
