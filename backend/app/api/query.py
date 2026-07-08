@@ -1507,10 +1507,12 @@ async def _generate_answer(
         try:
             _meta_db = SessionLocal()
             try:
-                _meta_rows = _meta_db.execute(sa_text("""
-                    SELECT doc_id, published_date, geo_scope
-                    FROM documents WHERE doc_id IN ({})
-                """.format(",".join(f"'{d}'" for d in _doc_ids_meta)))).fetchall()
+                _placeholders = ",".join(f":d{i}" for i in range(len(_doc_ids_meta)))
+                _params = {f"d{i}": d for i, d in enumerate(_doc_ids_meta)}
+                _meta_rows = _meta_db.execute(
+                    sa_text(f"SELECT doc_id, published_date, geo_scope FROM documents WHERE doc_id IN ({_placeholders})"),
+                    _params
+                ).fetchall()
                 _meta_map = {r[0]: (r[1], r[2]) for r in _meta_rows}
                 _meta_lines.append("## 文档信息卡（版本/地域参考）")
                 for _d_id in _doc_ids_meta:
@@ -1824,6 +1826,46 @@ def _assess_recall_confidence(
             "message": _REJECT_MSG_KNOWLEDGE_GAP,
         }
 
+    # ── Level 1.5: 内容实质性检测 ──
+    # 检测 top-k chunk 的文本是否包含实质性条款内容，
+    # 而非仅引用/提及（如"按GB 50058的规定"但没有具体技术条款）
+    if source_count > 0:
+        _all_chunk_texts = []
+        for doc_fact_list in doc_facts.values():
+            for fact in doc_fact_list:
+                text = fact[0] if isinstance(fact, (list, tuple)) and len(fact) > 0 else ""
+                if text:
+                    _all_chunk_texts.append(text)
+
+        # 取前5个chunk的文本做检测（匹配度最高的chunk）
+        _combined_chunks = " ".join(_all_chunk_texts[:5]).lower()
+
+        # 检测是否是纯引用模式：包含"按XX标准"句式但无具体条款内容
+        # 标准引用句式信号
+        _has_citation_pattern = bool(re.search(
+            r'(按|根据|按照|参照|引用|符合|采用)(?:.{0,30}?)(?:标准|规范|规程|导则|指南|要求)',
+            _combined_chunks
+        ))
+        # 实质性条款内容信号
+        _has_substantive_content = bool(re.search(
+            r'(?:第[\d零一二三四五六七八九十百千]+[条章节款]|'
+            r'(?:\d+\.\d+(?:\.\d+)?[条款]|'
+            r'(?:[\d.]+(?:℃|mm|kV|m²|%|Pa|Hz|Ω|V|A|W))|'
+            r'(?:应符合|不应小于|不得大于|必须设置|应满足))',
+            _combined_chunks
+        ))
+
+        if _has_citation_pattern and not _has_substantive_content:
+            # 只引用了标准名但无实质条款 → 属于"文档中提及但未包含正文"模式
+            logger.info(
+                "[CONFIDENCE] Level 1.5 substance gate: citation pattern detected without substantive content (q=%s, source_count=%d)",
+                q, source_count,
+            )
+            return {
+                "reject_type": "low_coverage",
+                "message": _REJECT_MSG_LOW_COVERAGE,
+            }
+
     if not is_multi_turn:
         _location_pattern = re.compile(
             r'(?:[^\s]{1,5}[省市区域]|'
@@ -1875,42 +1917,6 @@ def _assess_recall_confidence(
 
     kw_match_count = sum(1 for kw in query_keywords if kw.lower() in combined_text)
     coverage = kw_match_count / max(len(query_keywords), 1)
-
-    # ── 地理位置缺失检测：如果查询提到地点但召回文档不包含该地点 → 拒答 ──
-    # 捕获 "X市/X省/X区/广州/北京/深圳/浙江/东莞/佛山" 等位置名称
-    _location_pattern = re.compile(
-        r'(?:[^\s]{1,5}[省市区域]|'
-        r'广州|北京|深圳|上海|浙江|杭州|东莞|佛山|南沙|珠海|中山|'
-        r'江苏|南京|四川|成都|湖北|武汉|福建|厦门|天津|重庆)'
-    )
-    _query_locations = _location_pattern.findall(q)
-    # Also check English location abbreviations
-    _en_locations = ['gdpr', 'european', 'california', 'new york', 'london', 'tokyo']
-    _query_locations += [loc for loc in _en_locations if loc in q.lower()]
-
-    if _query_locations:
-        # Collect all doc names from doc_facts
-        _doc_names_lower = set()
-        for doc_fact_list in doc_facts.values():
-            for fact in doc_fact_list:
-                doc_name = fact[1] if isinstance(fact, (list, tuple)) and len(fact) > 1 else ""
-                if doc_name:
-                    _doc_names_lower.add(doc_name.lower())
-        _doc_names_text = " ".join(_doc_names_lower)
-        _has_any_location = False
-        for loc in _query_locations:
-            if loc.lower() in _doc_names_text:
-                _has_any_location = True
-                break
-        if not _has_any_location:
-            logger.info(
-                "[CONFIDENCE] Level 2 location mismatch: q_locations=%s not in docs",
-                _query_locations,
-            )
-            return {
-                "reject_type": "low_coverage",
-                "message": _REJECT_MSG_LOW_COVERAGE,
-            }
 
     # 是否包含精确匹配（查询标准号在文档名称中）
     q_lower = q.lower()
