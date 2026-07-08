@@ -284,7 +284,12 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
 
         async def _recall_one(hs: str):
             try:
-                recall_body = {"query": query, "max_tokens": max_tokens, "limit": per_bank_limit}
+                # Truncate query to ~450 tokens (roughly 1800 chars for Chinese text) to avoid Hindsight 500-token limit
+                _q_for_recall = query
+                if len(_q_for_recall) > 1800:
+                    _q_for_recall = _q_for_recall[:1800]
+                    logger.info("[RECALL] Query truncated from %d to 1800 chars for bank '%s'", len(query), hs)
+                recall_body = {"query": _q_for_recall, "max_tokens": max_tokens, "limit": per_bank_limit}
                 if doc_ids:
                     recall_body["doc_ids"] = list(doc_ids)
                 r = await _hindsight_request(
