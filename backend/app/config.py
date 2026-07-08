@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     # ── Confidence Rejection (Wave 0) ──
     confidence_reject_enabled: bool = True
     confidence_reject_threshold_l1: int = 0     # source_count=0 → 拒答
-    confidence_reject_threshold_l2_coverage: float = 0.3
+    confidence_reject_threshold_l2_coverage: float = 0.5
     confidence_reject_threshold_l3_validate: float = 0.4
 
     @property

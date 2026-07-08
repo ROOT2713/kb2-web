@@ -749,19 +749,6 @@ async def _build_search_context(
         else:
             logger.info("[D2-B] No fee chunks found for query: %s", q[:60])
 
-    # ── 会话域锁定：软偏向（非硬过滤）──
-    # 将 session_doc_ids 中的 doc 分数 +100，使其优先于非锁定文档
-    if session_doc_ids:
-        for r in all_results:
-            r_doc_id = None
-            for t in r.get("tags", []):
-                if t.startswith("doc_id:"):
-                    r_doc_id = t[7:]
-                    break
-            if r_doc_id and r_doc_id in session_doc_ids:
-                r["score"] = r.get("score", 0) + 100
-        all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
-
     # ── 清洗 + 过滤 + 去重合并 ──
     doc_facts = {}
     for r in all_results:
@@ -1859,6 +1846,42 @@ def _assess_recall_confidence(
 
     kw_match_count = sum(1 for kw in query_keywords if kw.lower() in combined_text)
     coverage = kw_match_count / max(len(query_keywords), 1)
+
+    # ── 地理位置缺失检测：如果查询提到地点但召回文档不包含该地点 → 拒答 ──
+    # 捕获 "X市/X省/X区/广州/北京/深圳/浙江/东莞/佛山" 等位置名称
+    _location_pattern = re.compile(
+        r'(?:[^\s]{1,5}[省市区域]|'
+        r'广州|北京|深圳|上海|浙江|杭州|东莞|佛山|南沙|珠海|中山|'
+        r'江苏|南京|四川|成都|湖北|武汉|福建|厦门|天津|重庆)'
+    )
+    _query_locations = _location_pattern.findall(q)
+    # Also check English location abbreviations
+    _en_locations = ['gdpr', 'european', 'california', 'new york', 'london', 'tokyo']
+    _query_locations += [loc for loc in _en_locations if loc in q.lower()]
+
+    if _query_locations:
+        # Collect all doc names from doc_facts
+        _doc_names_lower = set()
+        for doc_fact_list in doc_facts.values():
+            for fact in doc_fact_list:
+                doc_name = fact[1] if isinstance(fact, (list, tuple)) and len(fact) > 1 else ""
+                if doc_name:
+                    _doc_names_lower.add(doc_name.lower())
+        _doc_names_text = " ".join(_doc_names_lower)
+        _has_any_location = False
+        for loc in _query_locations:
+            if loc.lower() in _doc_names_text:
+                _has_any_location = True
+                break
+        if not _has_any_location:
+            logger.info(
+                "[CONFIDENCE] Level 2 location mismatch: q_locations=%s not in docs",
+                _query_locations,
+            )
+            return {
+                "reject_type": "low_coverage",
+                "message": _REJECT_MSG_LOW_COVERAGE,
+            }
 
     # 是否包含精确匹配（查询标准号在文档名称中）
     q_lower = q.lower()
