@@ -66,8 +66,19 @@
       </button>
     </div>
 
-    <LoadingSpinner v-if="queryStore.loading" label="正在查询..." />
-    <LoadingSpinner v-if="queryStore.webSearching" label="联网搜索中..." />
+    <div v-if="queryStore.loading || queryStore.webSearching" class="query-loading-overlay">
+      <LoadingSpinner
+        v-if="queryStore.loading"
+        label="正在查询..."
+        :elapsed="queryElapsed"
+      />
+      <LoadingSpinner
+        v-if="queryStore.webSearching"
+        label="联网搜索中..."
+        :elapsed="queryElapsed"
+      />
+      <button class="btn-abort" @click="abortQuery">取消查询</button>
+    </div>
 
     <Toast
       v-if="queryStore.error"
@@ -92,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useQueryStore } from '@/stores/query'
 import { useBanksStore } from '@/stores/banks'
 import ResultCard from '@/components/ResultCard.vue'
@@ -119,12 +130,30 @@ const rerankMode = ref('default')
 const useMultiHypothesis = ref(false)
 const forceRefresh = ref(false)
 
+const queryElapsed = ref(0)
+let queryTimer: ReturnType<typeof setInterval> | null = null
+
+function startQueryTimer() {
+  queryElapsed.value = 0
+  queryTimer = setInterval(() => { queryElapsed.value++ }, 1000)
+}
+
+function stopQueryTimer() {
+  if (queryTimer) { clearInterval(queryTimer); queryTimer = null }
+}
+
+// Watch loading state change to stop timer
+watch(() => queryStore.loading, (loading) => {
+  if (!loading) stopQueryTimer()
+})
+
 onMounted(() => {
   banksStore.fetchBanks()
 })
 
 function handleQuery() {
   if (!queryText.value.trim()) return
+  startQueryTimer()
   queryStore.submitQuery({
     q: queryText.value.trim(),
     bank: selectedBank.value,
@@ -137,6 +166,7 @@ function handleQuery() {
 
 function handleWebSearch() {
   if (!queryText.value.trim()) return
+  startQueryTimer()
   queryStore.doWebSearch({
     q: queryText.value.trim(),
     bank: selectedBank.value,
@@ -172,6 +202,11 @@ async function handleClearCache() {
   if (result) {
     queryStore.clear()
   }
+}
+
+function abortQuery() {
+  queryStore.clear()
+  stopQueryTimer()
 }
 </script>
 
@@ -256,4 +291,21 @@ async function handleClearCache() {
   opacity: 0.5;
   cursor: not-allowed;
 }
+.query-loading-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 3rem 0;
+}
+.btn-abort {
+  font-size: 0.8rem;
+  padding: 0.4rem 1.2rem;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--fg-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.btn-abort:hover { border-color: var(--accent); color: var(--accent); }
 </style>

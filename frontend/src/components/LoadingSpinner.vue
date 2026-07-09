@@ -2,6 +2,7 @@
   <div class="spinner-wrap" :class="{ inline }">
     <div class="spinner"></div>
     <span v-if="label" class="spinner-label">{{ label }}</span>
+    <span v-if="elapsed !== undefined" class="spinner-elapsed">已耗时 {{ elapsed }} 秒</span>
   </div>
 </template>
 
@@ -10,10 +11,12 @@ withDefaults(
   defineProps<{
     label?: string
     inline?: boolean
+    elapsed?: number
   }>(),
   {
     label: '',
     inline: false,
+    elapsed: undefined,
   },
 )
 </script>
@@ -51,5 +54,10 @@ withDefaults(
 .spinner-label {
   font-size: 0.8rem;
   color: var(--fg-muted);
+}
+.spinner-elapsed {
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
 }
 </style>
