@@ -16,6 +16,16 @@ interface StandardContent {
   preview: string
 }
 
+const HISTORY_KEY = 'kb2_query_history'
+const MAX_HISTORY = 20
+
+interface HistoryItem {
+  q: string
+  bank: string
+  timestamp: number
+  answer_preview: string
+}
+
 export const useQueryStore = defineStore('query', () => {
   const answer = ref('')
   const sources = ref<Source[]>([])
@@ -26,6 +36,47 @@ export const useQueryStore = defineStore('query', () => {
   const cacheHit = ref('')
   const suggestions = ref<QuerySuggestions | null>(null)
   const standardContents = ref<StandardContent[]>([])
+
+  const queryHistory = ref<HistoryItem[]>([])
+
+  // Load from localStorage on init
+  function loadHistory() {
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY)
+      if (raw) queryHistory.value = JSON.parse(raw)
+    } catch { /* ignore */ }
+  }
+  loadHistory()
+
+  function saveHistory() {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(queryHistory.value))
+    } catch { /* quota exceeded */ }
+  }
+
+  function addToHistory(q: string, bank: string, answer: string) {
+    queryHistory.value = queryHistory.value.filter(h => h.q !== q)
+    queryHistory.value.unshift({
+      q,
+      bank: bank || 'all',
+      timestamp: Date.now(),
+      answer_preview: answer ? answer.slice(0, 120) : '',
+    })
+    if (queryHistory.value.length > MAX_HISTORY) {
+      queryHistory.value = queryHistory.value.slice(0, MAX_HISTORY)
+    }
+    saveHistory()
+  }
+
+  function removeFromHistory(index: number) {
+    queryHistory.value.splice(index, 1)
+    saveHistory()
+  }
+
+  function clearHistory() {
+    queryHistory.value = []
+    localStorage.removeItem(HISTORY_KEY)
+  }
 
   async function submitQuery(params: {
     q: string
@@ -50,6 +101,9 @@ export const useQueryStore = defineStore('query', () => {
       cacheHit.value = data.cache_hit || ''
       suggestions.value = data.suggestions || null
       standardContents.value = data.standard_contents || []
+      if (data.answer) {
+        addToHistory(params.q, params.bank || 'all', data.answer)
+      }
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : '查询失败'
       suggestions.value = null
@@ -115,5 +169,9 @@ export const useQueryStore = defineStore('query', () => {
     doWebSearch,
     clear,
     clearCache,
+    queryHistory,
+    addToHistory,
+    removeFromHistory,
+    clearHistory,
   }
 })

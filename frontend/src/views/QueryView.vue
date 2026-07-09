@@ -87,6 +87,24 @@
       @close="queryStore.clear()"
     />
 
+    <!-- 查询历史 -->
+    <div v-if="queryStore.queryHistory.length > 0 && !queryStore.loading && !queryStore.answer" class="query-history">
+      <div class="history-header">
+        <span class="history-title">查询历史</span>
+        <button class="btn-clear-history" @click="queryStore.clearHistory()">清空</button>
+      </div>
+      <div
+        v-for="(item, idx) in queryStore.queryHistory"
+        :key="item.timestamp"
+        class="history-item"
+        @click="rerunHistory(item)"
+      >
+        <span class="history-q">{{ item.q }}</span>
+        <span class="history-time">{{ formatTime(item.timestamp) }}</span>
+        <button class="history-delete" @click.stop="queryStore.removeFromHistory(idx)">×</button>
+      </div>
+    </div>
+
     <ResultCard
       v-if="queryStore.answer"
       :content="queryStore.answer"
@@ -208,6 +226,27 @@ function abortQuery() {
   queryStore.clear()
   stopQueryTimer()
 }
+
+function formatTime(ts: number): string {
+  const d = new Date(ts)
+  const now = new Date()
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  if (d.toDateString() === now.toDateString()) {
+    return `今天 ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+  const yesterday = new Date(now)
+  yesterday.setDate(yesterday.getDate() - 1)
+  if (d.toDateString() === yesterday.toDateString()) {
+    return `昨天 ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function rerunHistory(item: { q: string; bank: string }) {
+  queryText.value = item.q
+  selectedBank.value = item.bank || 'all'
+  handleQuery()
+}
 </script>
 
 <style scoped>
@@ -308,4 +347,64 @@ function abortQuery() {
   border-radius: 4px;
 }
 .btn-abort:hover { border-color: var(--accent); color: var(--accent); }
+.query-history {
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+.history-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+.btn-clear-history {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--fg-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.btn-clear-history:hover { border-color: var(--accent); color: var(--accent); }
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.history-item:hover { background: var(--bg-hover, #f5f5f5); }
+.history-q {
+  flex: 1;
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-time {
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.history-delete {
+  font-size: 1rem;
+  line-height: 1;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 0 0.25rem;
+  opacity: 0.5;
+}
+.history-delete:hover { opacity: 1; color: var(--accent); }
 </style>
