@@ -4,13 +4,16 @@ import {
   listDocuments as apiListDocuments,
   deleteDocument as apiDeleteDocument,
   reparseDocument as apiReparseDocument,
+  patchDocument as apiPatchDocument,
   type DocumentItem,
 } from '@/services/documents'
+import { getCategories as apiGetCategories, type CategoryItem } from '@/services/admin'
 
 export const useDocumentsStore = defineStore('documents', () => {
   const documents = ref<DocumentItem[]>([])
   const loading = ref(false)
   const error = ref('')
+  const categories = ref<CategoryItem[]>([])
 
   async function fetchDocuments(bank = 'all') {
     loading.value = true
@@ -22,6 +25,14 @@ export const useDocumentsStore = defineStore('documents', () => {
       error.value = e instanceof Error ? e.message : '加载文档失败'
     } finally {
       loading.value = false
+    }
+  }
+
+  async function fetchCategories() {
+    try {
+      categories.value = await apiGetCategories()
+    } catch (e: unknown) {
+      console.error('获取分类失败', e)
     }
   }
 
@@ -44,5 +55,20 @@ export const useDocumentsStore = defineStore('documents', () => {
     }
   }
 
-  return { documents, loading, error, fetchDocuments, removeDocument, reparse }
+  async function patchDocumentAction(docId: string, payload: { title?: string; category?: string }) {
+    const result = await apiPatchDocument(docId, payload)
+    // Update local state
+    const idx = documents.value.findIndex((d) => d.id === docId)
+    if (idx !== -1) {
+      if (payload.title !== undefined) documents.value[idx].title = payload.title
+      if (payload.category !== undefined) documents.value[idx].category = payload.category
+    }
+    return result
+  }
+
+  return {
+    documents, loading, error, categories,
+    fetchDocuments, fetchCategories, removeDocument, reparse,
+    patchDocument: patchDocumentAction,
+  }
 })

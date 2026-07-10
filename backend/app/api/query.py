@@ -297,6 +297,7 @@ async def _build_search_context(
     _tier_extra: list,
     kg_info: dict,
     session_doc_ids: set = None,
+    categories: str = "",          # ← 新增：分类过滤参数
 ) -> dict:
     """
     构建搜索上下文 — recall + BM25 + RRF + rerank。
@@ -465,6 +466,33 @@ async def _build_search_context(
             if _has_kw and not already_in and _injected < 6:
                 all_results.insert(0, bm25_hit)
                 _injected += 1
+
+    # ── Category 过滤（2026-07-10 新增）──
+    # categories="" → 排除 isolated; categories="all" → 全部; categories="daily,news" → 只这些
+    if all_results and categories != "all":
+        from app.services.category_rules import ISOLATED_CATEGORIES
+        all_doc_ids = list({r.get("doc_id", "") for r in all_results if r.get("doc_id")})
+        if all_doc_ids:
+            db_filter = SessionLocal()
+            try:
+                from app.models.document import Document
+                rows = db_filter.query(Document.doc_id, Document.category).filter(
+                    Document.doc_id.in_(all_doc_ids)
+                ).all()
+                doc_cat = {d.doc_id: d.category or "" for d in rows}
+            finally:
+                db_filter.close()
+            requested = {c.strip() for c in categories.split(",") if c.strip()} if categories else set()
+            filtered = []
+            for r in all_results:
+                cat = doc_cat.get(r.get("doc_id", ""), "")
+                if requested:
+                    if cat in requested:
+                        filtered.append(r)
+                else:
+                    if cat not in ISOLATED_CATEGORIES:
+                        filtered.append(r)
+            all_results = filtered
 
     # ── KG 消歧增强 ──
     if kg_info.get("disambiguated") and kg_info.get("suggested_doc_ids"):
@@ -2028,6 +2056,7 @@ async def query(
     rerank_mode: str = Form("default"),
     nocache: str = Form(""),
     session_id: str = Form(""),
+    categories: str = Form(""),
 ):
     """搜索知识库 → 召回 → DeepSeek 合成答案（支持多 bank）"""
     if not q.strip():
@@ -2176,6 +2205,7 @@ async def query(
         query_keywords=query_keywords, _tier_extra=_tier_extra,
         kg_info=kg_info,
         session_doc_ids=session_doc_ids,
+        categories=categories,
     )
     # ── 会话域锁定：更新文档ID白名单 ──
     # 将本次查询的 doc_facts 中的文档ID写入会话状态

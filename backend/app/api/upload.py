@@ -25,7 +25,7 @@ from app.models.upload_task import UploadTask
 from app.services.concept_gen import generate_concepts_for_doc, infer_doc_concept_id, infer_domain, _BANK_TO_DOMAIN
 from app.services.confidence import update_concept_confidence
 from app.repositories.document_repo import DocumentRepository
-from app.repositories.vector_repo import HindsightStore
+from app.repositories.vector_repo import get_vector_store
 from app.services.cache_service import invalidate_bm25_cache
 from scripts.kg_client import kg_index_document
 from app.services.chunking import (
@@ -258,7 +258,14 @@ async def _process_upload_task(
 
     _update_upload_task(task_id, progress=0.25, stage="chunking")
     doc_title = title.strip() or filename_to_title(filename, text)
-    doc_category = category.strip()
+    doc_category = category.strip() if category and category.strip() else ""
+    if not doc_category or doc_category == "auto":
+        from app.services.category_rules import infer_category
+        inferred = infer_category(title=eff_title, bank=bank)
+        if inferred:
+            doc_category = inferred
+        else:
+            doc_category = ""  # 留空表示未分类
     profile = profile_document(text)
     doc_type = profile.get("doc_type", "generic")
     pc_chunks = []
@@ -427,11 +434,10 @@ async def _process_upload_task(
             if dr2.category:
                 item["tags"].append(f"category:{dr2.category}")
 
-    _update_upload_task(task_id, progress=0.55, stage="hindsight_indexing")
-    hindsight_error = None
+    _update_upload_task(task_id, progress=0.55, stage="indexing")
     retained = 0
     if memory_items:
-        hs = HindsightStore()
+        hs = get_vector_store()
         tc = sum(len(m.get("content", "")) for m in memory_items)
         BS = 10 if (tc > 500000 or any(len(m.get("content", "")) > 5000 for m in memory_items)) else 20
         for bs in range(0, len(memory_items), BS):
@@ -439,20 +445,20 @@ async def _process_upload_task(
             try:
                 retained += await hs.upsert(doc_id, batch, hs_bank)
             except Exception as e:
-                hindsight_error = str(e) or repr(e)
+                logger.error("indexing error: %s", e)
         invalidate_bm25_cache(bank)
         invalidate_bm25_cache("all")
 
     _update_upload_task(task_id, progress=0.75, stage="verification")
     integrity = None
-    if memory_items and not hindsight_error:
+    if memory_items:
         try:
             await asyncio.sleep(2)
             rc = await recall(doc_title, limit=50, bank=hs_bank, max_tokens=32768)
             rt = "\n".join(r.get("text", "") for r in rc)
             if rt and len(rt) > 200:
                 cov = min(100, round(len(rc) / max(len(parent_map), 1) * 100, 1))
-                integrity = {"original_chars": len(text), "recalled_chars": len(rt), "coverage_pct": cov, "hindsight_chunks": len(rc), "meta_chunks": len(parent_map), "status": "ok" if cov >= 80 else ("partial" if cov >= 50 else "low")}
+                integrity = {"original_chars": len(text), "recalled_chars": len(rt), "coverage_pct": cov, "chunks": len(rc), "meta_chunks": len(parent_map), "status": "ok" if cov >= 80 else ("partial" if cov >= 50 else "low")}
                 if cov < 80 and retained < len(memory_items):
                     try:
                         rr = await hs.upsert(doc_id, memory_items[retained:], hs_bank)
@@ -718,21 +724,31 @@ async def upload_batch(
 
 
 async def _verify_searchable(doc_id: str, doc_title: str, text_len: int, hs_bank: str):
-    """异步验证：等 consolidation 后用标题做 recall，确认文档可被搜索"""
+    """验证文档可搜索"""
     try:
-        await asyncio.sleep(60)  # 等待 Hindsight consolidation
-        recalled = await recall(doc_title[:50], limit=5, bank=hs_bank)
-        found = False
-        for r in recalled:
-            for t in r.get("tags", []):
-                if t.startswith("doc_id:") and t[7:] == doc_id:
-                    found = True
+        if settings.vector_backend == "pgvector":
+            from app.repositories.vector_repo import PgVectorStore
+            vs = PgVectorStore()
+            docs = await vs.list_documents(hs_bank)
+            found = any(d.get("doc_id") == doc_id for d in docs)
+            if found:
+                logger.info("[VERIFY] doc %s searchable ✓ (pgvector)", doc_id[:8])
+            else:
+                logger.warning("[VERIFY] doc %s NOT found in pgvector", doc_id[:8])
+        else:
+            await asyncio.sleep(60)
+            recalled = await recall(doc_title[:50], limit=5, bank=hs_bank)
+            found = False
+            for r in recalled:
+                for t in r.get("tags", []):
+                    if t.startswith("doc_id:") and t[7:] == doc_id:
+                        found = True
+                        break
+                if found:
                     break
             if found:
-                break
-        if found:
-            logger.info("[VERIFY] doc %s searchable ✓", doc_id[:8])
-        else:
-            logger.warning("[VERIFY] doc %s NOT found after 60s", doc_id[:8])
+                logger.info("[VERIFY] doc %s searchable ✓", doc_id[:8])
+            else:
+                logger.warning("[VERIFY] doc %s NOT found after 60s", doc_id[:8])
     except Exception as e:
         logger.warning("[VERIFY] doc %s check failed: %s", doc_id[:8], e)

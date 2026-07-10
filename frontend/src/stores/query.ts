@@ -86,6 +86,7 @@ export const useQueryStore = defineStore('query', () => {
     rerank_mode?: string
     multiHypothesis?: boolean
     nocache?: boolean
+    categories?: string
   }) {
     loading.value = true
     error.value = ''

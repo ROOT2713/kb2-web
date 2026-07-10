@@ -32,6 +32,16 @@
           </select>
         </label>
         <label class="option-label">
+          <select v-model="categoryFilter" class="cat-filter" @change="handleQuery">
+            <option value="">排除日常/资讯</option>
+            <option value="all">全部（含日常/资讯）</option>
+            <option value="daily,news">仅日常+资讯</option>
+            <option v-for="c in categories" :key="c.key" :value="c.key">
+              {{ c.label }}
+            </option>
+          </select>
+        </label>
+        <label class="option-label">
           <input v-model="useRerank" type="checkbox" />
           精排
         </label>
@@ -124,6 +134,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useQueryStore } from '@/stores/query'
 import { useBanksStore } from '@/stores/banks'
+import api from '@/services/api'
 import ResultCard from '@/components/ResultCard.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import Toast from '@/components/Toast.vue'
@@ -133,6 +144,8 @@ const banksStore = useBanksStore()
 
 const queryText = ref('')
 const selectedBank = ref('all')
+const categoryFilter = ref('')
+const categories = ref<{key: string, label: string, isolated: boolean}[]>([])
 
 /** SourceCard: 从当前查询文本提取关键词用于高亮 */
 const searchKeywords = computed(() => {
@@ -165,8 +178,16 @@ watch(() => queryStore.loading, (loading) => {
   if (!loading) stopQueryTimer()
 })
 
+async function loadCategories() {
+  try {
+    const { data } = await api.get('/admin/categories')
+    categories.value = data
+  } catch { /* ignore */ }
+}
+
 onMounted(() => {
   banksStore.fetchBanks()
+  loadCategories()
 })
 
 function handleQuery() {
@@ -179,6 +200,7 @@ function handleQuery() {
     rerank_mode: rerankMode.value,
     multiHypothesis: useMultiHypothesis.value,
     nocache: forceRefresh.value,
+    categories: categoryFilter.value,
   })
 }
 
@@ -200,6 +222,7 @@ function handleSuggestionSearch(nextQuery: string) {
     rerank: useRerank.value,
     rerank_mode: rerankMode.value,
     nocache: forceRefresh.value,
+    categories: categoryFilter.value,
   })
 }
 
@@ -212,6 +235,7 @@ function handleRefreshFromCache() {
     rerank_mode: rerankMode.value,
     multiHypothesis: useMultiHypothesis.value,
     nocache: true,
+    categories: categoryFilter.value,
   })
 }
 
@@ -274,6 +298,13 @@ function rerunHistory(item: { q: string; bank: string }) {
   flex: 1;
   font-size: 0.95rem;
   padding: 0.6rem 0.75rem;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition), border-color var(--transition);
+}
+
+.query-input:focus {
+  box-shadow: var(--shadow);
+  border-color: var(--accent);
 }
 
 .query-options {
@@ -293,7 +324,7 @@ function rerunHistory(item: { q: string; bank: string }) {
 }
 
 .nocache-label {
-  color: var(--accent, #e67e22);
+  color: var(--accent);
 }
 
 .nocache-text {
@@ -305,6 +336,16 @@ function rerunHistory(item: { q: string; bank: string }) {
   padding: 0.3rem 0.5rem;
 }
 
+.cat-filter {
+  font-size: 0.8rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+}
+
 .action-bar {
   display: flex;
   gap: 0.5rem;
@@ -314,16 +355,16 @@ function rerunHistory(item: { q: string; bank: string }) {
 .btn-clear-cache {
   font-size: 0.75rem;
   padding: 0.25rem 0.6rem;
-  border: 1px solid var(--border, #ddd);
-  background: var(--bg-card, #fff);
-  color: var(--fg-muted, #666);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--fg-muted);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .btn-clear-cache:hover {
-  border-color: var(--accent, #e67e22);
-  color: var(--accent, #e67e22);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .btn-clear-cache:disabled {
@@ -344,7 +385,7 @@ function rerunHistory(item: { q: string; bank: string }) {
   background: var(--bg-card);
   color: var(--fg-muted);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 .btn-abort:hover { border-color: var(--accent); color: var(--accent); }
 .query-history {
@@ -370,7 +411,7 @@ function rerunHistory(item: { q: string; bank: string }) {
   background: var(--bg-card);
   color: var(--fg-muted);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 .btn-clear-history:hover { border-color: var(--accent); color: var(--accent); }
 .history-item {
@@ -379,10 +420,10 @@ function rerunHistory(item: { q: string; bank: string }) {
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
   cursor: pointer;
-  border-radius: 6px;
-  transition: background 0.15s;
+  border-radius: var(--radius);
+  transition: background var(--transition);
 }
-.history-item:hover { background: var(--bg-hover, #f5f5f5); }
+.history-item:hover { background: var(--surface-hover); }
 .history-q {
   flex: 1;
   font-size: 0.85rem;

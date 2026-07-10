@@ -66,7 +66,10 @@
 
       <div class="form-row">
         <label class="form-label">分类</label>
-        <input v-model="category" type="text" placeholder="可选分类" />
+        <select v-model="category">
+          <option value="">自动</option>
+          <option v-for="c in categories" :key="c.key" :value="c.key">{{ c.label }}</option>
+        </select>
       </div>
 
       <div class="form-row">
@@ -153,6 +156,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useBanksStore } from '@/stores/banks'
 import api from '@/services/api'
 import Toast from '@/components/Toast.vue'
+import { getCategories } from '@/services/admin'
+import type { CategoryItem } from '@/services/admin'
 
 const banksStore = useBanksStore()
 
@@ -170,6 +175,15 @@ const uploadPhase = ref('')
 const batchIndex = ref(0)
 const totalBatches = ref(0)
 const currentFileName = ref('')
+const categories = ref<CategoryItem[]>([])
+
+async function loadCategories() {
+  try {
+    categories.value = await getCategories()
+  } catch {
+    // ignore — categories not critical for upload
+  }
+}
 
 interface UploadQuality {
   score: number
@@ -234,6 +248,7 @@ const totalSize = computed(() =>
 
 onMounted(() => {
   banksStore.fetchBanks()
+  loadCategories()
 })
 
 function handleDrop(e: DragEvent) {
@@ -616,7 +631,7 @@ function resetForm() {
   text-align: center;
   border: 2px dashed var(--border);
   background: var(--bg);
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color var(--transition), background var(--transition);
   margin-bottom: 1rem;
 }
 
@@ -645,17 +660,17 @@ function resetForm() {
 }
 
 button.secondary {
-  background: var(--bg-elevated, #f3f3f3);
-  color: var(--fg, #333);
-  border: 1px solid var(--border, #d0d0d0);
+  background: var(--surface-elevated);
+  color: var(--fg);
+  border: 1px solid var(--border);
   padding: 0.5rem 1rem;
-  border-radius: 6px;
+  border-radius: var(--radius);
   cursor: pointer;
   font-size: 0.9rem;
 }
 
 button.secondary:hover {
-  background: var(--bg-hover, #e8e8e8);
+  background: var(--surface-hover);
 }
 
 .upload-phase {
@@ -712,7 +727,7 @@ button.secondary:hover {
   gap: 0.35rem;
   background: var(--bg-alt);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 0.2rem 0.5rem;
   font-size: 0.8rem;
   font-weight: 500;
@@ -810,7 +825,7 @@ button.secondary:hover {
 }
 
 .batch-stat.success {
-  color: var(--success, #22c55e);
+  color: var(--success);
 }
 
 .batch-stat.failed {
@@ -830,16 +845,16 @@ button.secondary:hover {
   justify-content: space-between;
   align-items: center;
   padding: 0.35rem 0.5rem;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.8rem;
 }
 
 .batch-result-item.result-ok {
-  background: rgba(34, 197, 94, 0.08);
+  background: var(--success-bg);
 }
 
 .batch-result-item.result-fail {
-  background: rgba(239, 68, 68, 0.08);
+  background: var(--danger-bg);
 }
 
 .batch-filename {

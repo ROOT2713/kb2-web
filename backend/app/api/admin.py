@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.database import get_db
 from app.models.audit import AuditLog
+from app.repositories.vector_repo import get_vector_store
 from app.services.retrieval import _get_active_hindsight_banks, _hindsight_request, get_bank_config
 from app.services.cache_service import invalidate_bm25_cache
 from app.services.cost_tracker import get_stats as get_cost_stats
@@ -31,6 +32,23 @@ router = APIRouter()
 @router.get("/stats")
 async def get_stats():
     """Knowledge base statistics (v1 L4253-L4275)."""
+    if settings.vector_backend == "pgvector":
+        store = get_vector_store()
+        active_banks = await _get_active_hindsight_banks()
+        total_nodes = 0
+        total_documents = 0
+        for bank_id in active_banks:
+            try:
+                count = await store.get_document_chunk_count(bank_id)
+                total_nodes += count
+                total_documents += 1  # bank has at least some chunks
+            except Exception as e:
+                logger.warning("Stats: bank %s failed: %s", bank_id, e)
+        return {
+            "total_nodes": total_nodes,
+            "total_documents": total_documents,
+            "total_links": 0,
+        }
     active_banks = await _get_active_hindsight_banks()
     total_nodes = 0
     total_documents = 0
@@ -113,11 +131,11 @@ async def show_bank_configs():
 
 @router.get("/health")
 async def admin_health():
-    """Detailed health check including Hindsight connectivity."""
+    """Detailed health check including vector store connectivity."""
     health_status = {
         "status": "ok",
         "version": "2.0.0",
-        "hindsight": "unknown",
+        "vector_store": "unknown",
         "db": "unknown",
     }
     # DB check
@@ -130,12 +148,16 @@ async def admin_health():
         health_status["db"] = f"error: {e}"
         health_status["status"] = "degraded"
 
-    # Hindsight check
+    # Vector store check
     try:
-        result = await _hindsight_request("/health", timeout=5)
-        health_status["hindsight"] = "ok" if result.get("status") == "ok" else "degraded"
+        if settings.vector_backend == "pgvector":
+            store = get_vector_store()
+            health_status["vector_store"] = "ok" if await store.health() else "degraded"
+        else:
+            result = await _hindsight_request("/health", timeout=5)
+            health_status["vector_store"] = "ok" if result.get("status") == "ok" else "degraded"
     except Exception:
-        health_status["hindsight"] = "unreachable"
+        health_status["vector_store"] = "unreachable"
         health_status["status"] = "degraded"
 
     return health_status
@@ -461,3 +483,17 @@ async def get_audit_logs(
             for log in logs
         ],
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: GET /categories — available document categories
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/categories")
+async def get_categories():
+    """Return available categories with labels."""
+    from app.services.category_rules import CATEGORIES
+    return [
+        {"key": k, "label": v, "isolated": k in ("daily", "news")}
+        for k, v in CATEGORIES.items()
+    ]

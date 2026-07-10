@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.models.database import SessionLocal
+from app.repositories.vector_repo import get_vector_store
 from app.services.cache_service import _bm25_caches, _get_bm25_cache, _BM25_TTL
 from app.utils.tokenizer import tokenize, expand_keywords
 from app.utils.text_cleaning import normalize_query, expand_amount_tiers
@@ -35,7 +36,6 @@ _HARDCODED_BANKS = {
     "project_docs":  {"name": "项目资料",       "hindsight": "kb_project", "prompt": "你是政务信息化项目管理专家。熟悉项目管理办法、验收管理细则、财政投资规定、软件行业基准数据。回答时注重管理流程、审批要求和实操经验。"},
     "standards":     {"name": "规范",           "hindsight": "kb_standard","prompt": "你是政务信息化标准规范专家。精通GB/GA/T/EGAG/GDZW等国家及团体标准，覆盖等保测评、密码应用、监理服务、立项咨询、验收测评、会议系统、安防工程、数据中心等领域。回答时注重条款引用和合规要求。"},
     "industry_docs": {"name": "信息化行业文档", "hindsight": "kb_industry","prompt": "你是政务信息化行业专家。熟悉电子政务工程造价、软件造价评估、信创替代、验收测评实务、行业政策解读。回答时注重实操经验和行业惯例。"},
-    "templates":     {"name": "方案模板",       "hindsight": "kb_template","prompt": "你是政务信息化项目方案编写专家。精通建设开发类和运维服务类项目方案的编写规范、章节结构、技术路线选型。回答时注重模板结构和编写要点。"},
     "tech_guides":   {"name": "技术指导书",     "hindsight": "kb_tech",    "prompt": "你是全栈技术专家。精通前端/后端/Agent/DevOps/安全/渗透测试/AI/LLM。回答注重实战经验、架构设计和攻防思路。"},
     "general":       {"name": "综合文件",       "hindsight": "kb_general", "prompt": "你是知识管理助手。擅长整理归纳各类知识，回答清晰有条理。"},
     "checklist":    {"name": "检查标准",       "hindsight": "kb_checklist", "prompt": "你是等保测评机构检查标准专家。回答时优先引用检查项、检查要求、检查方法、核查力度等表格字段。"},
@@ -136,6 +136,11 @@ async def _hindsight_request(endpoint: str, method: str = "GET", json_data: dict
 
 async def _get_active_hindsight_banks(min_docs: int = 1) -> list:
     """Discover which Hindsight banks have documents. Returns list of bank_ids."""
+    # ── pgvector 后端 ──
+    if settings.vector_backend == "pgvector":
+        active = [cfg["hindsight"] for k, cfg in BANKS.items() if cfg.get("hindsight")]
+        return active or ["kb_standard"]
+
     now = _time.time()
     if _active_hs_banks_cache["banks"] and (now - _active_hs_banks_cache["ts"]) < _ACTIVE_HS_BANKS_TTL:
         return _active_hs_banks_cache["banks"]
@@ -275,6 +280,38 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
         if frontend_key:
             bank_cfg = BANKS.get(frontend_key, {})
     hs_bank = bank_cfg.get("hindsight")
+
+    # ── pgvector 后端 ──
+    if settings.vector_backend == "pgvector":
+        store = get_vector_store()
+        if bank in ("all", "kb") or not hs_bank:
+            # query all banks in parallel
+            from app.repositories.vector_repo import PgVectorStore
+            pg = store if isinstance(store, PgVectorStore) else PgVectorStore()
+            all_banks = [cfg["hindsight"] for k, cfg in BANKS.items() if cfg.get("hindsight")]
+            # per-bank 下限保护：防止 limit 过小时每个 bank 只查几条
+            per_bank_limit = max(limit // len(all_banks), 10)
+            async def _q_one(b):
+                try:
+                    return await pg.query(query_text=query[:1800], bank=b, top_k=per_bank_limit)
+                except Exception as e:
+                    logger.warning("pg recall(%s) failed: %s", b, e)
+                    return []
+            tasks = [_q_one(b) for b in all_banks]
+            all_lists = await asyncio.gather(*tasks, return_exceptions=True)
+            merged = []
+            seen = set()
+            for lst in all_lists:
+                if isinstance(lst, Exception):
+                    continue
+                for r in lst:
+                    key = r.get("text", "")[:80]
+                    if key not in seen:
+                        seen.add(key)
+                        merged.append(r)
+            return merged[:limit]
+        else:
+            return await store.query(query_text=query[:1800], bank=hs_bank, top_k=limit)
 
     # 2. "all" or "kb" (legacy) → query all active Hindsight banks in parallel
     if bank in ("all", "kb") or not hs_bank:

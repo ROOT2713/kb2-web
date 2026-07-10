@@ -33,6 +33,7 @@ from app.config import settings
 from app.models.database import get_db, SessionLocal
 from app.repositories.document_repo import DocumentRepository
 from app.models.document import Document
+from app.repositories.vector_repo import get_vector_store
 from app.services.retrieval import (
     recall, get_bank_config, _get_active_hindsight_banks,
     _hindsight_request, BANKS,
@@ -118,28 +119,34 @@ async def list_documents(bank: str = Query("all"), db: Session = Depends(get_db)
     else:
         docs_list = repo.list_all(bank=bank)
 
-    # From Hindsight supplement chunk/size data
+    # Supplement chunk/size data
     hs_stats = {}
-    active_banks = await _get_active_hindsight_banks()
-    for bank_id in active_banks:
-        try:
-            result = await _hindsight_request(
-                f"/v1/default/banks/{bank_id}/documents?limit=1000", timeout=15
-            )
-            for item in result.get("items", []):
-                doc_id = None
-                for t in item.get("tags", []):
-                    if t.startswith("doc_id:"):
-                        doc_id = t[7:]
-                        break
-                if not doc_id:
-                    continue
-                if doc_id not in hs_stats:
-                    hs_stats[doc_id] = {"chunks": 0, "size": 0}
-                hs_stats[doc_id]["chunks"] += 1
-                hs_stats[doc_id]["size"] += item.get("text_length", 0)
-        except Exception as e:
-            logger.warning("list_documents: bank %s stats failed: %s", bank_id, e)
+    if settings.vector_backend == "pgvector":
+        store = get_vector_store()
+        store_docs = await store.list_documents(bank if bank != "all" else "kb")
+        for item in store_docs:
+            hs_stats[item["doc_id"]] = {"chunks": 0, "size": 0}
+    else:
+        active_banks = await _get_active_hindsight_banks()
+        for bank_id in active_banks:
+            try:
+                result = await _hindsight_request(
+                    f"/v1/default/banks/{bank_id}/documents?limit=1000", timeout=15
+                )
+                for item in result.get("items", []):
+                    doc_id = None
+                    for t in item.get("tags", []):
+                        if t.startswith("doc_id:"):
+                            doc_id = t[7:]
+                            break
+                    if not doc_id:
+                        continue
+                    if doc_id not in hs_stats:
+                        hs_stats[doc_id] = {"chunks": 0, "size": 0}
+                    hs_stats[doc_id]["chunks"] += 1
+                    hs_stats[doc_id]["size"] += item.get("text_length", 0)
+            except Exception as e:
+                logger.warning("list_documents: bank %s stats failed: %s", bank_id, e)
 
     docs = []
     for d in docs_list:
@@ -231,7 +238,7 @@ async def fetch_standard(
     if not text or len(text.strip()) < 100:
         raise HTTPException(400, "PDF content too short, may be scanned image")
 
-    # Step 4: Upload to Hindsight
+    # Step 4: Upload vectors
     doc_title = std_no.strip()
     chunk_size = 1000
     chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
@@ -254,20 +261,28 @@ async def fetch_standard(
     success_count = 0
     total_count = len(memory_items)
     if memory_items:
-        dyn_timeout = max(120, min(len(memory_items) * 5, 600))
-        try:
-            result = await _hindsight_request(
-                f"/v1/default/banks/{hs_bank}/memories",
-                "POST",
-                {"items": memory_items},
-                timeout=dyn_timeout,
-            )
-            success_count = result.get("items_count", 0)
-        except Exception as e:
-            raise HTTPException(500, f"Hindsight upload failed: {e}")
+        if settings.vector_backend == "pgvector":
+            store = get_vector_store()
+            try:
+                retained = await store.upsert(doc_id, memory_items, hs_bank)
+                success_count = retained
+            except Exception as e:
+                raise HTTPException(500, f"Vector store upload failed: {e}")
+        else:
+            dyn_timeout = max(120, min(len(memory_items) * 5, 600))
+            try:
+                result = await _hindsight_request(
+                    f"/v1/default/banks/{hs_bank}/memories",
+                    "POST",
+                    {"items": memory_items},
+                    timeout=dyn_timeout,
+                )
+                success_count = result.get("items_count", 0)
+            except Exception as e:
+                raise HTTPException(500, f"Hindsight upload failed: {e}")
 
     if success_count == 0:
-        raise HTTPException(500, "Upload failed: all chunks rejected by Hindsight")
+        raise HTTPException(500, "Upload failed: all chunks rejected by vector store")
 
     # Step 5: Write meta
     repo = DocumentRepository(db)
@@ -367,56 +382,84 @@ async def refetch_document(
     if not text or len(text.strip()) < 100:
         raise HTTPException(400, "PDF content too short after parsing")
 
-    # Step 4: Delete old vectors from Hindsight
-    try:
-        docs_result = await _hindsight_request(
-            f"/v1/default/banks/{hs_bank}/documents", timeout=10
-        )
-        doc_list = docs_result.get("items", []) or docs_result.get("documents", [])
-        for d in doc_list:
-            tags = d.get("tags", [])
-            if f"doc_id:{doc_id}" in tags:
-                try:
-                    await _hindsight_request(
-                        f"/v1/default/banks/{hs_bank}/documents/{d['id']}",
-                        method="DELETE", timeout=10
-                    )
-                except Exception:
-                    pass
-    except Exception:
-        pass
+    # Step 4: Delete old vectors
+    if settings.vector_backend == "pgvector":
+        store = get_vector_store()
+        try:
+            await store.delete(doc_id, hs_bank)
+        except Exception:
+            pass
+    else:
+        try:
+            docs_result = await _hindsight_request(
+                f"/v1/default/banks/{hs_bank}/documents", timeout=10
+            )
+            doc_list = docs_result.get("items", []) or docs_result.get("documents", [])
+            for d in doc_list:
+                tags = d.get("tags", [])
+                if f"doc_id:{doc_id}" in tags:
+                    try:
+                        await _hindsight_request(
+                            f"/v1/default/banks/{hs_bank}/documents/{d['id']}",
+                            method="DELETE", timeout=10
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     # Step 5: Re-upload with new text
     chunk_size = 1000
     chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
 
     success_count = 0
-    total_count = 0
-    async with httpx.AsyncClient(timeout=30) as client:
-        hs_url = settings.hindsight_url
+    total_count = len(chunks)
+    if chunks:
+        memory_items = []
         for i, chunk in enumerate(chunks):
             chunk = chunk.strip()
             if not chunk:
                 continue
-            total_count += 1
-            payload = [{
-                "text": chunk,
-                "tags": [
-                    f"doc:{search_term}.pdf",
-                    f"chunk:{i + 1}/{len(chunks)}",
-                    f"doc_id:{doc_id}",
-                    f"title:{search_term}",
-                ]
-            }]
+            tags = [
+                f"doc:{search_term}.pdf",
+                f"chunk:{i + 1}/{len(chunks)}",
+                f"doc_id:{doc_id}",
+                f"title:{search_term}",
+            ]
+            memory_items.append({"content": chunk, "tags": tags, "type": "world"})
+
+        if settings.vector_backend == "pgvector":
+            store = get_vector_store()
             try:
-                r = await client.post(
-                    f"{hs_url}/v1/default/banks/{hs_bank}/memories",
-                    json=payload
-                )
-                if r.status_code in (200, 201):
-                    success_count += 1
-            except Exception:
-                pass
+                retained = await store.upsert(doc_id, memory_items, hs_bank)
+                success_count = retained
+            except Exception as e:
+                logger.error("refetch upsert failed: %s", e)
+        else:
+            async with httpx.AsyncClient(timeout=30) as client:
+                hs_url = settings.hindsight_url
+                for i, chunk in enumerate(chunks):
+                    chunk = chunk.strip()
+                    if not chunk:
+                        continue
+                    payload = [{
+                        "text": chunk,
+                        "tags": [
+                            f"doc:{search_term}.pdf",
+                            f"chunk:{i + 1}/{len(chunks)}",
+                            f"doc_id:{doc_id}",
+                            f"title:{search_term}",
+                        ]
+                    }]
+                    try:
+                        r = await client.post(
+                            f"{hs_url}/v1/default/banks/{hs_bank}/memories",
+                            json=payload
+                        )
+                        if r.status_code in (200, 201):
+                            success_count += 1
+                    except Exception:
+                        pass
 
     repo.update(doc_id, title=search_term)
 
@@ -576,46 +619,53 @@ async def audit_knowledge_base(db: Session = Depends(get_db)):
 
         full_text = ""
         try:
-            hindsight_doc_id = None
-            docs_result = await _hindsight_request(
-                f"/v1/default/banks/{hs_bank}/documents", timeout=10
-            )
-            doc_list = docs_result.get("items", []) or docs_result.get("documents", [])
-            for item in doc_list:
-                if f"doc_id:{doc_id}" in item.get("tags", []):
-                    hindsight_doc_id = item.get("id")
-                    break
-
-            if not hindsight_doc_id and hs_bank != "kb":
-                try:
-                    docs_result = await _hindsight_request(
-                        f"/v1/default/banks/kb/documents", timeout=10
-                    )
-                    doc_list = docs_result.get("items", []) or docs_result.get("documents", [])
-                    for item in doc_list:
-                        if f"doc_id:{doc_id}" in item.get("tags", []):
-                            hindsight_doc_id = item.get("id")
-                            hs_bank = "kb"
-                            break
-                except Exception:
-                    pass
-
-            if hindsight_doc_id:
-                doc_detail = await _hindsight_request(
-                    f"/v1/default/banks/{hs_bank}/documents/{hindsight_doc_id}", timeout=10
-                )
-                full_text = doc_detail.get("original_text", "") or doc_detail.get("text", "") or ""
+            if settings.vector_backend == "pgvector":
+                store = get_vector_store()
+                chunks = await store.get_document_detail(doc_id, hs_bank)
+                if not chunks and hs_bank != "kb":
+                    chunks = await store.get_document_detail(doc_id, "kb")
+                full_text = "\n\n".join(c["content"] for c in chunks) if chunks else ""
             else:
-                try:
-                    recall_result = await recall(title, limit=50, bank="kb", max_tokens=32768)
-                    texts = []
-                    for r in recall_result:
-                        t = r.get("text", "") or ""
-                        if t.strip():
-                            texts.append(t.strip())
-                    full_text = "\n\n".join(texts)
-                except Exception:
-                    pass
+                hindsight_doc_id = None
+                docs_result = await _hindsight_request(
+                    f"/v1/default/banks/{hs_bank}/documents", timeout=10
+                )
+                doc_list = docs_result.get("items", []) or docs_result.get("documents", [])
+                for item in doc_list:
+                    if f"doc_id:{doc_id}" in item.get("tags", []):
+                        hindsight_doc_id = item.get("id")
+                        break
+
+                if not hindsight_doc_id and hs_bank != "kb":
+                    try:
+                        docs_result = await _hindsight_request(
+                            f"/v1/default/banks/kb/documents", timeout=10
+                        )
+                        doc_list = docs_result.get("items", []) or docs_result.get("documents", [])
+                        for item in doc_list:
+                            if f"doc_id:{doc_id}" in item.get("tags", []):
+                                hindsight_doc_id = item.get("id")
+                                hs_bank = "kb"
+                                break
+                    except Exception:
+                        pass
+
+                if hindsight_doc_id:
+                    doc_detail = await _hindsight_request(
+                        f"/v1/default/banks/{hs_bank}/documents/{hindsight_doc_id}", timeout=10
+                    )
+                    full_text = doc_detail.get("original_text", "") or doc_detail.get("text", "") or ""
+                else:
+                    try:
+                        recall_result = await recall(title, limit=50, bank="kb", max_tokens=32768)
+                        texts = []
+                        for r in recall_result:
+                            t = r.get("text", "") or ""
+                            if t.strip():
+                                texts.append(t.strip())
+                        full_text = "\n\n".join(texts)
+                    except Exception:
+                        pass
         except Exception as e:
             logger.warning("audit: failed to get text for %s: %s", doc_id, e)
 
@@ -699,6 +749,49 @@ async def get_document_content(doc_id: str, db: Session = Depends(get_db)):
     doc_bank = meta.get("bank", "kb")
     bank_cfg = get_bank_config(doc_bank)
     hs_bank = bank_cfg["hindsight"]
+
+    if settings.vector_backend == "pgvector":
+        store = get_vector_store()
+        chunks = await store.get_document_detail(doc_id, hs_bank)
+        if not chunks:
+            # fallback: try recall
+            try:
+                title = meta.get("title", "")
+                if title:
+                    recalled = await recall(title, limit=50, bank="kb", max_tokens=32768)
+                    if recalled:
+                        full_text = "\n\n".join(r.get("text", "") for r in recalled)
+                        if full_text and len(full_text) > 50:
+                            return {
+                                "doc_id": doc_id,
+                                "id": doc_id,
+                                "title": title,
+                                "filename": meta.get("filename", ""),
+                                "bank": meta.get("bank", "kb"),
+                                "chunks": len(recalled),
+                                "searchable": meta.get("searchable", 0),
+                                "created": meta.get("created_at", ""),
+                                "coverage_pct": meta.get("coverage_pct", 0),
+                                "text": full_text,
+                                "source": "recall",
+                            }
+            except Exception:
+                pass
+            raise HTTPException(404, "Document content not found (may not be indexed yet)")
+
+        full_text = "\n\n".join(c["content"] for c in chunks)
+        return {
+            "doc_id": doc_id,
+            "id": doc_id,
+            "title": meta.get("title", "unknown"),
+            "filename": meta.get("filename", ""),
+            "bank": meta.get("bank", "kb"),
+            "chunks": len(chunks),
+            "searchable": meta.get("searchable", 0),
+            "created": meta.get("created_at", ""),
+            "coverage_pct": meta.get("coverage_pct", 0),
+            "text": full_text,
+        }
 
     docs_result = await _hindsight_request(
         f"/v1/default/banks/{hs_bank}/documents",
@@ -850,42 +943,51 @@ async def delete_document(
     doc_hs_bank = doc.hs_bank if doc and doc.hs_bank else None
     doc_bank = doc.bank if doc else None
 
-    if doc_hs_bank:
-        search_banks = [doc_hs_bank]
-        active_banks = await _get_active_hindsight_banks()
-        if doc_hs_bank != "kb" and "kb" in active_banks:
-            search_banks.append("kb")
-    else:
-        search_banks = await _get_active_hindsight_banks()
-
-    all_items = []
-    for bank_id in search_banks:
+    if settings.vector_backend == "pgvector":
+        hs_bank = doc_hs_bank or "kb"
+        store = get_vector_store()
         try:
-            bank_docs = await _hindsight_request(
-                f"/v1/default/banks/{bank_id}/documents?limit=500",
-                timeout=15,
-            )
-            for item in bank_docs.get("items", []):
-                item["_bank"] = bank_id
-            all_items.extend(bank_docs.get("items", []))
+            await store.delete(doc_id, hs_bank)
+            logger.info("delete: pgvector removed %s from %s", doc_id[:8], hs_bank)
         except Exception as e:
-            logger.warning("delete_document: failed to list bank %s: %s", bank_id, e)
+            logger.warning("delete_document: pgvector delete failed: %s", e)
+    else:
+        if doc_hs_bank:
+            search_banks = [doc_hs_bank]
+            active_banks = await _get_active_hindsight_banks()
+            if doc_hs_bank != "kb" and "kb" in active_banks:
+                search_banks.append("kb")
+        else:
+            search_banks = await _get_active_hindsight_banks()
 
-    deleted_hs = 0
-    for item in all_items:
-        tags = item.get("tags", [])
-        for t in tags:
-            if t == f"doc_id:{doc_id}":
-                try:
-                    await _hindsight_request(
-                        f"/v1/default/banks/{item['_bank']}/documents/{item['id']}",
-                        "DELETE",
-                        timeout=10,
-                    )
-                    deleted_hs += 1
-                except Exception as e:
-                    logger.warning("delete_document: HS delete failed %s: %s", item["id"][:16], e)
-                break
+        all_items = []
+        for bank_id in search_banks:
+            try:
+                bank_docs = await _hindsight_request(
+                    f"/v1/default/banks/{bank_id}/documents?limit=500",
+                    timeout=15,
+                )
+                for item in bank_docs.get("items", []):
+                    item["_bank"] = bank_id
+                all_items.extend(bank_docs.get("items", []))
+            except Exception as e:
+                logger.warning("delete_document: failed to list bank %s: %s", bank_id, e)
+
+        deleted_hs = 0
+        for item in all_items:
+            tags = item.get("tags", [])
+            for t in tags:
+                if t == f"doc_id:{doc_id}":
+                    try:
+                        await _hindsight_request(
+                            f"/v1/default/banks/{item['_bank']}/documents/{item['id']}",
+                            "DELETE",
+                            timeout=10,
+                        )
+                        deleted_hs += 1
+                    except Exception as e:
+                        logger.warning("delete_document: HS delete failed %s: %s", item["id"][:16], e)
+                    break
 
     repo.delete(doc_id)
 
@@ -907,7 +1009,7 @@ async def delete_document(
     except Exception:
         pass
 
-    return {"ok": True, "deleted_hindsight_docs": deleted_hs}
+    return {"ok": True, "deleted_hindsight_docs": deleted_hs if 'deleted_hs' in locals() else 0}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -987,15 +1089,23 @@ async def reparse_document(
     old_bank = meta.get("bank", "kb")
     bank_cfg = get_bank_config(old_bank) if old_bank else get_bank_config("kb")
     hs_bank = bank_cfg.get("hindsight") or "kb"
-    try:
-        await _hindsight_request(
-            f"/v1/default/banks/{hs_bank}/documents/{doc_id}",
-            "DELETE",
-            timeout=30,
-        )
-        logger.info("Deleted old vectors: %s", doc_id)
-    except Exception as e:
-        logger.warning("Failed to delete old vectors (continuing): %s", e)
+    if settings.vector_backend == "pgvector":
+        store = get_vector_store()
+        try:
+            await store.delete(doc_id, hs_bank)
+            logger.info("Deleted old vectors via pgvector: %s", doc_id)
+        except Exception as e:
+            logger.warning("Failed to delete old vectors (continuing): %s", e)
+    else:
+        try:
+            await _hindsight_request(
+                f"/v1/default/banks/{hs_bank}/documents/{doc_id}",
+                "DELETE",
+                timeout=30,
+            )
+            logger.info("Deleted old vectors: %s", doc_id)
+        except Exception as e:
+            logger.warning("Failed to delete old vectors (continuing): %s", e)
 
     profile = profile_document(text)
     doc_type = profile.get("doc_type", "generic")
@@ -1073,32 +1183,40 @@ async def reparse_document(
         memory_items.append({"content": enhanced_content, "tags": tags, "type": "world"})
 
     retained = 0
-    hindsight_error = None
     if memory_items:
-        BATCH_SIZE = 20
-        for batch_start in range(0, len(memory_items), BATCH_SIZE):
-            batch = memory_items[batch_start:batch_start + BATCH_SIZE]
-            batch_num = batch_start // BATCH_SIZE + 1
-            total_batches = (len(memory_items) + BATCH_SIZE - 1) // BATCH_SIZE
-            dyn_timeout = max(120, min(len(batch) * 15, 600))
-            logger.info(
-                "Reparse batch %d/%d: %d chunks -> bank=%s, timeout=%ds",
-                batch_num, total_batches, len(batch), hs_bank, dyn_timeout
-            )
+        if settings.vector_backend == "pgvector":
+            store = get_vector_store()
             try:
-                result = await _hindsight_request(
-                    f"/v1/default/banks/{hs_bank}/memories",
-                    "POST",
-                    {"items": batch},
-                    timeout=dyn_timeout,
-                )
-                batch_retained = result.get("items_count", len(batch))
-                retained += batch_retained
+                retained = await store.upsert(new_doc_id, memory_items, hs_bank)
             except Exception as e:
-                hindsight_error = str(e) or repr(e)
-                logger.warning("Reparse batch %d FAILED: %s", batch_num, hindsight_error)
-        if retained == 0 and hindsight_error:
-            raise HTTPException(502, f"Re-index failed: {hindsight_error}")
+                logger.error("Reparse upsert failed: %s", e)
+                raise HTTPException(502, f"Re-index failed: {e}")
+        else:
+            hindsight_error = None
+            BATCH_SIZE = 20
+            for batch_start in range(0, len(memory_items), BATCH_SIZE):
+                batch = memory_items[batch_start:batch_start + BATCH_SIZE]
+                batch_num = batch_start // BATCH_SIZE + 1
+                total_batches = (len(memory_items) + BATCH_SIZE - 1) // BATCH_SIZE
+                dyn_timeout = max(120, min(len(batch) * 15, 600))
+                logger.info(
+                    "Reparse batch %d/%d: %d chunks -> bank=%s, timeout=%ds",
+                    batch_num, total_batches, len(batch), hs_bank, dyn_timeout
+                )
+                try:
+                    result = await _hindsight_request(
+                        f"/v1/default/banks/{hs_bank}/memories",
+                        "POST",
+                        {"items": batch},
+                        timeout=dyn_timeout,
+                    )
+                    batch_retained = result.get("items_count", len(batch))
+                    retained += batch_retained
+                except Exception as e:
+                    hindsight_error = str(e) or repr(e)
+                    logger.warning("Reparse batch %d FAILED: %s", batch_num, hindsight_error)
+            if retained == 0 and hindsight_error:
+                raise HTTPException(502, f"Re-index failed: {hindsight_error}")
         logger.info("Reparse total: %d/%d chunks stored", retained, len(memory_items))
 
     content_hash = hashlib.sha256(content).hexdigest()

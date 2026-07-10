@@ -38,6 +38,7 @@ const authStore = useAuthStore()
   padding: 0 1.5rem;
   z-index: 100;
   gap: 2rem;
+  box-shadow: var(--shadow-sm);
 }
 
 .header-brand {
@@ -52,5 +53,25 @@ const authStore = useAuthStore()
   font-size: 1.1rem;
   color: var(--accent);
   letter-spacing: -0.02em;
+}
+
+.nav-link {
+  font-size: 0.825rem;
+  color: var(--fg-muted);
+  padding: 0.35rem 0.6rem;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transition: background var(--transition), color var(--transition);
+}
+
+.nav-link:hover {
+  background: var(--surface-hover);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.nav-link.router-link-active {
+  color: var(--accent);
+  font-weight: 600;
 }
 </style>

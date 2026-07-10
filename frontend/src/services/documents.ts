@@ -54,3 +54,14 @@ export async function reparseDocument(
   const { data } = await api.post(`/documents/${encodeURIComponent(docId)}/reparse`)
   return data
 }
+
+export async function patchDocument(
+  docId: string,
+  payload: { title?: string; category?: string },
+): Promise<{ ok: boolean; doc_id: string; title?: string; category?: string }> {
+  const form = new FormData()
+  if (payload.title !== undefined) form.append('title', payload.title)
+  if (payload.category !== undefined) form.append('category', payload.category)
+  const { data } = await api.patch(`/documents/${encodeURIComponent(docId)}`, form)
+  return data
+}

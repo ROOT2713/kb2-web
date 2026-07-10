@@ -80,3 +80,14 @@ export async function getCosts(period: string = 'today'): Promise<AdminCosts> {
   const { data } = await api.get<AdminCosts>('/admin/costs', { params: { period } })
   return data
 }
+
+export interface CategoryItem {
+  key: string
+  label: string
+  isolated: boolean
+}
+
+export async function getCategories(): Promise<CategoryItem[]> {
+  const { data } = await api.get<CategoryItem[]>('/admin/categories')
+  return data
+}

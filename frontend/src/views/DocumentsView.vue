@@ -24,6 +24,7 @@
       <div class="table-header">
         <span class="col-title">标题</span>
         <span class="col-bank">知识库</span>
+        <span class="col-cat">分类</span>
         <span class="col-chunks">分块</span>
         <span class="col-status">状态</span>
         <span class="col-date">日期</span>
@@ -33,6 +34,15 @@
         <span class="col-title" :title="doc.filename"><router-link :to="'/documents/' + doc.id" class="doc-title-link">{{ doc.title }}</router-link></span>
         <span class="col-bank">
           <span class="badge">{{ doc.bank }}</span>
+        </span>
+        <span class="col-cat">
+          <template v-if="editingCat === doc.id">
+            <select v-model="editCatValue" class="cat-select" @change="saveCategory(doc.id)">
+              <option value="">未分类</option>
+              <option v-for="c in docsStore.categories" :key="c.key" :value="c.key">{{ c.label }}</option>
+            </select>
+          </template>
+          <span v-else class="badge cat-badge" @click="startEditCat(doc)">{{ getCatLabel(doc.category) }}</span>
         </span>
         <span class="col-chunks">{{ doc.chunks }}</span>
         <span class="col-status">
@@ -64,6 +74,7 @@ import { useBanksStore } from '@/stores/banks'
 import { useAuthStore } from '@/stores/auth'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import Toast from '@/components/Toast.vue'
+import type { DocumentItem } from '@/services/documents'
 
 const docsStore = useDocumentsStore()
 const banksStore = useBanksStore()
@@ -73,6 +84,29 @@ const search = ref('')
 const filterBank = ref('all')
 const toastMsg = ref('')
 const toastType = ref<'info' | 'success' | 'error' | 'warning'>('info')
+const editingCat = ref<string | null>(null)
+const editCatValue = ref('')
+
+function getCatLabel(key: string): string {
+  const found = docsStore.categories.find((c) => c.key === key)
+  return found ? found.label : (key || '未分类')
+}
+
+function startEditCat(doc: DocumentItem) {
+  editingCat.value = doc.id
+  editCatValue.value = doc.category || ''
+}
+
+async function saveCategory(docId: string) {
+  try {
+    await docsStore.patchDocument(docId, { category: editCatValue.value })
+  } catch {
+    toastMsg.value = '更新分类失败'
+    toastType.value = 'error'
+  } finally {
+    editingCat.value = null
+  }
+}
 
 const filteredDocs = computed(() => {
   const q = search.value.toLowerCase().trim()
@@ -87,6 +121,7 @@ const filteredDocs = computed(() => {
 
 onMounted(() => {
   banksStore.fetchBanks()
+  docsStore.fetchCategories()
   loadDocs()
 })
 
@@ -157,7 +192,7 @@ async function handleReparse(docId: string) {
 
 .table-header {
   display: grid;
-  grid-template-columns: 1fr 100px 60px 50px 100px 130px;
+  grid-template-columns: 1fr 100px 80px 60px 50px 100px 130px;
   gap: 0.5rem;
   padding: 0.6rem 1rem;
   background: var(--bg-alt);
@@ -171,7 +206,7 @@ async function handleReparse(docId: string) {
 
 .table-row {
   display: grid;
-  grid-template-columns: 1fr 100px 60px 50px 100px 130px;
+  grid-template-columns: 1fr 100px 80px 60px 50px 100px 130px;
   gap: 0.5rem;
   padding: 0.5rem 1rem;
   font-size: 0.825rem;
@@ -181,7 +216,7 @@ async function handleReparse(docId: string) {
 }
 
 .table-row:hover {
-  background: var(--bg);
+  background: var(--surface-hover);
 }
 
 .col-title {
@@ -239,4 +274,9 @@ async function handleReparse(docId: string) {
   color: var(--fg-muted);
   font-size: 0.9rem;
 }
+
+.col-cat { min-width: 80px; }
+.cat-badge { cursor: pointer; }
+.cat-badge:hover { background: var(--accent-light); border-color: var(--accent); }
+.cat-select { font-size: 0.8rem; padding: 2px 4px; width: 90px; }
 </style>

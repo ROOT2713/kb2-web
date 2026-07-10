@@ -61,21 +61,31 @@ function close() {
   align-items: center;
   gap: 0.75rem;
   max-width: 360px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+
+.toast.info {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .toast.success {
   border-color: var(--success);
   color: var(--success);
+  background: var(--success-bg);
 }
 
 .toast.error {
   border-color: var(--danger);
   color: var(--danger);
+  background: var(--danger-bg);
 }
 
 .toast.warning {
   border-color: var(--warning);
   color: var(--warning);
+  background: var(--warning-bg);
 }
 
 .toast-msg {

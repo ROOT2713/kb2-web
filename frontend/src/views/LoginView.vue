@@ -69,7 +69,9 @@ async function handleLogin() {
   max-width: 360px;
   padding: 2.5rem;
   border: 1px solid var(--border);
-  background: var(--card);
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
 }
 
 .login-title {
@@ -82,7 +84,7 @@ async function handleLogin() {
 
 .login-subtitle {
   font-size: 0.875rem;
-  color: var(--fg2);
+  color: var(--fg-secondary);
   margin: 0 0 1.75rem;
 }
 
@@ -120,21 +122,21 @@ async function handleLogin() {
 
 .login-error {
   font-size: 0.8125rem;
-  color: #c0392b;
+  color: var(--danger);
   padding: 0.5rem 0.75rem;
-  border: 1px solid #e8c4c0;
-  background: #fdf2f1;
+  border: 1px solid var(--danger);
+  background: var(--danger-bg);
 }
 
 .login-btn {
   padding: 0.625rem 1rem;
   border: none;
   background: var(--accent);
-  color: var(--accent-fg);
+  color: var(--fg-on-accent);
   font-size: 0.875rem;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity var(--transition);
 }
 
 .login-btn:hover:not(:disabled) {

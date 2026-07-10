@@ -67,6 +67,7 @@ export async function postQuery(params: {
   rerank_mode?: string
   multiHypothesis?: boolean
   nocache?: boolean
+  categories?: string
 }): Promise<QueryResponse> {
   const formData = new FormData()
   formData.append('q', params.q)
@@ -76,6 +77,7 @@ export async function postQuery(params: {
   if (params.rerank_mode) formData.append('rerank_mode', params.rerank_mode)
   if (params.multiHypothesis) formData.append('multi_hypothesis', 'true')
   if (params.nocache) formData.append('nocache', 'true')
+  if (params.categories) formData.append('categories', params.categories)
   const { data } = await api.post<QueryResponse>('/query', formData)
   return data
 }

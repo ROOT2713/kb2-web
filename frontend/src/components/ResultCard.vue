@@ -276,17 +276,17 @@ function renderStdText(text: string): string {
   font-size: 0.7rem;
   padding: 0.15rem 0.5rem;
   margin-left: 0.5rem;
-  border: 1px solid var(--accent, #e67e22);
+  border: 1px solid var(--accent);
   background: transparent;
-  color: var(--accent, #e67e22);
+  color: var(--accent);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   vertical-align: middle;
 }
 
 .refresh-btn:hover {
-  background: var(--accent, #e67e22);
-  color: #fff;
+  background: var(--accent);
+  color: var(--fg-on-accent);
 }
 
 .result-body {
@@ -511,7 +511,7 @@ function renderStdText(text: string): string {
   color: var(--fg-muted);
   padding: 0.1rem 0.35rem;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-size: 0.7rem;
 }
 
@@ -643,23 +643,23 @@ function renderStdText(text: string): string {
 .badge {
   font-size: 0.6rem;
   padding: 0.1rem 0.35rem;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-weight: 600;
   white-space: nowrap;
 }
 .fee-badge {
-  background: #fff3e0;
-  color: #e65100;
-  border: 1px solid #ffe0b2;
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning);
 }
 .kw-badge {
-  background: #e3f2fd;
-  color: #1565c0;
-  border: 1px solid #bbdefb;
+  background: var(--info-bg);
+  color: var(--accent);
+  border: 1px solid var(--accent);
 }
 .source-text :deep(mark.kw-highlight) {
-  background: #fff176;
-  color: #333;
+  background: var(--warning);
+  color: white;
   padding: 0 1px;
   border-radius: 2px;
 }

@@ -189,14 +189,14 @@ async function handleReparse() {
   padding: 0.35rem 0.75rem;
   background: var(--bg-alt);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   cursor: pointer;
   color: var(--fg);
-  transition: background 0.15s;
+  transition: background var(--transition);
 }
 
 .btn-back:hover {
-  background: var(--border);
+  background: var(--surface-hover);
 }
 
 .page-title {
@@ -262,7 +262,7 @@ async function handleReparse() {
   max-height: 400px;
   overflow-y: auto;
   background: var(--bg-alt);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 1rem;
   border: 1px solid var(--border);
 }
@@ -297,9 +297,9 @@ async function handleReparse() {
   padding: 0.5rem 1.25rem;
   font-size: 0.85rem;
   background: var(--danger);
-  color: white;
+  color: var(--fg-on-accent);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
 }
 
@@ -329,7 +329,7 @@ async function handleReparse() {
   padding: 0.15rem 0.5rem;
   font-size: 0.7rem;
   background: var(--bg-alt);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
 }
 

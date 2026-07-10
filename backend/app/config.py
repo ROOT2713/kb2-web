@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     # ── Hindsight ──
     hindsight_url: str = "http://localhost:8080"
 
+    # ── Vector Store ──
+    vector_backend: str = "hindsight"  # "pgvector" | "hindsight" — 切换开关
+    pgvector_database_url: str = "postgresql://hindsight:hindsight123@localhost:5432/hindsight"
+
     # ── LLM ──
     llm_base_url: str = ""
     llm_api_key: str = ""

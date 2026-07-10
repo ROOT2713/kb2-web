@@ -434,14 +434,14 @@ async function loadRagEval() {
   padding: 0.3rem 0.8rem;
   font-size: 0.8rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--bg);
   color: var(--fg-muted);
   cursor: pointer;
 }
 .period-tabs button.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--fg-on-accent);
   border-color: var(--accent);
 }
 .costs-content {

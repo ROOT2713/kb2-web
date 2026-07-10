@@ -40,6 +40,7 @@ function onCancel() { emit('cancel') }
   max-width: 400px;
   width: 90%;
   padding: 1.5rem;
+  box-shadow: var(--shadow-lg);
 }
 
 .confirm-message {

@@ -43,6 +43,7 @@ onMounted(() => {
   overflow-y: auto;
   padding: 1rem 0;
   z-index: 90;
+  box-shadow: var(--shadow);
 }
 
 .sidebar-title {
@@ -75,13 +76,20 @@ onMounted(() => {
 }
 
 .bank-item:hover {
-  background: hsl(220, 15%, 92%);
+  background: var(--surface-hover);
 }
 
 .bank-item.active {
   background: var(--accent-light);
   color: var(--accent);
   font-weight: 600;
+  border-left: 3px solid var(--accent);
+}
+
+.bank-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .bank-name {
