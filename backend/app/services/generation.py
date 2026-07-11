@@ -102,9 +102,14 @@ async def chat(
                 # reasoning model: content 可能为空，检查 reasoning_content
                 if not content and choices[0]["message"].get("reasoning_content"):
                     content = choices[0]["message"]["reasoning_content"]
-                return content or "（模型返回空内容）"
+                if not content:
+                    logger.warning("LLM returned empty content (likely safety refusal), attempt=%d", attempt + 1)
+                    if attempt < max_retries - 1:
+                        continue
+                    raise ValueError(f"LLM returned empty content after {max_retries} attempts")
+                return content
+
             except (KeyError, IndexError, TypeError) as e:
-                logger.warning("LLM API choices 格式异常: %s", e)
                 raise ValueError(f"LLM API choices 格式异常: {e}")
 
     raise ValueError(f"LLM API 重试 {max_retries} 次后仍失败: {last_error or 'rate limit'}")
@@ -137,6 +142,14 @@ def logic_validate(answer: str, context: str, sources: list) -> dict:
     answer_numbers = set(re.findall(r'\d+\.?\d*', answer))
     context_numbers = set(re.findall(r'\d+\.?\d*', context))
 
+    # 预先从 context 中提取标准号对应的数字，避免误报
+    # 例：GB/T 2887-2011 → 2887 为标准编号，不应归入 number_mismatch
+    _context_standard_nums: set[str] = set()
+    for m in re.finditer(r'GB[/\\]T?\s*(\d+)', context, re.IGNORECASE):
+        _context_standard_nums.add(m.group(1))
+    for m in re.finditer(r'T/EGAG\s*(\d+)', context, re.IGNORECASE):
+        _context_standard_nums.add(m.group(1))
+
     def is_meaningful(n):
         """判断数字是否有检查价值"""
         try:
@@ -160,6 +173,8 @@ def logic_validate(answer: str, context: str, sources: list) -> dict:
     if orphan_numbers:
         orphan_numbers = {n for n in orphan_numbers
                          if not (2020 <= float(n) <= 2030)}
+        # 排除标准号数字（如 2887、22239、50314 等标准编号）
+        orphan_numbers = orphan_numbers - _context_standard_nums
         if orphan_numbers:
             issues.append({
                 "type": "number_mismatch",

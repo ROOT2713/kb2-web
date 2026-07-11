@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     confidence_reject_enabled: bool = True
     confidence_reject_threshold_l1: int = 0     # source_count=0 → 拒答
     confidence_reject_threshold_l2_coverage: float = 0.5
-    confidence_reject_threshold_l3_validate: float = 0.4
+    confidence_reject_threshold_l3_validate: float = 0.25
 
     @property
     def db_url(self) -> str:

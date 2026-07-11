@@ -348,17 +348,20 @@ class PgVectorStore:
             rows = await conn.fetch(
                 """
                 WITH top_vec AS (
-                    SELECT content, metadata, doc_id, chunk_index, embedding, tsv
+                    SELECT content, metadata, doc_id, chunk_index, embedding
                     FROM vector_chunks
                     WHERE bank = $1 AND embedding IS NOT NULL
                     ORDER BY embedding <=> $2::vector
                     LIMIT $3
                 )
                 SELECT content, metadata, doc_id, chunk_index,
-                       CASE WHEN $4::text <> '' AND tsv IS NOT NULL
+                       CASE WHEN $4::text <> '' AND content IS NOT NULL
                             THEN (1 - (embedding <=> $2::vector))
-                                 + 0.5 * COALESCE(
-                                     ts_rank(tsv, plainto_tsquery('simple', $4::text)), 0)
+                                 + 1.0 * COALESCE(
+                                     ts_rank(
+                                       to_tsvector('public.zhcfg', COALESCE(content, '')),
+                                       plainto_tsquery('public.zhcfg', $4::text)
+                                     ), 0)
                             ELSE 1 - (embedding <=> $2::vector)
                        END AS score
                 FROM top_vec
