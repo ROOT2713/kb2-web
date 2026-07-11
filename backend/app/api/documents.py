@@ -51,6 +51,19 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _log_task_exception(task: asyncio.Task):
+    """Log any exception from a fire-and-forget background task."""
+    from app.middleware.request_id import _request_id_ctx
+    task_id = task.get_name() or f"t-{id(task):x}"
+    _request_id_ctx.set(f"task:{task_id}")
+    try:
+        exc = task.exception()
+        if exc:
+            logger.error("Background task [%s] failed: %s", task_id, exc)
+    except asyncio.CancelledError:
+        pass
+
 # ── Default categories (matches v1 DEFAULT_CATEGORIES) ──────────
 DEFAULT_CATEGORIES = [
     "\U0001f4a1想法", "\U0001f4bc工作", "\U0001f4da学习", "\U0001f3e0生活", "\U0001f680项目",
@@ -1249,7 +1262,7 @@ async def reparse_document(
             pass
     db.commit()
 
-    asyncio.create_task(_verify_searchable(new_doc_id, doc_title, len(text), hs_bank))
+    asyncio.create_task(_verify_searchable(new_doc_id, doc_title, len(text), hs_bank)).add_done_callback(_log_task_exception)
 
     return {
         "ok": True,

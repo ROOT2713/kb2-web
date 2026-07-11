@@ -11,6 +11,8 @@ from fastapi.responses import FileResponse, RedirectResponse
 from app.config import settings
 from app.api.router import api_router
 from app.middleware.jwt_auth import get_current_user
+from app.middleware.error_handler import global_exception_handler
+from app.middleware.request_id import RequestIDMiddleware
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
@@ -21,6 +23,9 @@ async def lifespan(app: FastAPI):
     # ── startup ──
     from app.models.database import init_db
     init_db()
+
+    from app.middleware.request_id import _ensure_rid_filter
+    _ensure_rid_filter()
 
     from app.services.cache_service import warmup_bm25 as warmup_caches
     await warmup_caches()
@@ -38,6 +43,8 @@ app = FastAPI(
     redirect_slashes=False,  # 禁止尾斜杠重定向，避免 catch-all 拦截 API POST
 )
 
+app.add_exception_handler(Exception, global_exception_handler)
+
 # ── CORS ──
 app.add_middleware(
     CORSMiddleware,
@@ -46,6 +53,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Request-ID (最外层中间件，覆盖全链路) ──
+app.add_middleware(RequestIDMiddleware)
 
 # ── Auth routes (NO JWT required) ──
 from app.api.auth import router as auth_router  # noqa: E402

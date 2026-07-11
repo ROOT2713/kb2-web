@@ -97,3 +97,9 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+if "CHANGE_ME" in settings.jwt_secret:
+    raise RuntimeError(
+        "JWT_SECRET is the default 'CHANGE_ME_IN_PRODUCTION'. "
+        "Set JWT_SECRET in .env before starting in production."
+    )

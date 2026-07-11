@@ -43,6 +43,19 @@ from app.utils.text_cleaning import clean_pipeline, filename_to_title
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+
+def _log_task_exception(task: asyncio.Task):
+    """Log any exception from a fire-and-forget background task."""
+    from app.middleware.request_id import _request_id_ctx
+    task_id = task.get_name() or f"t-{id(task):x}"
+    _request_id_ctx.set(f"task:{task_id}")
+    try:
+        exc = task.exception()
+        if exc:
+            logger.error("Background task [%s] failed: %s", task_id, exc)
+    except asyncio.CancelledError:
+        pass
+
 router = APIRouter()
 
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
@@ -179,7 +192,7 @@ async def upload_document(
             title=title, category=category, bank=bank,
             source=source, published_date=published_date, geo_scope=geo_scope,
         )
-    )
+    ).add_done_callback(_log_task_exception)
 
     return {"task_id": task_id, "status": "pending", "filename": file.filename}
 
@@ -489,10 +502,10 @@ async def _process_upload_task(
         db.close()
 
     if integrity and integrity.get("status") in ("ok", "pending"):
-        asyncio.create_task(_verify_searchable(doc_id, doc_title, len(text), hs_bank))
-    asyncio.create_task(asyncio.to_thread(kg_index_document, doc_id, doc_title, text, bank))
+        asyncio.create_task(_verify_searchable(doc_id, doc_title, len(text), hs_bank)).add_done_callback(_log_task_exception)
+    asyncio.create_task(asyncio.to_thread(kg_index_document, doc_id, doc_title, text, bank)).add_done_callback(_log_task_exception)
     # P2: 异步触发质量门禁检查，不阻塞上传返回
-    asyncio.create_task(_async_quality_gates_check(doc_id, hs_bank))
+    asyncio.create_task(_async_quality_gates_check(doc_id, hs_bank)).add_done_callback(_log_task_exception)
     invalidate_bm25_cache(bank=bank)
 
     result_dict = {"ok": True, "doc_id": doc_id, "title": doc_title, "category": doc_category, "filename": filename, "chunks": retained, "total_chars": len(text), "preview": text[:200] + ("..." if len(text) > 200 else ""), "quality": {"score": quality["score"], "issues": quality["issues"], "needs_confirm": quality["score"] < 80}, "integrity": integrity, "doc_type": doc_type, "kg_indexed": True}
@@ -693,7 +706,7 @@ async def upload_batch(
                     title=title_prefix, category=category, bank=bank,
                     source=source, published_date=None, geo_scope=None,
                 )
-            )
+            ).add_done_callback(_log_task_exception)
             success_count += 1
             results.append({"filename": f.filename, "ok": True, "task_id": task_id, "status": "pending"})
         except HTTPException as e:
