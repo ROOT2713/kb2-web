@@ -25,6 +25,8 @@ def backfill_categories(dry_run: bool = True):
                     doc.category = cat
             else:
                 stats["unmatched"] += 1
+                if not dry_run:
+                    doc.category = "it"
         if not dry_run:
             db.commit()
         total_assigned = sum(v for k, v in stats.items() if k != "unmatched")
