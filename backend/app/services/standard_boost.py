@@ -74,7 +74,8 @@ def find_docs_by_standard_number(db: Session, std_num: str, bank: str = "all") -
     sql = """SELECT doc_id, title, doc_type 
              FROM documents 
              WHERE status='active' AND searchable=1 
-               AND doc_type IN ('gb_standard', 'regulation')"""
+               AND doc_type IN ('gb_standard', 'regulation')
+               AND (category IS NULL OR category = '' OR category NOT IN ('daily', 'news'))"""
     params = {}
     if bank != "all":
         sql += " AND bank=:bank"

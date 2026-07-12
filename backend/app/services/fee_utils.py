@@ -156,12 +156,19 @@ def find_fee_relevant_chunks(
         pdb = SessionLocal()
         try:
             # Build query parameters
+            # SAFETY: doc_ids come from internal vector search results (all_results),
+            # NOT from direct user input. The conditions use parameterized queries
+            # with named bind params (:{key}), not string interpolation of values.
+            # The f-string only constructs the SQL template pattern, not the values.
             conditions = []
             params: dict = {}
             for i, did in enumerate(doc_ids):
                 key = f"did{i}"
                 conditions.append(f"p.doc_id = :{key}")
                 params[key] = did
+            
+            assert all(isinstance(d, str) for d in doc_ids), \
+                f"doc_ids must be strings, got {set(type(d).__name__ for d in doc_ids)}"
             
             where_clause = " OR ".join(conditions)
             

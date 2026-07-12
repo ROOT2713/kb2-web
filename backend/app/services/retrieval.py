@@ -454,6 +454,7 @@ async def build_bm25_index(bank: str = "all") -> tuple:
                 WHERE length(p.parent_text) > 50
                   AND d.searchable = 1
                   AND d.status = 'active'
+                  AND (d.category IS NULL OR d.category = '' OR d.category NOT IN ('daily', 'news'))
             """)).fetchall()
         else:
             bank_cfg = get_bank_config(bank)
@@ -465,6 +466,7 @@ async def build_bm25_index(bank: str = "all") -> tuple:
                   AND d.bank = :bank
                   AND d.searchable = 1
                   AND d.status = 'active'
+                  AND (d.category IS NULL OR d.category = '' OR d.category NOT IN ('daily', 'news'))
             """), {"bank": bank}).fetchall()
         pdb.close()
 

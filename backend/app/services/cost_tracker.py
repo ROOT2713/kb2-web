@@ -9,6 +9,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -92,15 +93,28 @@ def record_call(
 
     now = datetime.now(timezone.utc).isoformat()
     conn = _get_db(db_path)
-    conn.execute(
-        """INSERT INTO cost_log
-           (ts, model, source, prompt_tokens, completion_tokens, total_tokens, cost_yuan, prompt, response_preview)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (now, model, source, prompt_tokens, completion_tokens,
-         prompt_tokens + completion_tokens, total_cost,
-         prompt[:500], response_preview[:200]),
-    )
-    conn.commit()
+
+    # Retry on SQLITE_BUSY (multi-worker write contention)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            conn.execute(
+                """INSERT INTO cost_log
+                   (ts, model, source, prompt_tokens, completion_tokens, total_tokens, cost_yuan, prompt, response_preview)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (now, model, source, prompt_tokens, completion_tokens,
+                 prompt_tokens + completion_tokens, total_cost,
+                 prompt[:500], response_preview[:200]),
+            )
+            conn.commit()
+            break
+        except sqlite3.OperationalError as e:
+            if attempt < max_retries - 1 and "busy" in str(e).lower():
+                logger.warning("Cost log write busy, retrying %d/%d", attempt + 1, max_retries)
+                time.sleep(0.1)
+            else:
+                logger.error("Cost log write failed after %d attempts: %s", attempt + 1, e)
+                raise
 
     record = {
         "ts": now,
