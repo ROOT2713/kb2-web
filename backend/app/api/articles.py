@@ -231,13 +231,18 @@ async def extract_by_topic(
 @router.get("/by-concept")
 def extract_by_concept(
     concept_id: str = Query(..., description="Concept ID 前缀"),
+    limit: int = Query(50, ge=1, le=500, description="返回结果数"),
+    offset: int = Query(0, ge=0, description="偏移量"),
     db: Session = Depends(get_db),
 ):
     """按 concept_id 前缀获取相关 concepts。"""
-    concepts = db.query(Concept).filter(
+    base = db.query(Concept).filter(
         Concept.concept_id.like(f"{concept_id}%"),
         Concept.status == "active",
-    ).order_by(Concept.confidence.desc()).all()
+    ).order_by(Concept.confidence.desc())
+
+    total = base.count()
+    concepts = base.offset(offset).limit(limit).all()
 
     # 按文档聚合
     doc_groups = defaultdict(list)
@@ -265,4 +270,10 @@ def extract_by_concept(
         "total_documents": len(results),
         "total_concepts": len(concepts),
         "results": results,
+        "pagination": {
+            "page": offset // limit + 1 if limit > 0 else 1,
+            "page_size": limit,
+            "total": total,
+            "total_pages": max(1, (total + limit - 1) // limit) if limit > 0 else 1,
+        },
     }

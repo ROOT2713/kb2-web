@@ -41,6 +41,7 @@ def _get_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
     if not hasattr(_local, "conn") or _local.conn_key != key:
         path = str(db_path or DEFAULT_DB_PATH)
         _local.conn = sqlite3.connect(path, check_same_thread=False)
+        _local.conn.execute("PRAGMA journal_mode=WAL")
         _local.conn.row_factory = sqlite3.Row
         _local.conn_key = key
         _init_table(_local.conn)
