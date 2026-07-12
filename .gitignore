@@ -58,3 +58,6 @@ backend/tests/unit/errors/
 
 # Frontend build cache
 frontend/tmp/
+
+# Backup files
+*.bak

@@ -10,51 +10,31 @@ import json
 import os
 import re
 import time
-import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Optional
 
-from fastapi import HTTPException
 from sqlalchemy import text as sa_text
 
 from app.models.database import SessionLocal
-from app.services.session_manager import (
-    get_session as session_get,
-    create_or_update_session as session_update,
-    release_session as session_release,
-)
 from app.middleware.jwt_auth import get_username_from_token
 from app.models.audit import AuditLog
-from app.services.standard_boost import extract_standard_numbers
-from app.services.cache_service import (
-    get_exact as cache_get_exact,
-    get_semantic as cache_get_semantic,
-    set_cache as cache_set,
-    clear_all_cache,
-)
 from app.services.generation import chat, logic_validate
 from app.services.retrieval import (
-    BANKS,
     _get_active_hindsight_banks,
     _find_rate_table_snippet,
     apply_tiebreaker_sort,
     bm25_search,
     build_bm25_index,
-    expand_query_synonyms,
     keyword_rerank,
     llm_rerank,
     cross_encoder_rerank,
-    get_bank_config,
     recall,
     rrf_merge,
 )
 from app.utils.text_cleaning import (
     deai_postprocess,
-    expand_amount_tiers,
-    normalize_standard_numbers,
 )
-from app.utils.tokenizer import expand_keywords, extract_keyword_snippet
+from app.utils.tokenizer import extract_keyword_snippet
 from app.config import settings
 from app.services.fee_utils import find_fee_relevant_chunks
 

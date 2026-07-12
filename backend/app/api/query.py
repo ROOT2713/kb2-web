@@ -33,6 +33,8 @@ from app.api.query_engine import (
     _generate_query_suggestions,
     _STD_VERSION_PATTERN,
     _STD_PATTERN,
+    _REJECT_MSG_KNOWLEDGE_GAP,
+    _REJECT_MSG_LOW_COVERAGE,
 )
 
 import asyncio
@@ -86,11 +88,6 @@ from app.utils.text_cleaning import (
 from app.utils.tokenizer import expand_keywords, extract_keyword_snippet
 
 from app.config import settings
-
-# ── Confidence Rejection Messages ──
-_REJECT_MSG_KNOWLEDGE_GAP = "知识库中未找到与您问题直接相关的信息。请尝试换一种方式提问，或确认您的查询范围。"
-
-_REJECT_MSG_LOW_COVERAGE = "知识库中未找到与您问题直接相关的信息。请尝试换一种方式提问，或确认您的查询范围。"
 
 from app.services.fee_utils import (
     find_fee_relevant_chunks,
