@@ -167,8 +167,10 @@ def find_fee_relevant_chunks(
                 conditions.append(f"p.doc_id = :{key}")
                 params[key] = did
             
-            assert all(isinstance(d, str) for d in doc_ids), \
-                f"doc_ids must be strings, got {set(type(d).__name__ for d in doc_ids)}"
+            if not all(isinstance(d, str) for d in doc_ids):
+                raise TypeError(
+                    f"doc_ids must be strings, got {set(type(d).__name__ for d in doc_ids)}"
+                )
             
             where_clause = " OR ".join(conditions)
             

@@ -6,6 +6,7 @@ set -euo pipefail
 NAME="kb2-web"
 URL="http://localhost:3027/login"
 FAIL=0
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ── Check 1: Process alive ──
 if systemctl is-active --quiet kb2-web 2>/dev/null; then
@@ -16,7 +17,7 @@ else
 fi
 
 # ── Check 2: HTTP 200 ──
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$URL" 2>/dev/null || echo "000")
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 10 "$URL" 2>/dev/null || echo "000")
 if [ "$HTTP_CODE" = "200" ]; then
   echo "✓ HTTP: $URL → $HTTP_CODE"
 else
@@ -25,7 +26,7 @@ else
 fi
 
 # ── Check 3: API /api/banks ──
-API_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3027/api/banks" 2>/dev/null || echo "000")
+API_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 10 "http://localhost:3027/api/banks" 2>/dev/null || echo "000")
 if [ "$API_CODE" = "401" ] || [ "$API_CODE" = "200" ]; then
   echo "✓ API: /api/banks → $API_CODE (expected: 401=no-auth or 200=auth)"
 else
@@ -41,7 +42,8 @@ if [ "$FAIL" -eq 1 ]; then
     sudo systemctl restart kb2-web
     sleep 5
     echo "→ rechecking..."
-    exec "$0"  # re-run without --restart
+    cd "$SCRIPT_DIR"
+    exec "$0"
   fi
   exit 1
 fi
