@@ -20,9 +20,10 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       // Token expired or invalid — clear and redirect to login
+      const currentPath = window.location.pathname
       localStorage.removeItem('kb2_token')
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login'
+      if (currentPath !== '/login') {
+        window.location.href = '/login?redirect=' + encodeURIComponent(currentPath)
       }
     }
     const message =
