@@ -22,6 +22,6 @@ api_router.include_router(articles.router,  prefix="/articles",  tags=["文章"]
 # ── Write routes (admin only) ──
 from app.middleware.jwt_auth import require_role
 api_router.include_router(upload.router,    prefix="/upload",    tags=["上传"],
-                           dependencies=[Depends(require_role("admin"))])
+                           dependencies=[Depends(require_role("uploader"))])
 api_router.include_router(admin.router,     prefix="/admin",     tags=["管理"],
                            dependencies=[Depends(require_role("admin"))])

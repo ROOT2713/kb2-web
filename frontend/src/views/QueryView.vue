@@ -115,18 +115,19 @@
       </div>
     </div>
 
-    <ResultCard
-      v-if="queryStore.answer"
-      :content="queryStore.answer"
-      :sources="queryStore.sources"
-      :cache-hit="queryStore.cacheHit"
-      :suggestions="queryStore.suggestions"
-      :standard-contents="queryStore.standardContents"
-      :bank="selectedBank"
-      :query-keywords="searchKeywords"
-      @search-suggestion="handleSuggestionSearch"
-      @refresh="handleRefreshFromCache"
-    />
+    <div class="result-wrapper" v-if="queryStore.answer">
+      <ResultCard
+        :content="queryStore.answer"
+        :sources="queryStore.sources"
+        :cache-hit="queryStore.cacheHit"
+        :suggestions="queryStore.suggestions"
+        :standard-contents="queryStore.standardContents"
+        :bank="selectedBank"
+        :query-keywords="searchKeywords"
+        @search-suggestion="handleSuggestionSearch"
+        @refresh="handleRefreshFromCache"
+      />
+    </div>
   </div>
 </template>
 
@@ -414,6 +415,18 @@ function rerunHistory(item: { q: string; bank: string }) {
   border-radius: var(--radius-sm);
 }
 .btn-clear-history:hover { border-color: var(--accent); color: var(--accent); }
+
+.result-wrapper {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.result-wrapper :deep(.result-card) {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 .history-item {
   display: flex;
   align-items: center;

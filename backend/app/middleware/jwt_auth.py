@@ -112,7 +112,7 @@ def require_role(min_role: str = "admin"):
                 detail="用户不存在",
             )
 
-        _role_rank = {"admin": 2, "viewer": 1}
+        _role_rank = {"admin": 3, "uploader": 2, "viewer": 1}
         _min_rank = _role_rank.get(min_role, 0)
         _user_rank = _role_rank.get(user.role, 0)
 

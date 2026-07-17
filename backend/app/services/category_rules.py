@@ -23,7 +23,7 @@ BANK_TO_CATEGORY = {
     "tech_guides":   "it",
     "checklist":     "evaluation",
     "business":      "cost",
-    "xhs":           "news",
+    "咨询":           "news",
     "general":       None,
     "methodology":   "it",
 }

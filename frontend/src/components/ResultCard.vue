@@ -293,6 +293,8 @@ function renderStdText(text: string): string {
   font-size: 0.9rem;
   line-height: 1.7;
   color: var(--fg);
+  overflow-x: auto;
+  max-width: 100%;
 }
 
 .result-body :deep(h1),
@@ -321,12 +323,66 @@ function renderStdText(text: string): string {
   padding: 0.75rem;
   overflow-x: auto;
   margin-bottom: 0.75rem;
+  max-width: 100%;
 }
 
 .result-body :deep(ul),
 .result-body :deep(ol) {
   padding-left: 1.5rem;
   margin-bottom: 0.5rem;
+}
+
+/* ── 表格样式（Markdown 表格展示优化） ── */
+.result-body :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0.75rem;
+  font-size: 0.825rem;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.result-body :deep(th),
+.result-body :deep(td) {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  min-width: 80px;
+}
+
+.result-body :deep(th) {
+  background: var(--bg-alt);
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.result-body :deep(td) {
+  color: var(--fg-secondary);
+}
+
+.result-body :deep(tbody tr:hover) {
+  background: var(--accent-light);
+}
+
+/* ── 引用块 ── */
+.result-body :deep(blockquote) {
+  border-left: 3px solid var(--accent);
+  padding: 0.4rem 0.8rem;
+  margin: 0.5rem 0;
+  color: var(--fg-muted);
+  background: var(--bg-alt);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+/* ── 图片 ── */
+.result-body :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+  margin: 0.5rem 0;
 }
 
 .result-sources {
@@ -355,11 +411,12 @@ function renderStdText(text: string): string {
   flex-direction: column;
   gap: 0.2rem;
   font-size: 0.75rem;
-  padding: 0.3rem 0.5rem;
+  padding: 0.4rem 0.6rem;
   border: 1px solid var(--border);
   background: var(--bg-alt);
   border-radius: var(--radius);
-  max-width: 400px;
+  min-width: 0;
+  flex: 1 1 240px;
 }
 
 .source-header {
@@ -397,10 +454,10 @@ function renderStdText(text: string): string {
 .source-text {
   font-size: 0.7rem;
   color: var(--fg-muted);
-  line-height: 1.4;
-  max-height: 4.2rem;
-  overflow: hidden;
-  word-break: break-all;
+  line-height: 1.5;
+  max-height: 6rem;
+  overflow-y: auto;
+  word-break: break-word;
 }
 
 .source-chunk-info {

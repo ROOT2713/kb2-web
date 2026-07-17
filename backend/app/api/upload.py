@@ -159,9 +159,9 @@ async def upload_document(
     if bank == "all":
         bank = "general"  # "全部"默认归入综合文件
 
-    # 自动路由 source=xhs → xhs bank
+    # 自动路由 source=xhs → 咨询 bank
     if source == "xhs" and bank == "general":
-        bank = "xhs"
+        bank = "咨询"
         logger.info("[xhs] source=xhs auto-routed to bank=%s", bank)
 
     # 解析 published_date（YYYY-MM-DD 格式）
