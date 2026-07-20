@@ -55,13 +55,14 @@ export const useDocumentsStore = defineStore('documents', () => {
     }
   }
 
-  async function patchDocumentAction(docId: string, payload: { title?: string; category?: string }) {
+  async function patchDocumentAction(docId: string, payload: { title?: string; category?: string; subcategory?: string }) {
     const result = await apiPatchDocument(docId, payload)
     // Update local state
     const idx = documents.value.findIndex((d) => d.id === docId)
     if (idx !== -1) {
       if (payload.title !== undefined) documents.value[idx].title = payload.title
       if (payload.category !== undefined) documents.value[idx].category = payload.category
+      if (payload.subcategory !== undefined) documents.value[idx].subcategory = payload.subcategory
     }
     return result
   }

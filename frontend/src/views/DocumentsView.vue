@@ -25,6 +25,7 @@
         <span class="col-title">标题</span>
         <span class="col-bank">知识库</span>
         <span class="col-cat">分类</span>
+        <span class="col-subcat">细分类</span>
         <span class="col-chunks">分块</span>
         <span class="col-status">状态</span>
         <span class="col-date">日期</span>
@@ -43,6 +44,12 @@
             </select>
           </template>
           <span v-else class="badge cat-badge" @click="startEditCat(doc)">{{ getCatLabel(doc.category) }}</span>
+        </span>
+        <span class="col-subcat">
+          <template v-if="editingSubcat === doc.id">
+            <input v-model="editSubcatValue" class="subcat-input" placeholder="细分类" @blur="saveSubcategory(doc.id)" @keyup.enter="saveSubcategory(doc.id)" />
+          </template>
+          <span v-else class="badge subcat-badge" @click="startEditSubcat(doc)">{{ doc.subcategory || '—' }}</span>
         </span>
         <span class="col-chunks">{{ doc.chunks }}</span>
         <span class="col-status">
@@ -86,6 +93,8 @@ const toastMsg = ref('')
 const toastType = ref<'info' | 'success' | 'error' | 'warning'>('info')
 const editingCat = ref<string | null>(null)
 const editCatValue = ref('')
+const editingSubcat = ref<string | null>(null)
+const editSubcatValue = ref('')
 
 function getCatLabel(key: string): string {
   const found = docsStore.categories.find((c) => c.key === key)
@@ -97,6 +106,11 @@ function startEditCat(doc: DocumentItem) {
   editCatValue.value = doc.category || ''
 }
 
+function startEditSubcat(doc: DocumentItem) {
+  editingSubcat.value = doc.id
+  editSubcatValue.value = doc.subcategory || ''
+}
+
 async function saveCategory(docId: string) {
   try {
     await docsStore.patchDocument(docId, { category: editCatValue.value })
@@ -105,6 +119,19 @@ async function saveCategory(docId: string) {
     toastType.value = 'error'
   } finally {
     editingCat.value = null
+  }
+}
+
+async function saveSubcategory(docId: string) {
+  try {
+    await docsStore.patchDocument(docId, { subcategory: editSubcatValue.value })
+    toastMsg.value = '细分类已更新'
+    toastType.value = 'success'
+  } catch {
+    toastMsg.value = '更新细分类失败'
+    toastType.value = 'error'
+  } finally {
+    editingSubcat.value = null
   }
 }
 
@@ -192,7 +219,7 @@ async function handleReparse(docId: string) {
 
 .table-header {
   display: grid;
-  grid-template-columns: 1fr 100px 80px 60px 50px 100px 130px;
+  grid-template-columns: 1fr 100px 80px 80px 60px 50px 100px 130px;
   gap: 0.5rem;
   padding: 0.6rem 1rem;
   background: var(--bg-alt);
@@ -206,7 +233,7 @@ async function handleReparse(docId: string) {
 
 .table-row {
   display: grid;
-  grid-template-columns: 1fr 100px 80px 60px 50px 100px 130px;
+  grid-template-columns: 1fr 100px 80px 80px 60px 50px 100px 130px;
   gap: 0.5rem;
   padding: 0.5rem 1rem;
   font-size: 0.825rem;
@@ -233,6 +260,26 @@ async function handleReparse(docId: string) {
 .col-date {
   font-size: 0.75rem;
   color: var(--fg-muted);
+}
+
+.col-subcat {
+  font-size: 0.75rem;
+}
+.subcat-badge {
+  cursor: pointer;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  background: var(--bg-alt);
+  border: 1px dashed var(--border);
+}
+.subcat-badge:hover {
+  background: var(--surface-hover);
+}
+.subcat-input {
+  width: 65px;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.3rem;
 }
 
 .doc-title-link {

@@ -172,7 +172,8 @@ class DocumentRepository:
         return result
 
     # ── update ──────────────────────────────────────────────────
-    def update(self, doc_id: str, title: Optional[str] = None, category: Optional[str] = None) -> Optional[Document]:
+    def update(self, doc_id: str, title: Optional[str] = None, category: Optional[str] = None,
+                subcategory: Optional[str] = None) -> Optional[Document]:
         """Update document title and/or category (matches v1 update_meta).
 
         Only updates fields that are explicitly provided (not None).
@@ -189,12 +190,15 @@ class DocumentRepository:
         if category is not None:
             doc.category = category
             updated = True
+        if subcategory is not None:
+            doc.subcategory = subcategory
+            updated = True
 
         if updated:
             doc.updated_at = datetime.now(timezone.utc)
             self.db.commit()
             self.db.refresh(doc)
-            logger.info("Document updated: doc_id=%s title=%s category=%s", doc_id, title, category)
+            logger.info("Document updated: doc_id=%s title=%s category=%s subcategory=%s", doc_id, title, category, subcategory)
 
         return doc
 

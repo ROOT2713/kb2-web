@@ -4,6 +4,7 @@ export interface DocumentItem {
   id: string
   title: string
   category: string
+  subcategory: string
   filename: string
   chunks: number
   size_chars: number
@@ -57,11 +58,12 @@ export async function reparseDocument(
 
 export async function patchDocument(
   docId: string,
-  payload: { title?: string; category?: string },
-): Promise<{ ok: boolean; doc_id: string; title?: string; category?: string }> {
+  payload: { title?: string; category?: string; subcategory?: string },
+): Promise<{ ok: boolean; doc_id: string; title?: string; category?: string; subcategory?: string }> {
   const form = new FormData()
   if (payload.title !== undefined) form.append('title', payload.title)
   if (payload.category !== undefined) form.append('category', payload.category)
+  if (payload.subcategory !== undefined) form.append('subcategory', payload.subcategory)
   const { data } = await api.patch(`/documents/${encodeURIComponent(docId)}`, form)
   return data
 }

@@ -162,6 +162,7 @@ async def list_documents(bank: str = Query("all"), db: Session = Depends(get_db)
             "id": d.doc_id,
             "title": d.title or "unknown",
             "category": d.category or "",
+            "subcategory": d.subcategory or "",
             "filename": d.filename or "",
             "chunks": stats["chunks"],
             "size_chars": stats["size"],
@@ -871,17 +872,18 @@ async def patch_document(
     doc_id: str,
     title: Optional[str] = Form(None),
     category: Optional[str] = Form(None),
+    subcategory: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     _admin: bool = Depends(require_role("admin")),
 ):
-    """Edit document title and category (v1 L4062-L4067)."""
-    if not title and not category:
-        raise HTTPException(400, "Must provide at least title or category")
+    """Edit document title, category and subcategory."""
+    if not title and not category and not subcategory:
+        raise HTTPException(400, "Must provide at least title, category or subcategory")
     repo = DocumentRepository(db)
-    updated = repo.update(doc_id, title=title, category=category)
+    updated = repo.update(doc_id, title=title, category=category, subcategory=subcategory)
     if updated is None:
         raise HTTPException(404, f"Document {doc_id} not found")
-    return {"ok": True, "doc_id": doc_id, "title": title, "category": category}
+    return {"ok": True, "doc_id": doc_id, "title": title, "category": category, "subcategory": subcategory}
 
 
 # ═══════════════════════════════════════════════════════════════════
