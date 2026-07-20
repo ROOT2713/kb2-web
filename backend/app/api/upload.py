@@ -132,6 +132,7 @@ async def upload_document(
     file: UploadFile = File(...),
     title: str = Form(""),
     category: str = Form(""),
+    subcategory: str = Form(""),
     bank: str = Form("general"),
     confirm_quality: str = Form(""),
     source: str = Form("manual"),
@@ -189,7 +190,7 @@ async def upload_document(
     asyncio.create_task(
         _process_upload_task(
             task_id=task_id, filename=file.filename, content=content,
-            title=title, category=category, bank=bank,
+            title=title, category=category, subcategory=subcategory, bank=bank,
             source=source, published_date=published_date, geo_scope=geo_scope,
         )
     ).add_done_callback(_log_task_exception)
@@ -199,7 +200,7 @@ async def upload_document(
 
 async def _process_upload_task(
     task_id: str, filename: str, content: bytes,
-    title: str = "", category: str = "", bank: str = "general",
+    title: str = "", category: str = "", subcategory: str = "", bank: str = "general",
     source: str = "manual", published_date: str = None, geo_scope: str = None,
 ):
     _update_upload_task(task_id, status="processing", stage="parsing", progress=0.05)
@@ -281,9 +282,9 @@ async def _process_upload_task(
             doc_category = ""  # 留空表示未分类
     profile = profile_document(text)
     doc_type = profile.get("doc_type", "generic")
-    # P1 2026-07-20: 自动推断 subcategory
-    doc_subcategory = ""
-    if doc_category:
+    # P1 2026-07-20: 自动推断 subcategory（用户指定则优先）
+    doc_subcategory = (subcategory or "").strip()
+    if not doc_subcategory and doc_category:
         from app.services.category_rules import infer_subcategory
         doc_subcategory = infer_subcategory(
             title=eff_title, filename=filename, bank=bank,
@@ -662,6 +663,7 @@ async def upload_batch(
     files: Optional[List[UploadFile]] = File(default=None),
     title_prefix: str = Form(""),
     category: str = Form(""),
+    subcategory: str = Form(""),
     bank: str = Form("general"),
     confirm_quality: str = Form(""),
     source: str = Form("manual"),
@@ -711,7 +713,7 @@ async def upload_batch(
             asyncio.create_task(
                 _process_upload_task(
                     task_id=task_id, filename=f.filename, content=f_content,
-                    title=title_prefix, category=category, bank=bank,
+                    title=title_prefix, category=category, subcategory=subcategory, bank=bank,
                     source=source, published_date=None, geo_scope=None,
                 )
             ).add_done_callback(_log_task_exception)
