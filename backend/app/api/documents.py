@@ -64,13 +64,7 @@ def _log_task_exception(task: asyncio.Task):
     except asyncio.CancelledError:
         pass
 
-# ── Default categories (matches v1 DEFAULT_CATEGORIES) ──────────
-DEFAULT_CATEGORIES = [
-    "\U0001f4a1想法", "\U0001f4bc工作", "\U0001f4da学习", "\U0001f3e0生活", "\U0001f680项目",
-    "\U0001f4ad灵感", "\U0001f4dd会议", "\U0001f527技术", "\U0001f4ca数据", "\U0001f4f0资讯",
-    "\U0001f512安全", "\U0001f916AI", "其他",
-]
-
+# ── DEFAULT_CATEGORIES removed — from category_rules.py ─────────
 # ── Max file size (matches v1 MAX_FILE_SIZE, 50MB) ──────────────
 MAX_FILE_SIZE = 50 * 1024 * 1024
 

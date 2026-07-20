@@ -281,6 +281,14 @@ async def _process_upload_task(
             doc_category = ""  # 留空表示未分类
     profile = profile_document(text)
     doc_type = profile.get("doc_type", "generic")
+    # P1 2026-07-20: 自动推断 subcategory
+    doc_subcategory = ""
+    if doc_category:
+        from app.services.category_rules import infer_subcategory
+        doc_subcategory = infer_subcategory(
+            title=eff_title, filename=filename, bank=bank,
+            category=doc_category, doc_type=doc_type
+        )
     pc_chunks = []
     if doc_type in ("gb_standard", "regulation") and profile.get("confidence", 0) >= 0.3:
         pc_chunks = heading_chunk(text, profile)
@@ -357,7 +365,7 @@ async def _process_upload_task(
     db = SessionLocal()
     try:
         dr = _get_doc_repo(db)
-        dr.save(doc_id=doc_id, title=doc_title, category=doc_category, filename=filename, content_hash=norm_hash, doc_type=doc_type, bank=bank, hs_bank=hs_bank, source=source, published_date=parsed_pub_date, geo_scope=geo_scope)
+        dr.save(doc_id=doc_id, title=doc_title, category=doc_category, subcategory=doc_subcategory, filename=filename, content_hash=norm_hash, doc_type=doc_type, bank=bank, hs_bank=hs_bank, source=source, published_date=parsed_pub_date, geo_scope=geo_scope)
         for idx, pt in parent_map.items():
             db.merge(ParentChunk(doc_id=doc_id, parent_idx=idx, parent_text=pt))
         con_id = infer_doc_concept_id(title=doc_title, bank=bank, doc_type=doc_type, text=text[:2000])

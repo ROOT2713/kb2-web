@@ -433,10 +433,11 @@ async def _build_search_context(
             db_filter = SessionLocal()
             try:
                 from app.models.document import Document
-                rows = db_filter.query(Document.doc_id, Document.category).filter(
+                rows = db_filter.query(Document.doc_id, Document.category, Document.subcategory).filter(
                     Document.doc_id.in_(all_doc_ids)
                 ).all()
                 doc_cat = {d.doc_id: d.category or "" for d in rows}
+                doc_subcat = {d.doc_id: d.subcategory or "" for d in rows}
             finally:
                 db_filter.close()
             requested = {c.strip() for c in categories.split(",") if c.strip()} if categories else set()

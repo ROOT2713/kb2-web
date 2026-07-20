@@ -491,9 +491,24 @@ async def get_audit_logs(
 
 @router.get("/categories")
 async def get_categories():
-    """Return available categories with labels."""
-    from app.services.category_rules import CATEGORIES
-    return [
-        {"key": k, "label": v, "isolated": k in ("daily", "news")}
-        for k, v in CATEGORIES.items()
-    ]
+    """Return hierarchical category tree: super_category → categories → subcategories."""
+    from app.services.category_rules import CATEGORIES, SUPER_CATEGORY_MAP, SUPER_CATEGORY_ORDER
+    
+    # Group categories by super_category
+    groups = {}
+    for ck, cl in CATEGORIES.items():
+        sc = SUPER_CATEGORY_MAP.get(ck, "其他")
+        if sc not in groups:
+            groups[sc] = {"name": sc, "categories": []}
+        groups[sc]["categories"].append({
+            "key": ck, "label": cl, "isolated": ck in ("daily", "news"),
+        })
+    
+    # Return in defined order
+    result = []
+    for sc in SUPER_CATEGORY_ORDER:
+        if sc in groups:
+            result.append(groups.pop(sc))
+    # Any remaining
+    result.extend(groups.values())
+    return result

@@ -136,6 +136,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useQueryStore } from '@/stores/query'
 import { useBanksStore } from '@/stores/banks'
 import api from '@/services/api'
+import { getCategories } from '@/services/admin'
 import ResultCard from '@/components/ResultCard.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import Toast from '@/components/Toast.vue'
@@ -181,8 +182,7 @@ watch(() => queryStore.loading, (loading) => {
 
 async function loadCategories() {
   try {
-    const { data } = await api.get('/admin/categories')
-    categories.value = data
+    categories.value = await getCategories()
   } catch { /* ignore */ }
 }
 

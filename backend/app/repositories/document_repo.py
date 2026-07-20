@@ -36,6 +36,7 @@ class DocumentRepository:
         doc_id: str,
         title: str,
         category: str = "",
+        subcategory: str = "",
         filename: str = "",
         content_hash: str = "",
         doc_type: str = "generic",
@@ -54,6 +55,7 @@ class DocumentRepository:
             # Update existing
             doc.title = title
             doc.category = category
+            doc.subcategory = subcategory
             doc.filename = filename
             doc.content_hash = content_hash
             doc.doc_type = doc_type
@@ -74,6 +76,7 @@ class DocumentRepository:
                 doc_id=doc_id,
                 title=title,
                 category=category,
+                subcategory=subcategory,
                 filename=filename,
                 content_hash=content_hash,
                 doc_type=doc_type,

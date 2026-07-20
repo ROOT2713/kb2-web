@@ -25,18 +25,12 @@ from app.middleware.auth import require_admin
 from app.middleware.jwt_auth import require_role
 
 logger = logging.getLogger(__name__)
+ 
 
 router = APIRouter()
 
-# ── Default categories (matches v1 DEFAULT_CATEGORIES) ──────────
-DEFAULT_CATEGORIES = [
-    "\U0001f4a1想法", "\U0001f4bc工作", "\U0001f4da学习", "\U0001f3e0生活", "\U0001f680项目",
-    "\U0001f4ad灵感", "\U0001f4dd会议", "\U0001f527技术", "\U0001f4ca数据", "\U0001f4f0资讯",
-    "\U0001f512安全", "\U0001f916AI", "其他",
-]
-
-
-# ── Banks config persistence ─────────────────────────────────────
+ 
+ # ── Banks config persistence ─────────────────────────────────────
 
 def _save_banks_config(banks: dict):
     """Save bank config to banks.json (matches v1 _save_banks_config L111-L122)."""
@@ -146,22 +140,44 @@ async def wiki_tree(bank: str = Query("all"), db: Session = Depends(get_db)):
 
 @router.get("/categories")
 async def list_categories(db: Session = Depends(get_db)):
-    """List all categories with document counts (v1 L4133-L4151)."""
+    """List all categories with document counts (v1 L4133-L4151).
+    
+    Returns hierarchical structure: super_category → category → subcategories.
+    """
+    from app.services.category_rules import CATEGORIES, SUPER_CATEGORY_MAP, \
+        SUPER_CATEGORY_ORDER, SUBCATEGORY_TO_CATEGORY
+    
     rows = db.execute(
         sa_text(
             "SELECT category, COUNT(*) as cnt FROM documents "
             "WHERE category != '' GROUP BY category ORDER BY cnt DESC"
         )
     ).fetchall()
-
     used = {r[0]: r[1] for r in rows}
+    
+    # Build hierarchical result
+    super_tree = {}
+    for cat_key, cat_label in CATEGORIES.items():
+        super_cat = SUPER_CATEGORY_MAP.get(cat_key, "其他")
+        if super_cat not in super_tree:
+            super_tree[super_cat] = {"name": super_cat, "categories": []}
+        super_tree[super_cat]["categories"].append({
+            "key": cat_key,
+            "label": cat_label,
+            "count": used.get(cat_key, 0),
+        })
+    
+    # Return ordered by SUPER_CATEGORY_ORDER
     result = []
-    for cat in DEFAULT_CATEGORIES:
-        result.append({"name": cat, "count": used.get(cat, 0)})
-    for cat, cnt in used.items():
-        if cat not in DEFAULT_CATEGORIES:
-            result.append({"name": cat, "count": cnt})
-    return {"categories": result}
+    for sc in SUPER_CATEGORY_ORDER:
+        if sc in super_tree:
+            result.append(super_tree[sc])
+    # Add any extra categories not in the predefined order
+    for sc, data in super_tree.items():
+        if sc not in SUPER_CATEGORY_ORDER:
+            result.append(data)
+    
+    return {"super_categories": result}
 
 
 # ═══════════════════════════════════════════════════════════════════
