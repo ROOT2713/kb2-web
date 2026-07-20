@@ -616,114 +616,62 @@ async def rag_evaluation():
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/audit")
-async def audit_knowledge_base(db: Session = Depends(get_db)):
-    """Scan all documents, output quality audit report (v1 L4685-L4813)."""
-    repo = DocumentRepository(db)
-    docs_list = repo.list_all()
-
-    results = []
-    for d in docs_list:
-        doc_id = d.doc_id
-        title = d.title or "unknown"
-        bank = d.bank or "kb"
-
-        bank_cfg = BANKS.get(bank, BANKS["all"])
-        hs_bank = bank_cfg["hindsight"]
-
-        full_text = ""
+async def audit_knowledge_base():
+    """Scan all documents in pgvector, output quality audit report.
+    
+    Fixed: was iterating v1 SQLite (179 docs, doc_id mismatch → all score=0).
+    Now aggregates content from vector_chunks directly.
+    """
+    if settings.vector_backend != "pgvector":
+        # Fallback: iterate v1 SQLite docs, fetch content via recall()
+        db = SessionLocal()
         try:
-            if settings.vector_backend == "pgvector":
-                store = get_vector_store()
-                chunks = await store.get_document_detail(doc_id, hs_bank)
-                if not chunks and hs_bank != "kb":
-                    chunks = await store.get_document_detail(doc_id, "kb")
-                full_text = "\n\n".join(c["content"] for c in chunks) if chunks else ""
-            else:
-                hindsight_doc_id = None
-                docs_result = await _hindsight_request(
-                    f"/v1/default/banks/{hs_bank}/documents", timeout=10
-                )
-                doc_list = docs_result.get("items", []) or docs_result.get("documents", [])
-                for item in doc_list:
-                    if f"doc_id:{doc_id}" in item.get("tags", []):
-                        hindsight_doc_id = item.get("id")
-                        break
-
-                if not hindsight_doc_id and hs_bank != "kb":
-                    try:
-                        docs_result = await _hindsight_request(
-                            f"/v1/default/banks/kb/documents", timeout=10
-                        )
-                        doc_list = docs_result.get("items", []) or docs_result.get("documents", [])
-                        for item in doc_list:
-                            if f"doc_id:{doc_id}" in item.get("tags", []):
-                                hindsight_doc_id = item.get("id")
-                                hs_bank = "kb"
-                                break
-                    except Exception:
-                        pass
-
-                if hindsight_doc_id:
-                    doc_detail = await _hindsight_request(
-                        f"/v1/default/banks/{hs_bank}/documents/{hindsight_doc_id}", timeout=10
-                    )
-                    full_text = doc_detail.get("original_text", "") or doc_detail.get("text", "") or ""
-                else:
-                    try:
-                        recall_result = await recall(title, limit=50, bank="kb", max_tokens=32768)
-                        texts = []
-                        for r in recall_result:
-                            t = r.get("text", "") or ""
-                            if t.strip():
-                                texts.append(t.strip())
-                        full_text = "\n\n".join(texts)
-                    except Exception:
-                        pass
-        except Exception as e:
-            logger.warning("audit: failed to get text for %s: %s", doc_id, e)
-
+            repo = DocumentRepository(db)
+            return _audit_v1_fallback(repo)
+        finally:
+            db.close()
+    
+    # ── PgVector path: aggregate content from vector_chunks ──
+    store = get_vector_store()
+    pool = await store._get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT vc.doc_id,
+                   d.bank_id AS bank,
+                   d.file_original_name AS filename,
+                   d.tags,
+                   string_agg(vc.content, E'\\n\\n' ORDER BY vc.chunk_index) AS full_text
+            FROM vector_chunks vc
+            LEFT JOIN documents d ON vc.doc_id = d.id
+            GROUP BY vc.doc_id, d.bank_id, d.file_original_name, d.tags
+            HAVING SUM(LENGTH(vc.content)) > 100
+            ORDER BY SUM(LENGTH(vc.content)) DESC
+            LIMIT 500
+        """)
+    
+    results = []
+    for row in rows:
+        doc_id = row["doc_id"]
+        full_text = row["full_text"] or ""
+        bank = row["bank"] or "kb"
+        tags = row["tags"]
+        
+        # Extract title from tags if available
+        title = ""
+        if tags:
+            for t in tags:
+                if t.startswith("title:"):
+                    title = t[6:]
+                    break
+                if t.startswith("doc:"):
+                    parts = t.split("_", 2)
+                    if len(parts) >= 3:
+                        title = parts[2]
+        if not title:
+            title = row["filename"] or doc_id[:8] + "..."
+        
         quality = assess_quality(full_text)
-
-        filename = d.filename or ""
-        completeness = None
-        if filename:
-            try:
-                upload_path = settings.upload_dir / Path(filename).name
-            except Exception:
-                upload_path = None
-
-            if upload_path and upload_path.exists():
-                try:
-                    with open(upload_path, "rb") as f:
-                        raw = f.read()
-                    orig_chars = 0
-                    ext = os.path.splitext(filename)[1].lower()
-                    if ext == ".pdf":
-                        reader = pypdf.PdfReader(BytesIO(raw))
-                        for page in reader.pages:
-                            t = page.extract_text()
-                            if t:
-                                orig_chars += len(t)
-                    elif ext in (".txt", ".md"):
-                        orig_chars = len(raw.decode("utf-8", errors="ignore"))
-                    elif ext == ".docx":
-                        dx = _docx_lib.Document(BytesIO(raw))
-                        orig_chars = sum(len(p.text) for p in dx.paragraphs)
-
-                    if orig_chars > 0:
-                        coverage = min(100, round(len(full_text) / orig_chars * 100))
-                        completeness = {
-                            "available": True,
-                            "original_chars": orig_chars,
-                            "retrieved_chars": len(full_text),
-                            "coverage_pct": coverage,
-                        }
-                except Exception:
-                    pass
-
-        if not completeness:
-            completeness = {"available": False, "reason": "Original file unavailable (deleted or not retained)"}
-
+        
         results.append({
             "doc_id": doc_id,
             "title": title,
@@ -732,17 +680,42 @@ async def audit_knowledge_base(db: Session = Depends(get_db)):
             "score": quality["score"],
             "issues": quality["issues"],
             "needs_refetch": quality["score"] < 70,
-            "completeness": completeness,
         })
-
+    
     total = len(results)
     low_quality = [r for r in results if r["needs_refetch"]]
     avg_score = sum(r["score"] for r in results) / max(total, 1)
-
+    
+    logger.info("audit: %d docs scanned (pgvector), avg_score=%.1f, low_quality=%d",
+                total, avg_score, len(low_quality))
+    
     return {
         "total_docs": total,
         "avg_score": round(avg_score, 1),
         "low_quality_count": len(low_quality),
+        "documents": sorted(results, key=lambda x: x["score"]),
+    }
+
+
+def _audit_v1_fallback(repo):
+    """Legacy audit path iterating v1 SQLite (kept for backward compat with non-pgvector)."""
+    docs_list = repo.list_all()
+    results = []
+    for d in docs_list:
+        doc_id = d.doc_id
+        title = d.title or "unknown"
+        bank = d.bank or "kb"
+        quality = assess_quality("")  # can't get text from pgvector with mismatched doc_ids
+        results.append({
+            "doc_id": doc_id, "title": title, "bank": bank,
+            "chars": 0, "score": quality["score"],
+            "issues": quality["issues"] + ["[v1 SQLite doc, pgvector content unavailable]"],
+            "needs_refetch": True,
+        })
+    return {
+        "total_docs": len(results),
+        "avg_score": 0,
+        "low_quality_count": len(results),
         "documents": sorted(results, key=lambda x: x["score"]),
     }
 

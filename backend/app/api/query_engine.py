@@ -777,6 +777,15 @@ async def _build_search_context(
             meta_title = title_map.get(doc_id, "")
             if meta_title:
                 doc_name = meta_title
+        # [P0-fix] Fallback: extract title from hindsight tags "doc:doc_<uuid>_<title>" format
+        if not doc_name or doc_name == "未知文档":
+            for t in tags:
+                if t.startswith("doc:"):
+                    # Format: doc:doc_uuid_【机】GB XXX-YYYY 规范名称.pdf
+                    parts = t.split("_", 2)
+                    if len(parts) >= 3:
+                        doc_name = parts[2]
+                        break
         if not doc_name:
             doc_name = "未知文档"
 
