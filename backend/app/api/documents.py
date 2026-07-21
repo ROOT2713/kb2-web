@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
+from pydantic import BaseModel
 
 import docx as _docx_lib
 import httpx
@@ -892,6 +893,33 @@ async def patch_document(
     if updated is None:
         raise HTTPException(404, f"Document {doc_id} not found")
     return {"ok": True, "doc_id": doc_id, "title": title, "category": category, "subcategory": subcategory}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: POST /batch-patch — batch edit document metadata
+# ═══════════════════════════════════════════════════════════════════
+
+class BatchPatchRequest(BaseModel):
+    doc_ids: list[str]
+    subcategory: Optional[str] = None
+
+
+@router.post("/batch-patch")
+async def batch_patch_documents(
+    body: BatchPatchRequest,
+    db: Session = Depends(get_db),
+    _admin: bool = Depends(require_role("admin")),
+):
+    """Batch edit subcategory for multiple documents at once."""
+    if not body.doc_ids:
+        raise HTTPException(400, "Must provide at least one doc_id")
+    repo = DocumentRepository(db)
+    updated = 0
+    for doc_id in body.doc_ids:
+        result = repo.update(doc_id, subcategory=body.subcategory)
+        if result is not None:
+            updated += 1
+    return {"ok": True, "updated": updated, "total": len(body.doc_ids)}
 
 
 # ═══════════════════════════════════════════════════════════════════

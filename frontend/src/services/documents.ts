@@ -67,3 +67,11 @@ export async function patchDocument(
   const { data } = await api.patch(`/documents/${encodeURIComponent(docId)}`, form)
   return data
 }
+
+export async function batchPatchDocuments(
+  docIds: string[],
+  subcategory: string,
+): Promise<{ ok: boolean; updated: number; total: number }> {
+  const { data } = await api.post('/documents/batch-patch', { doc_ids: docIds, subcategory })
+  return data
+}

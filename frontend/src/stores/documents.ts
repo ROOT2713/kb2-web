@@ -5,6 +5,7 @@ import {
   deleteDocument as apiDeleteDocument,
   reparseDocument as apiReparseDocument,
   patchDocument as apiPatchDocument,
+  batchPatchDocuments as apiBatchPatchDocuments,
   type DocumentItem,
 } from '@/services/documents'
 import { getCategories as apiGetCategories, type CategoryItem } from '@/services/admin'
@@ -67,9 +68,14 @@ export const useDocumentsStore = defineStore('documents', () => {
     return result
   }
 
+  async function batchPatch(payload: { doc_ids: string[]; subcategory: string }) {
+    return await apiBatchPatchDocuments(payload.doc_ids, payload.subcategory)
+  }
+
   return {
     documents, loading, error, categories,
     fetchDocuments, fetchCategories, removeDocument, reparse,
     patchDocument: patchDocumentAction,
+    batchPatch,
   }
 })
