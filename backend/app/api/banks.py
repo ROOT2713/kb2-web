@@ -209,7 +209,8 @@ async def list_banks(db: Session = Depends(get_db)):
         "tech_guides": "industry", "general": "industry",
         "checklist": "industry", "templates": "industry",
         "methodology": "industry", "business": "industry",
-        "咨询": "personal", "xhs": "personal",
+        "咨询": "personal", "kb_xhs": "personal",
+        "xhs": "personal",
         "project_docs": "project",
     }
     bank_stats = {}

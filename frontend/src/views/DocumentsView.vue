@@ -30,10 +30,16 @@
     <!-- Batch subcategory modal -->
     <div v-if="showBatchSubcat" class="modal-overlay" @click.self="showBatchSubcat = false">
       <div class="modal card">
-        <h3>批量设置细分类（{{ selectedIds.size }} 篇）</h3>
+        <h3>批量设置（{{ selectedIds.size }} 篇）</h3>
+        <label class="field-label">分类</label>
+        <select v-model="batchCatValue" class="cat-select wide">
+          <option value="">— 不修改 —</option>
+          <option v-for="c in docsStore.categories" :key="c.key" :value="c.key">{{ c.label }}</option>
+        </select>
+        <label class="field-label">细分类</label>
         <input v-model="batchSubcatValue" type="text" placeholder="输入细分类名称..." class="subcat-input wide" />
         <div class="modal-actions">
-          <button class="primary" :disabled="!batchSubcatValue.trim()" @click="doBatchPatch">确认</button>
+          <button class="primary" :disabled="!batchSubcatValue.trim() && !batchCatValue" @click="doBatchPatch">确认</button>
           <button @click="showBatchSubcat = false">取消</button>
         </div>
       </div>
@@ -129,6 +135,7 @@ const editSubcatValue = ref('')
 const selectedIds = ref(new Set<string>())
 const showBatchSubcat = ref(false)
 const batchSubcatValue = ref('')
+const batchCatValue = ref('')
 
 const allSelected = computed(() =>
   filteredDocs.value.length > 0 && selectedIds.value.size === filteredDocs.value.length
@@ -157,15 +164,20 @@ function clearSelection() {
 }
 
 async function doBatchPatch() {
-  const val = batchSubcatValue.value.trim()
-  if (!val) return
+  const subcatVal = batchSubcatValue.value.trim()
+  const catVal = batchCatValue.value
+  if (!subcatVal && !catVal) return
   try {
     const ids = Array.from(selectedIds.value)
-    await docsStore.batchPatch({ doc_ids: ids, subcategory: val })
-    toastMsg.value = `已更新 ${ids.length} 篇文档细分类`
+    const payload: { doc_ids: string[]; category?: string; subcategory?: string } = { doc_ids: ids }
+    if (catVal) payload.category = catVal
+    if (subcatVal) payload.subcategory = subcatVal
+    await docsStore.batchPatch(payload)
+    toastMsg.value = `已更新 ${ids.length} 篇文档`
     toastType.value = 'success'
     showBatchSubcat.value = false
     batchSubcatValue.value = ''
+    batchCatValue.value = ''
     selectedIds.value = new Set()
     loadDocs()
   } catch {
@@ -336,6 +348,15 @@ async function handleReparse(docId: string) {
 .modal .wide {
   width: 100%;
   box-sizing: border-box;
+}
+
+.field-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  margin-top: 0.5rem;
+  margin-bottom: 0.2rem;
 }
 
 .modal-actions {

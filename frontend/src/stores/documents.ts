@@ -68,8 +68,8 @@ export const useDocumentsStore = defineStore('documents', () => {
     return result
   }
 
-  async function batchPatch(payload: { doc_ids: string[]; subcategory: string }) {
-    return await apiBatchPatchDocuments(payload.doc_ids, payload.subcategory)
+  async function batchPatch(payload: { doc_ids: string[]; category?: string; subcategory?: string }) {
+    return await apiBatchPatchDocuments(payload.doc_ids, { category: payload.category, subcategory: payload.subcategory })
   }
 
   return {

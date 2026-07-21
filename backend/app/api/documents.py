@@ -901,6 +901,7 @@ async def patch_document(
 
 class BatchPatchRequest(BaseModel):
     doc_ids: list[str]
+    category: Optional[str] = None
     subcategory: Optional[str] = None
 
 
@@ -910,13 +911,20 @@ async def batch_patch_documents(
     db: Session = Depends(get_db),
     _admin: bool = Depends(require_role("admin")),
 ):
-    """Batch edit subcategory for multiple documents at once."""
+    """Batch edit category/subcategory for multiple documents at once."""
     if not body.doc_ids:
         raise HTTPException(400, "Must provide at least one doc_id")
+    if not body.category and not body.subcategory:
+        raise HTTPException(400, "Must provide category or subcategory")
     repo = DocumentRepository(db)
+    kwargs = {}
+    if body.category is not None:
+        kwargs["category"] = body.category
+    if body.subcategory is not None:
+        kwargs["subcategory"] = body.subcategory
     updated = 0
     for doc_id in body.doc_ids:
-        result = repo.update(doc_id, subcategory=body.subcategory)
+        result = repo.update(doc_id, **kwargs)
         if result is not None:
             updated += 1
     return {"ok": True, "updated": updated, "total": len(body.doc_ids)}
