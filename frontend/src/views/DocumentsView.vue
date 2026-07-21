@@ -75,7 +75,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useDocumentsStore } from '@/stores/documents'
 import { useBanksStore } from '@/stores/banks'
 import { useAuthStore } from '@/stores/auth'
@@ -88,7 +88,11 @@ const banksStore = useBanksStore()
 const authStore = useAuthStore()
 
 const search = ref('')
-const filterBank = ref('all')
+// Connect to banksStore.selectedBank so sidebar clicks sync the document filter
+const filterBank = computed({
+  get: () => banksStore.selectedBank,
+  set: (val: string) => { banksStore.selectBank(val); loadDocs() },
+})
 const toastMsg = ref('')
 const toastType = ref<'info' | 'success' | 'error' | 'warning'>('info')
 const editingCat = ref<string | null>(null)
@@ -149,6 +153,11 @@ const filteredDocs = computed(() => {
 onMounted(() => {
   banksStore.fetchBanks()
   docsStore.fetchCategories()
+  loadDocs()
+})
+
+// Watch sidebar bank selection for documents page
+watch(() => banksStore.selectedBank, () => {
   loadDocs()
 })
 

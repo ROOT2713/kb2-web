@@ -121,7 +121,15 @@ async def list_documents(bank: str = Query("all"), db: Session = Depends(get_db)
     """List documents (from meta.db, Hindsight supplements chunk/size)."""
     repo = DocumentRepository(db)
 
-    if bank == "all":
+    # Map consolidated bank keys to actual DB bank values
+    _CONSOLIDATED_BANK_MAP = {
+        "industry": ["standards", "industry_docs", "tech_guides", "general", "checklist", "templates", "methodology", "business"],
+        "personal": ["咨询", "xhs"],
+        "project": ["project_docs"],
+    }
+    if bank in _CONSOLIDATED_BANK_MAP:
+        docs_list = repo.list_by_banks(_CONSOLIDATED_BANK_MAP[bank])
+    elif bank == "all":
         docs_list = repo.list_all()
     else:
         docs_list = repo.list_all(bank=bank)

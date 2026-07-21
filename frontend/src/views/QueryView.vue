@@ -184,6 +184,13 @@ watch(() => queryStore.loading, (loading) => {
   if (!loading) stopQueryTimer()
 })
 
+// Watch sidebar bank selection: when user clicks sidebar, auto-execute query
+watch(() => banksStore.selectedBank, (newBank) => {
+  if (queryText.value.trim()) {
+    handleQuery()
+  }
+})
+
 async function loadCategories() {
   try {
     categories.value = await getCategories()

@@ -158,6 +158,12 @@ class DocumentRepository:
         stmt = stmt.order_by(Document.created_at.desc())
         return list(self.db.execute(stmt).scalars().all())
 
+    def list_by_banks(self, banks: List[str]) -> List[Document]:
+        """List documents matching any of the given bank values."""
+        stmt = select(Document).where(Document.bank.in_(banks))
+        stmt = stmt.order_by(Document.created_at.desc())
+        return list(self.db.execute(stmt).scalars().all())
+
     def get_all_meta(self) -> Dict[str, dict]:
         """Return {doc_id: {...}} metadata dict (matches v1 get_all_meta)."""
         docs = self.list_all()
