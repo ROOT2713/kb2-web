@@ -125,7 +125,7 @@ async def list_documents(bank: str = Query("all"), db: Session = Depends(get_db)
     # Map consolidated bank keys to actual DB bank values
     _CONSOLIDATED_BANK_MAP = {
         "industry": ["standards", "industry_docs", "tech_guides", "general", "checklist", "templates", "methodology", "business"],
-        "personal": ["咨询", "xhs"],
+        "personal": ["咨询", "kb_xhs", "xhs"],
         "project": ["project_docs"],
     }
     if bank in _CONSOLIDATED_BANK_MAP:
