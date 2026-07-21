@@ -736,52 +736,50 @@ async def get_document_content(doc_id: str, db: Session = Depends(get_db)):
     if not meta or not meta.get("title"):
         raise HTTPException(404, "Document not found")
 
-    doc_bank = meta.get("bank", "kb")
-    bank_cfg = get_bank_config(doc_bank)
-    hs_bank = bank_cfg["hindsight"]
+    # Use the document's own hs_bank field — it stores the correct hindsight
+    # bank (kb_standard/kb_xhs/kb_general/etc). Don't look up via get_bank_config
+    # because old document banks (standards/industry_docs/咨询) are not valid BANKS keys.
+    hs_bank = meta.get("hs_bank", "kb")
 
     if settings.vector_backend == "pgvector":
         store = get_vector_store()
-        chunks = await store.get_document_detail(doc_id, hs_bank)
-        if not chunks:
-            # fallback: try recall
-            try:
-                title = meta.get("title", "")
-                if title:
-                    recalled = await recall(title, limit=50, bank="kb", max_tokens=32768)
-                    if recalled:
-                        full_text = "\n\n".join(r.get("text", "") for r in recalled)
-                        if full_text and len(full_text) > 50:
-                            return {
-                                "doc_id": doc_id,
-                                "id": doc_id,
-                                "title": title,
-                                "filename": meta.get("filename", ""),
-                                "bank": meta.get("bank", "kb"),
-                                "chunks": len(recalled),
-                                "searchable": meta.get("searchable", 0),
-                                "created": meta.get("created_at", ""),
-                                "coverage_pct": meta.get("coverage_pct", 0),
-                                "text": full_text,
-                                "source": "recall",
-                            }
-            except Exception:
-                pass
-            raise HTTPException(404, "Document content not found (may not be indexed yet)")
+        chunks = await store.get_document_detail(doc_id, None)
+        if chunks:
+            full_text = "\n\n".join(c["content"] for c in chunks)
+            return {
+                "doc_id": doc_id,
+                "id": doc_id,
+                "title": meta.get("title", "unknown"),
+                "filename": meta.get("filename", ""),
+                "bank": meta.get("bank", "kb"),
+                "chunks": len(chunks),
+                "searchable": meta.get("searchable", 0),
+                "created": meta.get("created_at", ""),
+                "coverage_pct": meta.get("coverage_pct", 0),
+                "text": full_text,
+            }
 
-        full_text = "\n\n".join(c["content"] for c in chunks)
-        return {
-            "doc_id": doc_id,
-            "id": doc_id,
-            "title": meta.get("title", "unknown"),
-            "filename": meta.get("filename", ""),
-            "bank": meta.get("bank", "kb"),
-            "chunks": len(chunks),
-            "searchable": meta.get("searchable", 0),
-            "created": meta.get("created_at", ""),
-            "coverage_pct": meta.get("coverage_pct", 0),
-            "text": full_text,
-        }
+        # pgvector 无结果 → 兜底查 parent_chunks（V2 上传文档的内容）
+        # parent_chunks 是 SQLite 本地表，100% 含 V2 上传文档的全文
+        from app.models.document import ParentChunk
+        pc = db.query(ParentChunk).filter(ParentChunk.doc_id == doc_id).order_by(ParentChunk.parent_idx).all()
+        if pc:
+            full_text = "\n\n".join(p.parent_text for p in pc)
+            return {
+                "doc_id": doc_id,
+                "id": doc_id,
+                "title": meta.get("title", "unknown"),
+                "filename": meta.get("filename", ""),
+                "bank": meta.get("bank", "kb"),
+                "chunks": len(pc),
+                "searchable": meta.get("searchable", 0),
+                "created": meta.get("created_at", ""),
+                "coverage_pct": meta.get("coverage_pct", 0),
+                "text": full_text,
+                "source": "parent_chunks",
+            }
+
+        raise HTTPException(404, "Document content not found (pgvector + parent_chunks both empty)")
 
     docs_result = await _hindsight_request(
         f"/v1/default/banks/{hs_bank}/documents",

@@ -448,19 +448,36 @@ class PgVectorStore:
             return False
 
     # ── get_document_detail ─────────────────────────────────────
-    async def get_document_detail(self, doc_id: str, bank: str) -> List[Dict]:
-        """按 doc_id + bank 取所有 chunks，按 chunk_index 排序。"""
+    async def get_document_detail(self, doc_id: str, bank: Optional[str] = None) -> List[Dict]:
+        """按 doc_id 取所有 chunks，按 chunk_index 排序。
+        
+        In pgvector mode, bank filter is optional — all chunks share the same table
+        and doc_id is already unique. We skip the bank WHERE clause when bank is None
+        so that documents whose bank doesn't match the BANKS config (e.g. old bank
+        values like kb_xhs, kb_general) are still findable.
+        """
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT chunk_index, content, metadata, created_at
-                FROM vector_chunks
-                WHERE doc_id = $1 AND bank = $2
-                ORDER BY chunk_index
-                """,
-                doc_id, bank,
-            )
+            if bank:
+                rows = await conn.fetch(
+                    """
+                    SELECT chunk_index, content, metadata, created_at
+                    FROM vector_chunks
+                    WHERE doc_id = $1 AND bank = $2
+                    ORDER BY chunk_index
+                    """,
+                    doc_id, bank,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT chunk_index, content, metadata, created_at
+                    FROM vector_chunks
+                    WHERE doc_id = $1
+                    ORDER BY chunk_index
+                    """,
+                    doc_id,
+                )
         return [
             {
                 "chunk_index": r["chunk_index"],
