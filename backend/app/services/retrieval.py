@@ -30,18 +30,18 @@ from app.utils.text_cleaning import normalize_query, expand_amount_tiers
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# ── Bank 配置 ─────────────────────────────────────────────────────
+# ── Bank 配置 ── 2026-07-21 合并为3大类 + 全部 ─────────────────────
 _HARDCODED_BANKS = {
-    "all":           {"name": "全部",           "hindsight": None,         "prompt": "通用政务信息化知识库"},  # [P0-2] 聚合查询，无专属hindsight bank
-    "project_docs":  {"name": "项目资料",       "hindsight": "kb_project", "prompt": "你是政务信息化项目管理专家。熟悉项目管理办法、验收管理细则、财政投资规定、软件行业基准数据。回答时注重管理流程、审批要求和实操经验。"},
-    "standards":     {"name": "规范",           "hindsight": "kb_standard","prompt": "你是政务信息化标准规范专家。精通GB/GA/T/EGAG/GDZW等国家及团体标准，覆盖等保测评、密码应用、监理服务、立项咨询、验收测评、会议系统、安防工程、数据中心等领域。回答时注重条款引用和合规要求。"},
-    "industry_docs": {"name": "信息化行业文档", "hindsight": "kb_industry","prompt": "你是政务信息化行业专家。熟悉电子政务工程造价、软件造价评估、信创替代、验收测评实务、行业政策解读。回答时注重实操经验和行业惯例。"},
-    "tech_guides":   {"name": "技术指导书",     "hindsight": "kb_tech",    "prompt": "你是全栈技术专家。精通前端/后端/Agent/DevOps/安全/渗透测试/AI/LLM。回答注重实战经验、架构设计和攻防思路。"},
-    "general":       {"name": "综合文件",       "hindsight": "kb_general", "prompt": "你是知识管理助手。擅长整理归纳各类知识，回答清晰有条理。"},
-    "checklist":    {"name": "检查标准",       "hindsight": "kb_checklist", "prompt": "你是等保测评机构检查标准专家。回答时优先引用检查项、检查要求、检查方法、核查力度等表格字段。"},
-    "咨询":         {"name": "咨询",           "hindsight": "kb_咨询",     "prompt": "你是互联网产品与技术内容分析专家。精通互联网产品评测、AI/Agent/DevOps 工具体验、技术趋势解读。回答时注重产品能力边界、真实体验和对比分析。善于从社区内容中提炼有实操价值的手法、技巧和避坑建议。"},
-    "business":     {"name": "商业分析",       "hindsight": "kb_general",  "prompt": "你是商业与技术分析专家。精通AI产品评测、技术趋势分析、量化交易、金融知识。回答注重技术能力边界、实践经验和中立对比。"},
-    "methodology":  {"name": "方法论",          "hindsight": "kb_general",  "prompt": "你是知识管理方法论专家。精通OKF知识组织框架、知识库设计、信息架构、SOP编写。回答注重结构化方法和最佳实践。"},
+    "all":     {"name": "全部",     "hindsight": None,     "prompt": "通用政务信息化知识库"},
+    "industry": {"name": "信息化行业",
+                 "hindsight_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general", "kb_checklist", "kb_template"],
+                 "prompt": "你是政务信息化行业专家。精通GB/GA/T/EGAG/GDZW等国家及团体标准，覆盖等保测评、密码应用、监理服务、立项咨询、验收测评、会议系统、安防工程、数据中心等领域。回答时注重条款引用、合规要求和行业实操经验。"},
+    "personal": {"name": "个人资讯",
+                 "hindsight_banks": ["kb_咨询", "kb_xhs"],
+                 "prompt": "你是互联网产品与技术内容分析专家。精通互联网产品评测、AI/Agent/DevOps 工具体验、技术趋势解读。回答时注重产品能力边界、真实体验和对比分析。善于从社区内容中提炼有实操价值的手法、技巧和避坑建议。"},
+    "project":  {"name": "项目文档",
+                 "hindsight": "kb_project",
+                 "prompt": "你是政务信息化项目管理专家。熟悉项目管理办法、验收管理细则、财政投资规定、软件行业基准数据。回答时注重管理流程、审批要求和实操经验。"},
 }
 BANKS = dict(_HARDCODED_BANKS)
 

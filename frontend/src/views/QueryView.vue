@@ -145,7 +145,11 @@ const queryStore = useQueryStore()
 const banksStore = useBanksStore()
 
 const queryText = ref('')
-const selectedBank = ref('all')
+// Use banksStore.selectedBank as single source of truth (syncs with sidebar)
+const selectedBank = computed({
+  get: () => banksStore.selectedBank,
+  set: (val: string) => banksStore.selectBank(val),
+})
 const categoryFilter = ref('')
 const categories = ref<{key: string, label: string, isolated: boolean}[]>([])
 

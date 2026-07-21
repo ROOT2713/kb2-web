@@ -189,7 +189,13 @@ async def query(
 
     bank_cfg = get_bank_config(bank)
     bank_prompt = bank_cfg["prompt"]
-    hs_bank = bank_cfg.get("hindsight") or "kb"
+    # support hindsight_banks (list) for consolidated banks
+    hindsight_banks = bank_cfg.get("hindsight_banks")
+    hs_bank: str = "kb"  # default: search all banks
+    if hindsight_banks:
+        hs_bank = ",".join(hindsight_banks)  # pass as comma-separated to _build_search_context
+    elif bank_cfg.get("hindsight"):
+        hs_bank = bank_cfg["hindsight"]
 
     # ── 查询扩展 ──
     q_recalled = expand_query_synonyms(q)

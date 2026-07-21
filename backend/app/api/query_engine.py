@@ -360,7 +360,16 @@ async def _build_search_context(
 
     # ── Hybrid Search: Dense + BM25 RRF 融合 ──
     all_recall_results = []
-    if bank != "all" and hs_bank and hs_bank != "kb":
+    # support comma-separated hindsight_banks (consolidated bank groups)
+    if hs_bank and "," in hs_bank:
+        hs_list = [h.strip() for h in hs_bank.split(",") if h.strip()]
+        for hs in hs_list:
+            try:
+                bank_results = await recall(q_recalled, limit=40, bank=hs)
+                all_recall_results.extend(bank_results)
+            except Exception as e:
+                logger.warning("recall(%s) failed: %s", hs, e)
+    elif bank != "all" and hs_bank and hs_bank != "kb":
         try:
             all_recall_results = await recall(q_recalled, limit=40, bank=hs_bank)
         except Exception as e:

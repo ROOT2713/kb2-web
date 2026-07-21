@@ -197,10 +197,30 @@ async def list_banks(db: Session = Depends(get_db)):
                 "FROM documents WHERE bank != 'skip' GROUP BY bank"
             )
         ).fetchall()
-        bank_stats = {r[0]: r[1] for r in rows}
-        searchable_stats = {r[0]: r[2] for r in rows}
+        raw_stats = {r[0]: r[1] for r in rows}
+        raw_searchable = {r[0]: r[2] for r in rows}
     except Exception:
-        pass
+        raw_stats = {}
+        raw_searchable = {}
+    
+    # Map old document bank names to new consolidated bank keys
+    _OLD_TO_NEW = {
+        "standards": "industry", "industry_docs": "industry",
+        "tech_guides": "industry", "general": "industry",
+        "checklist": "industry", "templates": "industry",
+        "methodology": "industry", "business": "industry",
+        "咨询": "personal", "xhs": "personal",
+        "project_docs": "project",
+    }
+    bank_stats = {}
+    searchable_stats = {}
+    for old_bank, cnt in raw_stats.items():
+        new_key = _OLD_TO_NEW.get(old_bank, old_bank)
+        bank_stats[new_key] = bank_stats.get(new_key, 0) + cnt
+    for old_bank, cnt in raw_searchable.items():
+        new_key = _OLD_TO_NEW.get(old_bank, old_bank)
+        searchable_stats[new_key] = searchable_stats.get(new_key, 0) + cnt
+    
     total = sum(bank_stats.get(key, 0) for key in banks_cfg if key != "all")
     total_searchable = sum(searchable_stats.get(key, 0) for key in banks_cfg if key != "all")
     banks = []
