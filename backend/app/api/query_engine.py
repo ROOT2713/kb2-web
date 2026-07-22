@@ -796,6 +796,11 @@ async def _build_search_context(
                     if len(parts) >= 3:
                         doc_name = parts[2]
                         break
+        # [P0.5] 跳过无来源归属的孤儿 chunk（旧 Hindsight 数据，metadata 不可恢复）
+        if doc_name == "未知文档" and doc_id not in title_map and not doc_id.startswith("_notag_"):
+            logger.debug("[P0.5] skip orphan chunk: doc_id=%s", doc_id[:16])
+            continue
+
         if not doc_name:
             doc_name = "未知文档"
 
