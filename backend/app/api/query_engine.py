@@ -687,7 +687,7 @@ async def _build_search_context(
             _frows = _fdocs.execute(sa_text(
                 "SELECT d.doc_id, d.title FROM documents d "
                 "WHERE d.searchable=1 AND d.status='active' "
-                "AND d.bank='industry_docs' "
+                "AND (d.bank IN ('industry_docs', 'industry', 'standards', 'general')) "
                 "AND (d.title LIKE '%造价%' OR d.title LIKE '%费用%' OR d.title LIKE '%取费%')"
             )).fetchall()
         except Exception:
@@ -1657,7 +1657,13 @@ async def _generate_answer(
     # 此处只作为兜底：检查 context 中是否已被 D2-B 注入（有 %、费率、计费额等特征），
     # 已注入则跳过 T7 避免重复。
     _has_rate = any(t in p for p in context_parts for t in ["%", "费率", "计费额", "收费基价"])
-    if _tier_extra and not _has_rate:
+    if (_tier_extra or any(kw in q for kw in [
+        "造价", "取费", "费用", "费率", "收费",
+        "验收测评", "验收评测", "检测费", "测评费", "评测费",
+        "审计费", "管理费", "设计费", "监理费", "招标",
+        "等保", "密评", "咨询费",
+        "商密", "商用密码", "密码应用",
+    ])) and not _has_rate:
         _snippet, _dtitle = _find_rate_table_snippet(_tier_extra, bank)
         if _snippet:
             _tier_label = _tier_extra[0]
@@ -1741,6 +1747,11 @@ async def _generate_answer(
             "      - \"验收评测费率表\"：g值约2.8%~3.0%，适用于验收评测场景\n"
             "      - \"全流程评测费率表\"：g值约6%~12%，适用于全流程评测场景\n"
             "      用户问验收评测费时，必须使用\"验收评测费率\"列的数据，不得使用\"全流程评测费率\"（g值过高会导致结果错误）。\n"
+            "   h. **覆盖【输出要求】#2 — 费用类查询改用表格格式**：对于费用/价格/收费等金额类查询，禁止使用`【问题类别】`+列表格式，必须改用 markdown 表格格式输出：\n"
+            "      | 费用类型 | 金额（万元）| 依据文件及条款 |\n"
+            "      |---------|------------|-------------|\n"
+            "      | 费用名称 | 具体金额或计算过程 | 来源文档名称+表号 |\n"
+            "      每个表格行必须标注来源。如果有多条费率（如不同金额档位），用多行展示。\n"
         )
         logger.info("[FEE_RULES] Injected fee calculation rules (query contains fee keywords)")
 

@@ -7,13 +7,14 @@
 {"id": "F07", "category": "fact", "difficulty": "medium", "question": "声环境功能区中2类区昼间和夜间环境噪声限值分别是多少？", "expected": "must include: 昼间60dB, 夜间50dB", "bank_hint": "standards", "reason": "GB3096限值"}
 {"id": "F08", "category": "fact", "difficulty": "medium", "question": "声环境功能区中1类区昼间和夜间环境噪声限值分别是多少？", "expected": "must include: 昼间55dB, 夜间45dB", "bank_hint": "standards", "reason": "GB3096限值"}
 {"id": "F09", "category": "fact", "difficulty": "medium", "question": "低压配电设计规范的国家标准编号是什么？", "expected": "must include: GB 50054-2011", "bank_hint": "standards", "reason": "低压配电规范"}
-{"id": "F10", "category": "fact", "difficulty": "medium", "question": "剧场观众厅的混响时间中频（500Hz）满场推荐值是多少？", "expected": "must include: 歌剧1.2-1.4s, 话剧0.8-1.0s", "bank_hint": "standards", "reason": "剧场声学规范设计值"}
-{"id": "F11", "category": "fact", "difficulty": "easy", "question": "东莞市政府投资信息化项目造价指南的修编年份是哪一年？", "expected": "must include: 修编版", "bank_hint": "industry_docs", "reason": "造价指南版本"}
+{"id": "F10", "category": "fact", "difficulty": "medium", "question": "剧场(歌剧/话剧)观众厅的混响时间中频(500Hz)满场推荐值分别是多少？", "expected": "must include: 歌剧1.2-1.4s, 话剧0.8-1.0s", "bank_hint": "standards", "reason": "剧场声学规范设计值"}
+{"id": "F11", "category": "fact", "difficulty": "easy", "question": "东莞市政府投资信息化项目造价指南的修编年份是哪一年？", "expected": "must include: 2021, 修编版", "bank_hint": "industry_docs", "reason": "造价指南版本"}
 {"id": "F12", "category": "fact", "difficulty": "easy", "question": "电影院观众厅的混响时间宜为多少？", "expected": "must include: 0.5-0.7s", "bank_hint": "standards", "reason": "电影院声学设计规范限值"}
 {"id": "F13", "category": "fact", "difficulty": "easy", "question": "等保第三级及以上系统需要至少多久进行一次等级测评？", "expected": "must include: 每年至少一次", "bank_hint": "standards", "reason": "等保测评周期要求"}
 {"id": "F14", "category": "fact", "difficulty": "hard", "question": "供配电系统中，当负荷线路电流大于多少时应采用三相四线制供电？", "expected": "must include: 60A", "bank_hint": "standards", "reason": "GB50052三相供电阈值"}
 {"id": "F15", "category": "fact", "difficulty": "medium", "question": "建筑弱电工程中，火灾自动报警系统的设计规范标准编号是什么？", "expected": "must include: GB 50116", "bank_hint": "standards", "reason": "消防报警标准号"}
 {"id": "F16", "category": "fact", "difficulty": "hard", "question": "等保2.0相比1.0，测评合格分数从多少提升到多少？", "expected": "must include: 60分提升至70分", "bank_hint": "standards", "reason": "等保2.0合格线变化"}
+{"id": "F17", "category": "fact", "difficulty": "medium", "question": "建筑照明设计标准对应的国家标准编号是什么？", "expected": "must include: GB 50034", "bank_hint": "standards", "reason": "建筑电气补全"}
 {"id": "O01", "category": "open", "difficulty": "easy", "question": "数据中心运维需要满足哪些基本要求？", "expected": "must include: 温湿度, 供配电, 消防, 门禁", "bank_hint": "standards", "reason": "数据中心多标准综合"}
 {"id": "O02", "category": "open", "difficulty": "easy", "question": "信息安全等级保护的主要流程有哪些环节？", "expected": "must include: 定级, 备案, 建设整改, 测评", "bank_hint": "standards", "reason": "等保流程综合"}
 {"id": "O03", "category": "open", "difficulty": "easy", "question": "声学设计中影响观众厅音质的主要参数有哪些？", "expected": "must include: 混响时间, 体型设计, 噪声控制", "bank_hint": "standards", "reason": "声学多参数综合"}
@@ -26,7 +27,7 @@
 {"id": "O10", "category": "open", "difficulty": "hard", "question": "网络安全法中对不履行网络安全保护义务的单位和个人有哪些处罚措施？", "expected": "must include: 罚款, 责令改正, 暂停活动", "bank_hint": "standards", "reason": "安全法处罚规定"}
 {"id": "O11", "category": "open", "difficulty": "hard", "question": "政府投资信息化项目的验收流程包括哪些关键环节？", "expected": "must include: 文档验收, 功能测试, 性能测试, 安全测评", "bank_hint": "industry_docs", "reason": "验收全过程"}
 {"id": "O12", "category": "open", "difficulty": "hard", "question": "影剧院建筑声学设计中如何处理观众厅的体型设计？", "expected": "must include: 避免回声, 近次反射声, 声场均匀", "bank_hint": "standards", "reason": "声学体型设计"}
-{"id": "O13", "category": "open", "difficulty": "easy", "question": "WiFi分析仪主要有哪些功能工具？", "expected": "must include: 吞吐量计算, 信道分析, 效率分析", "bank_hint": "general", "reason": "WiFi工具功能"}
+{"id": "O13", "category": "open", "difficulty": "easy", "question": "WiFi网络规划中信道选择的主要考虑因素有哪些？", "expected": "must include: 信道干扰, 信道数量, 频段选择", "bank_hint": "general", "reason": "WiFi工具功能"}
 {"id": "O14", "category": "open", "difficulty": "medium", "question": "信息化测评室内部工作流程中原始记录有哪些填写要求？", "expected": "must include: 问题描述, 截图, 输入输出", "bank_hint": "business", "reason": "测评记录规范"}
 {"id": "O15", "category": "open", "difficulty": "hard", "question": "从成本、性能和便利性三方面比较几种常见的网络操作系统", "expected": "must include: Windows NT, UNIX/Linux, NetWare", "bank_hint": "general", "reason": "网络OS对比"}
 {"id": "C01", "category": "cross", "difficulty": "medium", "question": "建筑弱电工程中的火灾报警系统与供配电系统的联动要求有哪些？", "expected": "must include: 消防联动, 切非消防电源", "bank_hint": "standards", "reason": "跨系统联动"}
@@ -39,6 +40,7 @@
 {"id": "C08", "category": "cross", "difficulty": "hard", "question": "信息化测评中，功能点估算方法与造价指南中的费率表如何配合使用？", "expected": "must include: 功能点计数, 费率定价", "bank_hint": "industry_docs", "reason": "功能点+造价交叉"}
 {"id": "C09", "category": "cross", "difficulty": "medium", "question": "WiFi 2.4GHz与5GHz频段在规划和部署上的主要差异", "expected": "must include: 覆盖范围, 穿墙能力, 信道数量", "bank_hint": "general", "reason": "WiFi频段对比"}
 {"id": "C10", "category": "cross", "difficulty": "hard", "question": "当信息安全事件发生时，等保标准与网络安全法在应急处置上的衔接", "expected": "must include: 等级响应, 通报预警, 事后整改", "bank_hint": "standards", "reason": "等保+安全法应急"}
+{"id": "C11", "category": "cross", "difficulty": "hard", "question": "数据中心消防(GB50116)与供配电切非(GB50052)之间的联动协调要求有哪些？", "expected": "must include: 气体灭火, 切非消防电源, 联动控制", "bank_hint": "standards", "reason": "深化C01"}
 {"id": "R01", "category": "rejection", "difficulty": "easy", "question": "莎士比亚的《哈姆雷特》主要讲了什么故事", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "all", "reason": "纯文学话题库外"}
 {"id": "R02", "category": "rejection", "difficulty": "easy", "question": "感冒发烧应该吃什么药比较好", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "all", "reason": "医学用药库外"}
 {"id": "R03", "category": "rejection", "difficulty": "easy", "question": "红烧肉怎么做才好吃", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "all", "reason": "菜谱话题库外"}
@@ -54,13 +56,11 @@
 {"id": "R13", "category": "rejection", "difficulty": "hard", "question": "政府办公楼电梯维保费用应按哪个造价定额计取？", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "industry_docs", "reason": "含造价关键词但无电梯定额"}
 {"id": "R14", "category": "rejection", "difficulty": "hard", "question": "请说明政务大厅玻璃幕墙的隔声降噪设计应满足哪些声学指标", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "standards", "reason": "含声学但幕墙专项目外"}
 {"id": "R15", "category": "rejection", "difficulty": "hard", "question": "机房柴油发电机排烟管道防火包覆厚度如何确定？", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "standards", "reason": "含机房但排烟构造无"}
-{"id": "R16", "category": "rejection", "difficulty": "hard", "question": "政务云机房地板防静电蜡的品牌和采购预算如何编制？", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "industry_docs", "reason": "无防静电蜡采购内容"}
 {"id": "R17", "category": "rejection", "difficulty": "hard", "question": "标准化机房内咖啡机是否可以接入UPS供电？", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "standards", "reason": "含机房供电关键词但生活电器"}
 {"id": "R18", "category": "rejection", "difficulty": "hard", "question": "请给出政务服务中心背景音乐系统的扬声器功率和验收方法", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "standards", "reason": "含政务声学但背景音乐无"}
 {"id": "R19", "category": "rejection", "difficulty": "hard", "question": "等保二级和三级测评的官方收费标准分别是多少？", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "standards", "reason": "库有等保技术要求但无费用表"}
 {"id": "R20", "category": "rejection", "difficulty": "hard", "question": "政务云数据中心机柜租赁每U每月多少钱？", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "standards", "reason": "有数据中心标准但无租赁价格"}
 {"id": "R21", "category": "rejection", "difficulty": "hard", "question": "政府投资项目概算审核的咨询费按项目金额分档比例是多少？", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "industry_docs", "reason": "有造价指南但无审核咨询费"}
-{"id": "R22", "category": "rejection", "difficulty": "hard", "question": "办公楼会议室噪声超标后第三方声学检测机构收费多少钱一次？", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "standards", "reason": "有声学规范但无检测收费"}
-{"id": "R23", "category": "rejection", "difficulty": "hard", "question": "等保三级整改需采购哪些品牌的防火墙和日志审计设备？", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "standards", "reason": "有等保要求但无品牌推荐"}
 {"id": "R24", "category": "rejection", "difficulty": "hard", "question": "数据中心PUE达到1.25能申请多少财政补贴？", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "standards", "reason": "有PUE标准但无补贴金额"}
 {"id": "R25", "category": "rejection", "difficulty": "hard", "question": "学校礼堂混响时间不达标的整改施工预算每平方米多少钱？", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "industry_docs", "reason": "有声学规范和造价但无声学施工单价"}
+{"id": "R26", "category": "rejection", "difficulty": "hard", "question": "GB50174-2025版相比2017版温度条款有哪些变化？", "expected": "must include: [数据缺口] 知识库未收录", "bank_hint": "standards", "reason": "库内标准号版本库外"}
