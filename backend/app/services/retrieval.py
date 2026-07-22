@@ -32,7 +32,7 @@ logger.setLevel(logging.INFO)
 
 # ── Bank 配置 ── 2026-07-21 合并为3大类 + 全部 ─────────────────────
 _HARDCODED_BANKS = {
-    "all":     {"name": "全部",     "hindsight": None,     "prompt": "通用政务信息化知识库"},
+    "all":     {"name": "全部",     "hindsight_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general", "kb_checklist", "kb_template", "kb_咨询", "kb_xhs", "kb_project"], "prompt": "通用政务信息化知识库"},
     "industry": {"name": "信息化行业",
                  "hindsight_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general", "kb_checklist", "kb_template"],
                  "prompt": "你是政务信息化行业专家。精通GB/GA/T/EGAG/GDZW等国家及团体标准，覆盖等保测评、密码应用、监理服务、立项咨询、验收测评、会议系统、安防工程、数据中心等领域。回答时注重条款引用、合规要求和行业实操经验。"},
@@ -288,7 +288,15 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
             # query all banks in parallel
             from app.repositories.vector_repo import PgVectorStore
             pg = store if isinstance(store, PgVectorStore) else PgVectorStore()
-            all_banks = [cfg["hindsight"] for k, cfg in BANKS.items() if cfg.get("hindsight")]
+            all_banks = []
+            for k, cfg in BANKS.items():
+                if k == bank:
+                    continue
+                if cfg.get("hindsight_banks"):
+                    all_banks.extend(cfg["hindsight_banks"])
+                elif cfg.get("hindsight"):
+                    all_banks.append(cfg["hindsight"])
+            all_banks = list(set(all_banks))  # dedup
             # per-bank 下限保护：防止 limit 过小时每个 bank 只查几条
             per_bank_limit = max(limit // len(all_banks), 10)
             async def _q_one(b):
