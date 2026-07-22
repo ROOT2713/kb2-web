@@ -796,13 +796,19 @@ async def _build_search_context(
                     if len(parts) >= 3:
                         doc_name = parts[2]
                         break
-        # [P0.5] 跳过无来源归属的孤儿 chunk（旧 Hindsight 数据，metadata 不可恢复）
-        if doc_name == "未知文档" and doc_id not in title_map and not doc_id.startswith("_notag_"):
-            logger.debug("[P0.5] skip orphan chunk: doc_id=%s", doc_id[:16])
-            continue
-
         if not doc_name:
             doc_name = "未知文档"
+
+        # [P0.5] 跳过无来源归属的孤儿 chunk（旧 Hindsight 数据，metadata 不可恢复）
+        # 策略：doc_id 不在 SQLite 中 → 用 metadata title 兜底 → 仍空则跳过
+        if doc_id not in title_map and not doc_id.startswith("_notag_"):
+            meta_title = (r.get("metadata") or {}).get("title", "")
+            if meta_title:
+                doc_name = meta_title
+                logger.debug("[P0.5] orphan chunk with meta title: doc_id=%s title=%s", doc_id[:16], doc_name[:40])
+            else:
+                logger.debug("[P0.5] skip orphan chunk (no title): doc_id=%s", doc_id[:16])
+                continue
 
         # 清理 Hindsight 元数据
         cleaned = re.sub(r'\s*\|\s*(When|Involving|Entities|Location|Type|Source):[^|]*', '', text_val).strip()
