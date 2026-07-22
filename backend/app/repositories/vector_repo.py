@@ -10,6 +10,7 @@ Hindsight API endpoints:
 """
 
 import logging
+import json
 from typing import List, Dict, Optional, Protocol
 
 import asyncpg
@@ -238,6 +239,14 @@ class PgVectorStore:
             from pgvector.asyncpg import register_vector
             async def _init(conn):
                 await register_vector(conn)
+                # Re-register JSON/JSONB codec that register_vector corrupts
+                try:
+                    await conn.set_type_codec(
+                        'jsonb', encoder=json.dumps, decoder=json.loads,
+                        schema='pg_catalog', format='text'
+                    )
+                except Exception:
+                    pass  # may already be registered
             self._pool = await asyncpg.create_pool(
                 self.database_url, min_size=2, max_size=10, init=_init
             )
