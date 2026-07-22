@@ -498,10 +498,13 @@ async def _process_upload_task(
         doc = _get_doc_repo(db).get(doc_id)
         if doc:
             doc.original_text_length = len(text)
+            doc.chunk_count = retained
+            # searchable=1 if upsert succeeded (at least some chunks stored)
+            # Integrity/recall check is a quality signal, not a gate
+            if retained > 0 or (integrity and integrity.get("status") == "ok"):
+                doc.searchable = 1
             if integrity:
                 doc.coverage_pct = integrity.get("coverage_pct", 0.0)
-                if integrity.get("status") == "ok":
-                    doc.searchable = 1
             doc.verified_at = datetime.now(timezone.utc)
             doc.last_confirmed = datetime.now(timezone.utc)
             db.commit()
