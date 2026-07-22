@@ -764,6 +764,8 @@ async def _build_search_context(
         if not doc_id:
             doc_id = f"_notag_{id(r)}"
 
+        logger.info("[P0.5-DEBUG] processing doc_id=%s bank=%s title_map_has=%s", doc_id[:20], bank, doc_id in title_map)
+
         # 过滤 skip bank
         if bank_map.get(doc_id) == "skip":
             continue
@@ -805,9 +807,9 @@ async def _build_search_context(
             meta_title = (r.get("metadata") or {}).get("title", "")
             if meta_title:
                 doc_name = meta_title
-                logger.debug("[P0.5] orphan chunk with meta title: doc_id=%s title=%s", doc_id[:16], doc_name[:40])
+                logger.info("[P0.5-DEBUG] orphan kept via meta_title: doc_id=%s meta_title=%s", doc_id[:16], doc_name[:40])
             else:
-                logger.debug("[P0.5] skip orphan chunk (no title): doc_id=%s", doc_id[:16])
+                logger.info("[P0.5-DEBUG] skip orphan: doc_id=%s no meta.title, title_map_size=%d", doc_id[:16], len(title_map))
                 continue
 
         # 清理 Hindsight 元数据

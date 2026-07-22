@@ -295,6 +295,7 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
                 elif cfg.get("hindsight"):
                     all_banks.append(cfg["hindsight"])
             all_banks = list(set(all_banks))  # dedup
+            logger.info("[RECALL-DEBUG] bank=%s hs_bank=%s all_banks=%s", bank, hs_bank, all_banks)
             # per-bank 下限保护：防止 limit 过小时每个 bank 只查几条
             per_bank_limit = max(limit // len(all_banks), 10)
             async def _q_one(b):
@@ -315,6 +316,7 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
                     if key not in seen:
                         seen.add(key)
                         merged.append(r)
+            logger.info("[RECALL-DEBUG] bank=%s merged=%d results from %d banks", bank, len(merged), len(all_lists))
             return merged[:limit]
         else:
             return await store.query(query_text=query[:1800], bank=hs_bank, top_k=limit)
