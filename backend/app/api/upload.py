@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import traceback
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,16 +46,24 @@ logger.setLevel(logging.INFO)
 
 
 def _log_task_exception(task: asyncio.Task):
-    """Log any exception from a fire-and-forget background task."""
+    """Log any exception from a fire-and-forget background task with full traceback."""
     from app.middleware.request_id import _request_id_ctx
     task_id = task.get_name() or f"t-{id(task):x}"
     _request_id_ctx.set(f"task:{task_id}")
     try:
         exc = task.exception()
         if exc:
-            logger.error("Background task [%s] failed: %s", task_id, exc)
+            if isinstance(exc, asyncio.CancelledError):
+                logger.warning("Background task [%s] was cancelled", task_id)
+            else:
+                logger.error(
+                    "Background task [%s] failed: %s\nTraceback:\n%s",
+                    task_id, exc, "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+                )
     except asyncio.CancelledError:
-        pass
+        logger.warning("Background task [%s] cancelled (exception check)", task_id)
+    except Exception as inner:
+        logger.error("Background task [%s] exception() itself raised: %s", task_id, inner)
 
 router = APIRouter()
 

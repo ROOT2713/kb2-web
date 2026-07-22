@@ -287,7 +287,7 @@ function rerunHistory(item: { q: string; bank: string }) {
 
 <style scoped>
 .query-page {
-  max-width: 800px;
+  max-width: min(1120px, 92vw);
 }
 
 .page-title {

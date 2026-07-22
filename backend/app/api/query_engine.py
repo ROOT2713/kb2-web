@@ -953,12 +953,12 @@ def _keyword_suggestion_rules(q: str) -> list:
 
 # ── 模块级标准号正则 ──
 _STD_PATTERN = re.compile(
-    r'(GB\s*/?\s*T?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
-    r'|ISO(?:\s*/\s*IEC)?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
-    r'|(?:YD|SJ|GA|HJ|CJJ|JGJ|WS)\s*/?\s*T?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
-    r'|T\s*/\s*EGAG\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
-    r'|TEGAG\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
-    r'|GDZW\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
+    r'(GB\s*/?\s*T?\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
+    r'|ISO(?:\s*/\s*IEC)?\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
+    r'|(?:YD|SJ|GA|HJ|CJJ|JGJ|WS|GY|JJF|JJG)\s*/?\s*T?\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
+    r'|T\s*/\s*EGAG\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
+    r'|TEGAG\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
+    r'|GDZW\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
     r'|STC[\w\-]+'
     r'|DB\d+[\w\-]*'
     r'|[一-鿿]+〔\d+〕\d+号)'
@@ -973,11 +973,12 @@ def _normalize_doc_title_for_standard(title: str) -> str:
 def _normalize_standard_keyword(raw: str) -> str:
     """规范化标准号关键词，统一空格和 GB/T 写法。"""
     kw = re.sub(r"\s+", " ", raw).strip()
-    kw = re.sub(r"GB\s*/\s*T", "GB/T", kw, flags=re.IGNORECASE)
+    kw = re.sub(r"GB\s*/?\s*T", "GB/T", kw, flags=re.IGNORECASE)
+    kw = re.sub(r"GB\s+-?\s*T", "GB/T", kw, flags=re.IGNORECASE)
     kw = re.sub(r"GB\s+T", "GB/T", kw, flags=re.IGNORECASE)
     kw = re.sub(r"T\s*/\s*EGAG", "T/EGAG", kw, flags=re.IGNORECASE)
     kw = re.sub(r"ISO\s*/\s*IEC", "ISO/IEC", kw, flags=re.IGNORECASE)
-    kw = re.sub(r"\s*([\—\-–])\s*", r"\1", kw)
+    kw = re.sub(r"\s*([\—\-\–])\s*", r"\1", kw)
     return kw
 
 
@@ -987,8 +988,8 @@ def _normalize_standard_keyword(raw: str) -> str:
 
 _STD_VERSION_PATTERN = re.compile(
     r'(?P<prefix>'
-    r'GB(?:/T)?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
-    r'|ISO(?:\s*/\s*IEC)?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
+    r'GB(?:/T)?\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
+    r'|ISO(?:\s*/\s*IEC)?\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
     r'|YD\s*/?\s*T?\s*\d+'
     r'|SJ\s*/?\s*T?\s*\d+'
     r'|GA\s*/?\s*T?\s*\d+'
@@ -996,6 +997,9 @@ _STD_VERSION_PATTERN = re.compile(
     r'|CJJ\s*/?\s*T?\s*\d+'
     r'|JGJ\s*/?\s*T?\s*\d+'
     r'|WS\s*/?\s*T?\s*\d+'
+    r'|GY\s*/?\s*T?\s*\d+'
+    r'|JJF\s*/?\s*T?\s*\d+'
+    r'|JJG\s*/?\s*T?\s*\d+'
     r'|T\s*/\s*EGAG\s*\d+'
     r'|TEGAG\s*\d+'
     r'|GDZW\s*\d+'
