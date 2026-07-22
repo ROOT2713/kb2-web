@@ -290,8 +290,6 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
             pg = store if isinstance(store, PgVectorStore) else PgVectorStore()
             all_banks = []
             for k, cfg in BANKS.items():
-                if k == bank:
-                    continue
                 if cfg.get("hindsight_banks"):
                     all_banks.extend(cfg["hindsight_banks"])
                 elif cfg.get("hindsight"):
