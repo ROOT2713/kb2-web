@@ -194,6 +194,19 @@ def find_fee_relevant_chunks(
                 for fk in fee_type_keywords:
                     if fk in ptext:
                         score += 4  # Bigger boost than generic fee keywords
+                # Cross-type exclusion: if user asked "等保", penalize "验收测评" chunks
+                # These are distinct service types in cost guides and should not be conflated
+                _exclusion_map = {
+                    "等保": ["验收测评", "验收评测"],
+                    "验收测评": [],
+                    "验收评测": [],
+                }
+                for fk in fee_type_keywords:
+                    if fk in _exclusion_map:
+                        for _excl_kw in _exclusion_map[fk]:
+                            if _excl_kw in ptext:
+                                score -= 15  # Strong penalty — wrong fee type
+                                break
             if score > 0:
                 results.append({
                     "doc_id": did,
