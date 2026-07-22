@@ -5,9 +5,15 @@ Ported from: kb-web server.py _tokenize() L1366-L1369, _expand_keywords() L1371-
 """
 
 import re
+from pathlib import Path
 from typing import List
 
 import jieba
+
+# ── 加载用户自定义词典（行业缩写/术语，避免被拆为单字后滤掉）──
+_USER_DICT = Path(__file__).parent / "jieba_user_dict.txt"
+if _USER_DICT.exists():
+    jieba.load_userdict(str(_USER_DICT))
 
 
 def tokenize(text: str) -> List[str]:

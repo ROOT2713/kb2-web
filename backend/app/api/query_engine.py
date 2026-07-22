@@ -392,15 +392,26 @@ async def _build_search_context(
         raw_results = []
 
     # ── BM25 关键词召回 ──
+    import sys as _sys
+    _sys.stderr.write(f"[BM25-MARKER] entering BM25 block bank={bank} q_bm25={q_bm25[:40]} refund_tokens={hasattr(_sys, 'refund_tokens')}\n")
     bm25_merged = list(raw_results)
     bm25_hits = []
     try:
         bm25_index, bm25_docs = await build_bm25_index(bank)
         if bm25_index:
             bm25_hits = bm25_search(q_bm25, bm25_index, bm25_docs, top_k=30)
+            if bm25_hits:
+                bm25_doc_ids = set()
+                for h in bm25_hits:
+                    did = h.get("doc_id") or ""
+                    for tag in h.get("tags", []):
+                        if tag.startswith("title:"):
+                            did = did or tag[6:]
+                    bm25_doc_ids.add(did[:12])
+                logger.warning("[BM25-DEBUG] bank=%s hits=%d doc_ids=%s", bank, len(bm25_hits), list(bm25_doc_ids)[:10])
             bm25_merged = rrf_merge(raw_results, bm25_hits, k=60, query_keywords=query_keywords, bank=bank)
     except Exception as e:
-        logger.warning("BM25 fallback: %s", e)
+        logger.warning("[BM25-DEBUG] BM25 fallback: %s", e)
 
     # 精确结果排在最前面
     all_results = exact_results + bm25_merged
@@ -436,8 +447,10 @@ async def _build_search_context(
     # ── Category 过滤（2026-07-10 新增）──
     # categories="" → 排除 isolated; categories="all" → 全部; categories="daily,news" → 只这些
     if all_results and categories != "all":
+        import sys as _sys9
         from app.services.category_rules import ISOLATED_CATEGORIES
         all_doc_ids = list({r.get("doc_id", "") for r in all_results if r.get("doc_id")})
+        _sys9.stderr.write(f"[CAT-DEBUG] all_results={len(all_results)} docs_before_filter={len(all_doc_ids)} categories={categories}\n")
         if all_doc_ids:
             db_filter = SessionLocal()
             try:
@@ -460,6 +473,10 @@ async def _build_search_context(
                     if cat not in ISOLATED_CATEGORIES:
                         filtered.append(r)
             all_results = filtered
+            _sys9.stderr.write(f"[CAT-DEBUG] after_filter={len(all_results)} requested={requested}\n")
+            # printable doc_ids with categories
+            _dbg = [(r.get("doc_id","")[:12], doc_cat.get(r.get("doc_id",""),"?")) for r in all_results[:10]]
+            _sys9.stderr.write(f"[CAT-DEBUG] filtered tops: {_dbg}\n")
 
     # ── KG 消歧增强 ──
     if kg_info.get("disambiguated") and kg_info.get("suggested_doc_ids"):
@@ -764,17 +781,27 @@ async def _build_search_context(
         if not doc_id:
             doc_id = f"_notag_{id(r)}"
 
-        logger.info("[P0.5-DEBUG] processing doc_id=%s bank=%s title_map_has=%s", doc_id[:20], bank, doc_id in title_map)
+        logger.warning("[P0.5-DEBUG] processing doc_id=%s bank=%s title_map_has=%s", doc_id[:20], bank, doc_id in title_map)
 
         # 过滤 skip bank
         if bank_map.get(doc_id) == "skip":
             continue
 
-        # 过滤指定 bank
+        # 过滤指定 bank — 兼容旧 bank 名（standards→industry, industry_docs→industry 等）
         if bank != "all":
-            mapped = bank_map.get(doc_id)
-            if mapped is not None and mapped != bank:
-                continue
+            if not bank.startswith("kb_"):
+                mapped = bank_map.get(doc_id)
+                if mapped is not None and mapped != bank:
+                    # 旧 bank 名映射（2026-07-21 合并后遗留）
+                    _old_bank_map = {
+                        "standards": "industry", "industry_docs": "industry", "tech_guides": "industry",
+                        "general": "industry", "checklist": "industry", "templates": "industry",
+                        "methodology": "industry", "business": "industry",
+                        "咨询": "personal", "xhs": "personal", "kb_xhs": "personal",
+                        "management": "project", "consulting": "project",
+                    }
+                    if _old_bank_map.get(mapped) != bank:
+                        continue
 
         # 提取文档名
         doc_name = ""
@@ -900,6 +927,7 @@ async def _build_search_context(
         "_tier_extra": _tier_extra,
         "bank_map": bank_map,
         "title_map": title_map,
+        "categories": categories,  # 透传分类选择，供 confidence gate 使用
     }
 
 
@@ -1904,6 +1932,18 @@ def _assess_recall_confidence(
             "reject_type": "knowledge_gap",
             "message": _REJECT_MSG_KNOWLEDGE_GAP,
         }
+
+    # ── [categories 模式] 用户明确指定了分类且有匹配文档 → 跳过 L2 coverage 检查 ──
+    # 理由：categories 过滤后的结果自然少，但不代表不可信。
+    # 用户选择了 category=security 且有 security 文档被召回 → 应该信任结果。
+    # L1 已经保证了起码有文档存在。
+    _categories = ctx.get("categories", "")
+    if _categories and _categories != "all" and source_count > 0:
+        logger.info(
+            "[CONFIDENCE] Skip L2-L3 coverage check: categories=%s, source_count=%d (user explicitly filtered)",
+            _categories, source_count,
+        )
+        return None
 
     # ── Level 1.5: 内容实质性检测 ──
     # 检测 top-k chunk 的文本是否包含实质性条款内容，

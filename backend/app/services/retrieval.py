@@ -295,7 +295,7 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
                 elif cfg.get("hindsight"):
                     all_banks.append(cfg["hindsight"])
             all_banks = list(set(all_banks))  # dedup
-            logger.info("[RECALL-DEBUG] bank=%s hs_bank=%s all_banks=%s", bank, hs_bank, all_banks)
+            logger.warning("[RECALL-DEBUG] bank=%s hs_bank=%s all_banks=%s", bank, hs_bank, all_banks)
             # per-bank 下限保护：防止 limit 过小时每个 bank 只查几条
             per_bank_limit = max(limit // len(all_banks), 10)
             async def _q_one(b):
@@ -316,7 +316,14 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
                     if key not in seen:
                         seen.add(key)
                         merged.append(r)
-            logger.info("[RECALL-DEBUG] bank=%s merged=%d results from %d banks", bank, len(merged), len(all_lists))
+            returned_doc_ids = []
+            for r in merged:
+                tags = r.get("tags", [])
+                for t in tags:
+                    if t.startswith("doc_id:"):
+                        returned_doc_ids.append(t[7:])
+                        break
+            logger.warning("[RECALL-DEBUG] bank=%s merged=%d doc_ids=[%s]", bank, len(merged), ",".join(set(returned_doc_ids)))
             return merged[:limit]
         else:
             return await store.query(query_text=query[:1800], bank=hs_bank, top_k=limit)
@@ -490,7 +497,7 @@ async def build_bm25_index(bank: str = "all") -> tuple:
             docs.append({"text": parent_text, "doc_id": row[0], "tags": [f"title:{row[2] or 'unknown'}"]})
             added += 1
         if added:
-            logger.info("BM25: +%d parent_chunks from meta.db (primary source)", added)
+            logger.info("[BM25-DEBUG] +%d parent_chunks from meta.db (primary source) for bank=%s", added, bank)
     except Exception as e:
         logger.warning("BM25 parent_chunks failed: %s", e)
 
