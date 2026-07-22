@@ -966,12 +966,47 @@ async def llm_rerank(query: str, candidates: list, top_k: int = 15) -> list:
 
 def _find_rate_table_snippet(tier_keywords: list, bank: str = "all") -> tuple:
     """在 meta.db 中查找费率表片段。返回 (snippet, title) 或 (None, None)。
-    bank: 指定bank过滤，"all"不过滤。[HOTFIX-0606] 防止跨bank数据泄漏。"""
+    bank: 指定bank过滤，"all"不过滤。[HOTFIX-0606] 防止跨bank数据泄漏。
+    [2026-07-22 FIX] 当 tier_keywords 不含 "万" 时，对费用类查询改用
+    模糊关键词(等保/收费/费率)查找费率表。"""
     try:
         _db = SessionLocal()
         _filtered = [kw for kw in tier_keywords if "万" in kw]
         if not _filtered:
+            # ── 无金额关键词时的 fallback ──
+            # 用费用类关键词模糊匹配，找到费率表 chunk
+            _fallback_kws = ["等保评测", "验收测评", "收费基价", "费率", "三级", "3%",
+                             "表2-28", "表5-47", "表9", "V=D×g"]
+            _params = {}
+            _cond_parts = []
+            for i, kw in enumerate(_fallback_kws):
+                key = f"fb{i}"
+                _cond_parts.append(f"p.parent_text LIKE :{key}")
+                _params[key] = f"%{kw}%"
+            _conditions = " OR ".join(_cond_parts)
+            _bank_filter = ""
+            if bank and bank != "all":
+                _bank_filter = " AND d.bank = :bank"
+                _params["bank"] = bank
+            _sql = f"""
+                SELECT d.doc_id, d.title, p.parent_text
+                FROM documents d
+                JOIN parent_chunks p ON d.doc_id = p.doc_id
+                WHERE ({_conditions})
+                  AND length(p.parent_text) > 200
+                  {_bank_filter}
+                ORDER BY length(p.parent_text) DESC
+                LIMIT 3
+            """
+            _rows = _db.execute(text(_sql), _params).fetchall()
+            _db.close()
+            for _did, _dtitle, _ptext in _rows:
+                # 取 chunk 中部含表的部分
+                _mid = len(_ptext) // 2
+                _snippet = _ptext[max(0, _mid-500):min(len(_ptext), _mid+500)]
+                return _snippet, _dtitle
             return None, None
+
         # Use parameterized LIKE to prevent SQL injection
         _params = {}
         _conditions_parts = []
