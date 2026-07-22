@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 from app.config import settings
 
-engine = create_engine(settings.db_url, echo=settings.debug)
+engine = create_engine(settings.db_url, echo=settings.debug, connect_args={"timeout": 30})
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 

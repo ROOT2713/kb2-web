@@ -681,6 +681,7 @@ async def _build_search_context(
         "等保", "密评", "咨询费",
         "商密", "商用密码", "密码应用",
     ])
+    logger.info("[D2B-MARKER] _fee_q=%s q=%s", _fee_q, q[:50])
     if _fee_q:
         try:
             _fdocs = SessionLocal()
@@ -688,7 +689,7 @@ async def _build_search_context(
                 "SELECT d.doc_id, d.title FROM documents d "
                 "WHERE d.searchable=1 AND d.status='active' "
                 "AND (d.bank IN ('industry_docs', 'industry', 'standards', 'general')) "
-                "AND (d.title LIKE '%造价%' OR d.title LIKE '%费用%' OR d.title LIKE '%取费%')"
+                "AND (d.title LIKE '%造价%' OR d.title LIKE '%费用%' OR d.title LIKE '%取费%' OR d.title LIKE '%概算%')"
             )).fetchall()
         except Exception:
             _frows = []
