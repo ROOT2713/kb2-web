@@ -89,9 +89,9 @@ def keyword_judge(answer, expected_text, query, dimension):
 
 def run_one(q_item):
     qid = q_item['id']
-    query = q_item['query']
+    query = q_item.get('query') or q_item.get('question', '')
     expected = q_item.get('expected', '')
-    dimension = q_item.get('dimension', '')
+    dimension = q_item.get('dimension') or q_item.get('category', '')
     difficulty = q_item.get('difficulty', '')
     t0 = time.time()
     

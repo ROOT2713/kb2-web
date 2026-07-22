@@ -961,7 +961,8 @@ _STD_PATTERN = re.compile(
     r'|GDZW\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
     r'|STC[\w\-]+'
     r'|DB\d+[\w\-]*'
-    r'|[一-鿿]+〔\d+〕\d+号)'
+    r'|[一-鿿]+〔\d+〕\d+号)',
+    re.IGNORECASE,
 )
 
 
