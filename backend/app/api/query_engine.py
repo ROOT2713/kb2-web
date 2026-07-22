@@ -974,7 +974,7 @@ def _normalize_standard_keyword(raw: str) -> str:
     """规范化标准号关键词，统一空格和 GB/T 写法。"""
     kw = re.sub(r"\s+", " ", raw).strip()
     kw = re.sub(r"GB\s*/?\s*T", "GB/T", kw, flags=re.IGNORECASE)
-    kw = re.sub(r"GB\s+-?\s*T", "GB/T", kw, flags=re.IGNORECASE)
+    kw = re.sub(r"GB\s*-?\s*T", "GB/T", kw, flags=re.IGNORECASE)
     kw = re.sub(r"GB\s+T", "GB/T", kw, flags=re.IGNORECASE)
     kw = re.sub(r"T\s*/\s*EGAG", "T/EGAG", kw, flags=re.IGNORECASE)
     kw = re.sub(r"ISO\s*/\s*IEC", "ISO/IEC", kw, flags=re.IGNORECASE)
