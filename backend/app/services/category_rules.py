@@ -46,7 +46,7 @@ CATEGORIES = {
     "news":        "资讯",
     "supervision": "监理",
     "consulting":  "咨询",
-    "business":    "商务",
+    "business":    "商密",
 }
 
 ISOLATED_CATEGORIES = frozenset({"daily", "news"})
@@ -82,7 +82,7 @@ CATEGORY_REGEX_RULES = [
     (r'(软件造价|工程造价|投资估算)', "cost"),
     (r'(监理)', "supervision"),
     (r'(咨询)', "consulting"),
-    (r'(商务|合同|招标|投标|采购|报价)', "business"),
+    (r'(商务|合同|招标|投标|采购|报价|商密)', "business"),
     (r'(测评|评测|检测|评估|验收|测试报告|评估报告)', "evaluation"),
     (r'(检查项|检查要求|核查力度)', "evaluation"),
     (r'(新闻|资讯|报道|快讯|动态|周报|月报|趋势)', "news"),
@@ -116,7 +116,7 @@ SUBCATEGORY_RULES = [
     (r'等级|等保.*测评|等级保护|网络安全等级|安全文档|安全报告', "security", "等级报告/安全文档"),
     (r'密码|密评|商用密码|密码测评|密码应用', "security", "商业密码测评文档"),
     (r'验收|验收测评|软硬件.*验收|验收.*软硬件|工程.*验收', "evaluation", "验收测评文档"),
-    (r'商务|合同|招标|投标|采购|报价|商业', "business", "商务文档"),
+    (r'商务|合同|招标|投标|采购|报价|商业|商密', "business", "商密文档"),
     (r'模板|template|范本|格式|样式', "it", "模板文档"),
     (r'造价|取费|定额|预算|概算|决算|费用|费率', "cost", "造价文档"),
     (r'监理|supervision', "supervision", "监理文档"),
@@ -153,7 +153,7 @@ SUBCATEGORY_TO_CATEGORY = {
     "等级报告/安全文档":    "security",
     "商业密码测评文档":    "security",
     "验收测评文档":        "evaluation",
-    "商务文档":            "business",
+    "商密文档":            "business",
     "模板文档":            "it",
     "造价文档":            "cost",
     "监理文档":            "supervision",
