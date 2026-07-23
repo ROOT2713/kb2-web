@@ -73,8 +73,25 @@ def clean_page_artifacts(text: str) -> str:
     return text.strip()
 
 
+def _html_table_to_pipe(text: str) -> str:
+    """Convert HTML <table> elements to pipe-delimited markdown format."""
+    def _table_replacer(m):
+        table_html = m.group(0)
+        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, re.DOTALL | re.IGNORECASE)
+        lines = []
+        for row in rows:
+            cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, re.DOTALL | re.IGNORECASE)
+            if cells:
+                cell_texts = [re.sub(r'<[^>]+>', '', c).strip() for c in cells]
+                lines.append("| " + " | ".join(cell_texts) + " |")
+        return "\n".join(lines)
+    return re.sub(r'<table[^>]*>.*?</table>', _table_replacer, text, flags=re.DOTALL | re.IGNORECASE)
+
+
 def clean_html_residuals(text: str) -> str:
-    """去除HTML标签残留和HTML实体"""
+    """去除HTML标签残留和HTML实体。
+    对 MinerU 输出的 HTML 表格先转为管道格式保留单元格关系。"""
+    text = _html_table_to_pipe(text)
     text = _html_mod.unescape(text)
     text = re.sub(r'<br\s*/?>', '\n', text)
     text = re.sub(r'</?(div|span|p|table|tr|td|th|img|a)[^>]*>', '', text, flags=re.IGNORECASE)
