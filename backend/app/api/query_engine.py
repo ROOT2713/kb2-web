@@ -879,7 +879,10 @@ async def _build_search_context(
 
         # [P0.5] 跳过无来源归属的孤儿 chunk（旧 Hindsight 数据，metadata 不可恢复）
         # 策略：doc_id 不在 SQLite 中 → 用 metadata title 兜底 → 仍空则跳过
-        if doc_id not in title_map and not doc_id.startswith("_notag_"):
+        # ⚠️ D2-B 注入的 chunks（source:industry_fallback）跳过此检查 — 来自已验证的 fee docs
+        if any(_t == "source:industry_fallback" for _t in tags):
+            pass
+        elif doc_id not in title_map and not doc_id.startswith("_notag_"):
             meta_title = (r.get("metadata") or {}).get("title", "")
             if meta_title:
                 doc_name = meta_title
