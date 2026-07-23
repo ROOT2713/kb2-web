@@ -734,26 +734,24 @@ async def _build_search_context(
                 max_chunks=8,
                 fee_type_keywords=_fee_type_kw,
             )
-        # ── Fallback for v2 uploads (no parent_chunks): scan all_results for fee doc chunks ──
+        # ── Fallback for v2 uploads (no parent_chunks): do a targeted recall on fee docs ──
         if not _fee_chunks_to_inject and _all_fee_ids:
-            _fee_id_set = set(_all_fee_ids)
-            _v2_fee_chunks = []
-            for _r in all_results:
-                _did = None
-                for _t in _r.get("tags", []):
-                    if _t.startswith("doc_id:"):
-                        _did = _t[7:]
-                        break
-                if _did and _did in _fee_id_set:
-                    _v2_fee_chunks.append(_r)
-            if _v2_fee_chunks:
-                logger.info("[D2-B] Fallback: boosting %d v2 fee chunks from hindsight", len(_v2_fee_chunks))
-                for _chunk in reversed(_v2_fee_chunks):
-                    _dedup_key = f"{_chunk.get('doc_id')}:{hash(_chunk.get('text','')[:100])}"
-                    if _dedup_key in _injected_keys:
-                        continue
-                    _injected_keys.add(_dedup_key)
-                    all_results.insert(0, _chunk)
+            logger.info("[D2-B] Fallback: targeted recall on %d fee docs", len(_all_fee_ids))
+            try:
+                _v2_recall = await recall(
+                    q, limit=30, bank=bank,
+                    doc_ids=set(_all_fee_ids),
+                )
+                if _v2_recall:
+                    logger.info("[D2-B] Fallback recall returned %d chunks from fee docs", len(_v2_recall))
+                    for _chunk in reversed(_v2_recall):
+                        _dedup_key = f"{_chunk.get('doc_id')}:{hash(_chunk.get('text','')[:100])}"
+                        if _dedup_key in _injected_keys:
+                            continue
+                        _injected_keys.add(_dedup_key)
+                        all_results.insert(0, _chunk)
+            except Exception as e:
+                logger.warning("[D2-B] Fallback recall failed: %s", e)
         # Prepend in score-descending order, skip already-injected chunks
         for _chunk in reversed(_fee_chunks_to_inject):
             _dedup_key = f"{_chunk['doc_id']}:{hash(_chunk['text'][:100])}"
