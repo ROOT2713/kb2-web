@@ -328,9 +328,23 @@ async def _process_upload_task(
             uct = "\n\n".join(uc)
             if len(uct.strip()) > 500:
                 gc = []
+                buf = []  # buffer for short paragraphs (<200 chars) to merge
                 for p in uct.split("\n\n"):
-                    if p.strip():
-                        gc.append({"child": p[:12000], "parent": p[:12000], "child_index": 0, "parent_index": 0, "section_hint": ""})
+                    p_stripped = p.strip()
+                    if not p_stripped:
+                        continue
+                    if len(p_stripped) < 200:
+                        buf.append(p_stripped)
+                        continue
+                    # Long paragraph: flush buffer first, then add self
+                    if buf:
+                        merged = "\n".join(buf)
+                        gc.append({"child": merged[:12000], "parent": merged[:12000], "child_index": 0, "parent_index": 0, "section_hint": ""})
+                        buf = []
+                    gc.append({"child": p_stripped[:12000], "parent": p_stripped[:12000], "child_index": 0, "parent_index": 0, "section_hint": ""})
+                if buf:  # flush remaining short paragraphs
+                    merged = "\n".join(buf)
+                    gc.append({"child": merged[:12000], "parent": merged[:12000], "child_index": 0, "parent_index": 0, "section_hint": ""})
                 if gc:
                     mp = max(pc["parent_index"] for pc in pc_chunks) + 1
                     for i, g in enumerate(gc):
