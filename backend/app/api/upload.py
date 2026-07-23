@@ -280,7 +280,7 @@ async def _process_upload_task(
         db.close()
 
     _update_upload_task(task_id, progress=0.25, stage="chunking")
-    doc_title = Path(filename).stem or title.strip() or "Untitled"
+    doc_title = (title or "").strip() or Path(filename).stem or "Untitled"
     doc_category = category.strip() if category and category.strip() else ""
     if not doc_category or doc_category == "auto":
         from app.services.category_rules import infer_category
