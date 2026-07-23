@@ -734,24 +734,26 @@ async def _build_search_context(
                 max_chunks=8,
                 fee_type_keywords=_fee_type_kw,
             )
-        # ── Fallback for v2 uploads (no parent_chunks): do a targeted recall on fee docs ──
-        if not _fee_chunks_to_inject and _all_fee_ids:
-            logger.info("[D2-B] Fallback: targeted recall on %d fee docs", len(_all_fee_ids))
-            try:
-                _v2_recall = await recall(
-                    q, limit=30, bank=bank,
-                    doc_ids=set(_all_fee_ids),
-                )
-                if _v2_recall:
-                    logger.info("[D2-B] Fallback recall returned %d chunks from fee docs", len(_v2_recall))
-                    for _chunk in reversed(_v2_recall):
-                        _dedup_key = f"{_chunk.get('doc_id')}:{hash(_chunk.get('text','')[:100])}"
-                        if _dedup_key in _injected_keys:
-                            continue
-                        _injected_keys.add(_dedup_key)
-                        all_results.insert(0, _chunk)
-            except Exception as e:
-                logger.warning("[D2-B] Fallback recall failed: %s", e)
+        # ── Always also recall from hindsight for v2 uploads (no parent_chunks) ──
+        logger.info("[D2-B] Also doing hindsight recall for %d fee docs", len(_all_fee_ids))
+        try:
+            _v2_recall = await recall(
+                q, limit=30, bank=bank,
+                doc_ids=set(_all_fee_ids),
+            )
+            if _v2_recall:
+                _v2_new = 0
+                for _chunk in reversed(_v2_recall):
+                    _dedup_key = f"{_chunk.get('doc_id')}:{hash(_chunk.get('text','')[:100])}"
+                    if _dedup_key in _injected_keys:
+                        continue
+                    _injected_keys.add(_dedup_key)
+                    all_results.insert(0, _chunk)
+                    _v2_new += 1
+                if _v2_new:
+                    logger.info("[D2-B] Hindsight recall added %d new fee chunks", _v2_new)
+        except Exception as e:
+            logger.warning("[D2-B] Hindsight recall failed: %s", e)
         # Prepend in score-descending order, skip already-injected chunks
         for _chunk in reversed(_fee_chunks_to_inject):
             _dedup_key = f"{_chunk['doc_id']}:{hash(_chunk['text'][:100])}"
