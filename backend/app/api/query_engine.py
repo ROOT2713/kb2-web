@@ -731,7 +731,7 @@ async def _build_search_context(
             _fee_chunks_to_inject = find_fee_relevant_chunks(
                 _all_fee_ids,
                 amount_keywords=_amount_kw,
-                max_chunks=8,
+                max_chunks=16,
                 fee_type_keywords=_fee_type_kw,
             )
         # ── Always also recall from hindsight for v2 uploads (no parent_chunks) ──
@@ -739,7 +739,7 @@ async def _build_search_context(
         logger.info("[D2-B] Also doing hindsight recall for %d fee docs", len(_all_fee_ids))
         try:
             _v2_recall = await recall(
-                q, limit=30, bank=bank,
+                q, limit=40, bank=bank,
                 doc_ids=set(_all_fee_ids),
             )
             if _v2_recall:
