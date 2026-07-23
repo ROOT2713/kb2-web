@@ -775,11 +775,33 @@ async def _build_search_context(
                 })
         if _fee_chunks_to_inject:
             logger.info(
-                "[D2-B] Injected %d fee chunks (from %d docs), top score=%d",
+                "[D2-B] Injected %d fee chunks (from %d docs), top score=%s",
                 len(_fee_chunks_to_inject), len(_all_fee_ids),
-                _fee_chunks_to_inject[0]["score"] if _fee_chunks_to_inject else 0,
+                max(c["score"] for c in _fee_chunks_to_inject) if _fee_chunks_to_inject else 0,
             )
-        else:
+
+        # ── Boost chunks with actual rate data (numbers + %) to the very top ──
+        _rate_pattern = re.compile(r'\d[\d.,]*\s*%|\d[\d.,]*\s*万元|(\d[\d.]*)\s*元')
+        _fee_boosted = []
+        _fee_normal = []
+        for _ri, _r in enumerate(all_results):
+            _txt = _r.get("text", "") or ""
+            _is_rate = bool(_rate_pattern.search(_txt))
+            _is_fee_tag = any(
+                t.startswith("source:") and "fee" in t or "fallback" in t
+                for t in (_r.get("tags", []) or [])
+            )
+            if _is_rate and _is_fee_tag:
+                _fee_boosted.append(_ri)
+            elif _is_rate:
+                _fee_normal.append(_ri)
+        if _fee_boosted:
+            _promoted = [all_results[i] for i in _fee_boosted]
+            _rest = [r for i, r in enumerate(all_results) if i not in set(_fee_boosted + _fee_normal)]
+            _other_rates = [all_results[i] for i in _fee_normal]
+            all_results = _promoted + _other_rates + _rest
+            logger.info("[D2-B] Boosted %d rate-data chunks to top of results", len(_fee_boosted))
+        elif not _fee_chunks_to_inject and not _v2_recall:
             logger.info("[D2-B] No fee chunks found for query: %s", q[:60])
 
     # ── 清洗 + 过滤 + 去重合并 ──
