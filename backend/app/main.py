@@ -1,7 +1,20 @@
 """FastAPI application entry point."""
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+# ── 日志配置：确保所有子模块的 logger.info() 输出到 journalctl ──
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    force=True,  # 覆盖 uvicorn 的默认 logger 配置
+)
+# 将 uvicorn 自带的 acess/error logger 保持原有格式
+for _uv_name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+    _uv_l = logging.getLogger(_uv_name)
+    if not _uv_l.handlers:
+        _uv_l.setLevel(logging.INFO)
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

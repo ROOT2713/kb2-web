@@ -136,4 +136,50 @@ if __name__ == "__main__":
         if len(docs) > 10:
             print(f"  ... and {len(docs)-10} more")
     
+    elif action == "repair" and doc_id:
+        issues = scan_doc(db, doc_id)
+        if not issues:
+            print(f"No issues to repair for {doc_id[:30]}")
+            db.close()
+            sys.exit(0)
+        print(f"Repairing {len(issues)} issues for doc {doc_id[:30]}...")
+        fixed = 0
+        cur = db.execute(
+            "SELECT parent_idx, parent_text FROM parent_chunks WHERE doc_id=? ORDER BY parent_idx",
+            (doc_id,)
+        )
+        all_chunks = {r["parent_idx"]: r["parent_text"] for r in cur.fetchall()}
+        indices = sorted(all_chunks.keys())
+        delete_indices = set()
+        merge_ops = {}
+        for iss in issues:
+            if "table_title_no_content" in iss["clues"]:
+                pi = iss["parent_idx"]
+                next_idx = None
+                for idx in indices:
+                    if idx > pi:
+                        next_idx = idx
+                        break
+                if next_idx is not None:
+                    merge_ops.setdefault(next_idx, [])
+                    merge_ops[next_idx].append((pi, all_chunks[pi]))
+                    delete_indices.add(pi)
+                    fixed += 1
+        for target_idx, ops in merge_ops.items():
+            for src_idx, src_text in sorted(ops, reverse=True):
+                new_text = src_text + "\n" + all_chunks[target_idx]
+                db.execute(
+                    "UPDATE parent_chunks SET parent_text=? WHERE doc_id=? AND parent_idx=?",
+                    (new_text, doc_id, target_idx)
+                )
+        for di in sorted(delete_indices, reverse=True):
+            db.execute(
+                "DELETE FROM parent_chunks WHERE doc_id=? AND parent_idx=?",
+                (doc_id, di)
+            )
+        db.commit()
+        print(f"Fixed {fixed} table_title_no_content issues")
+        print(f"Deleted {len(delete_indices)} orphan title-only chunks")
+        print(f"NOTE: pgvector chunks remain unchanged — need re-index for full sync")
+    
     db.close()
