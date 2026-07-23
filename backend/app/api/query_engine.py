@@ -735,6 +735,7 @@ async def _build_search_context(
                 fee_type_keywords=_fee_type_kw,
             )
         # ── Always also recall from hindsight for v2 uploads (no parent_chunks) ──
+        _v2_recall = []
         logger.info("[D2-B] Also doing hindsight recall for %d fee docs", len(_all_fee_ids))
         try:
             _v2_recall = await recall(
@@ -754,7 +755,14 @@ async def _build_search_context(
                     logger.info("[D2-B] Hindsight recall added %d new fee chunks", _v2_new)
         except Exception as e:
             logger.warning("[D2-B] Hindsight recall failed: %s", e)
-        # Prepend in score-descending order, skip already-injected chunks
+        # Prepend in score-descending order — put hindsight recall (with actual data) first,
+        # then fee parent_chunks (may be only table headers) after.
+        for _chunk in reversed(_v2_recall):
+            _dedup_key = f"{_chunk.get('doc_id')}:{hash(_chunk.get('text','')[:100])}"
+            if _dedup_key in _injected_keys:
+                continue
+            _injected_keys.add(_dedup_key)
+            all_results.insert(0, _chunk)
         for _chunk in reversed(_fee_chunks_to_inject):
             _dedup_key = f"{_chunk['doc_id']}:{hash(_chunk['text'][:100])}"
             if _dedup_key in _injected_keys:
