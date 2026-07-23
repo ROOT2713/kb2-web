@@ -485,7 +485,7 @@ async def _process_upload_task(
         for batch_i, bs in enumerate(range(0, len(memory_items), BS)):
             batch = memory_items[bs:bs + BS]
             try:
-                retained += await hs.upsert(doc_id, batch, hs_bank, append=(batch_i > 0))
+                retained += await hs.upsert(doc_id, batch, hs_bank, append=(batch_i > 0), offset=bs)
             except Exception as e:
                 logger.error("indexing error: %s", e)
         invalidate_bm25_cache(bank)

@@ -269,7 +269,8 @@ class PgVectorStore:
         return meta
 
     async def _chunks_to_rows(
-        self, doc_id: str, chunks: List[Dict], bank: str, embeddings: List[np.ndarray]
+        self, doc_id: str, chunks: List[Dict], bank: str, embeddings: List[np.ndarray],
+        offset: int = 0,
     ) -> List[tuple]:
         """Convert chunks + embeddings to rows for bulk INSERT."""
         rows = []
@@ -279,7 +280,7 @@ class PgVectorStore:
             meta = await self._tags_to_metadata(tags)
             rows.append((
                 doc_id,
-                i,
+                offset + i,  # global chunk_index
                 bank,
                 text,
                 meta,
@@ -297,7 +298,7 @@ class PgVectorStore:
         return results
 
     # ── upsert ─────────────────────────────────────────────────
-    async def upsert(self, doc_id: str, chunks: List[Dict], bank: str, append: bool = False) -> int:
+    async def upsert(self, doc_id: str, chunks: List[Dict], bank: str, append: bool = False, offset: int = 0) -> int:
         """批量 INSERT vector_chunks (首次自动删旧，append=True 跳过删除)."""
         pool = await self._get_pool()
 
@@ -308,7 +309,7 @@ class PgVectorStore:
         ]
         embeddings = await self.get_embedding_batch(texts)
 
-        rows = await self._chunks_to_rows(doc_id, chunks, bank, embeddings)
+        rows = await self._chunks_to_rows(doc_id, chunks, bank, embeddings, offset=offset)
 
         async with pool.acquire() as conn:
             if not append:
