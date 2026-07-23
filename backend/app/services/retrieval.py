@@ -34,6 +34,7 @@ logger.setLevel(logging.INFO)
 _HARDCODED_BANKS = {
     "all":     {"name": "全部",     "hindsight_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general", "kb_checklist", "kb_template", "kb_咨询", "kb_xhs", "kb_project"], "prompt": "通用政务信息化知识库"},
     "industry": {"name": "信息化行业",
+                 "hindsight": "kb_industry",
                  "hindsight_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general", "kb_checklist", "kb_template"],
                  "prompt": "你是政务信息化行业专家。精通GB/GA/T/EGAG/GDZW等国家及团体标准，覆盖等保测评、密码应用、监理服务、立项咨询、验收测评、会议系统、安防工程、数据中心等领域。回答时注重条款引用、合规要求和行业实操经验。"},
     "personal": {"name": "个人资讯",
