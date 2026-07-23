@@ -2025,7 +2025,15 @@ def _assess_recall_confidence(
     # ── Level 1.5: 内容实质性检测 ──
     # 检测 top-k chunk 的文本是否包含实质性条款内容，
     # 而非仅引用/提及（如"按GB 50058的规定"但没有具体技术条款）
-    if source_count > 0:
+    # 费用类查询跳过 L1.5 gate（D2-B注入的表格数据不含"第X条/应符合"等模式但有实际数值）
+    _fee_q_check = any(kw in q for kw in [
+        "造价", "取费", "费用", "费率", "收费",
+        "验收测评", "验收评测", "检测费", "测评费", "评测费",
+        "审计费", "管理费", "设计费", "监理费", "招标",
+        "等保", "密评", "咨询费",
+        "商密", "商用密码", "密码应用",
+    ])
+    if source_count > 0 and not _fee_q_check:
         _all_chunk_texts = []
         for doc_fact_list in doc_facts.values():
             for fact in doc_fact_list:
