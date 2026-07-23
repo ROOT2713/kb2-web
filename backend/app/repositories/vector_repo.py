@@ -297,8 +297,8 @@ class PgVectorStore:
         return results
 
     # ── upsert ─────────────────────────────────────────────────
-    async def upsert(self, doc_id: str, chunks: List[Dict], bank: str) -> int:
-        """批量 INSERT vector_chunks (先删后插)."""
+    async def upsert(self, doc_id: str, chunks: List[Dict], bank: str, append: bool = False) -> int:
+        """批量 INSERT vector_chunks (首次自动删旧，append=True 跳过删除)."""
         pool = await self._get_pool()
 
         # Get embeddings for all chunks
@@ -311,11 +311,12 @@ class PgVectorStore:
         rows = await self._chunks_to_rows(doc_id, chunks, bank, embeddings)
 
         async with pool.acquire() as conn:
-            # Delete existing chunks for this doc+bank
-            await conn.execute(
-                "DELETE FROM vector_chunks WHERE doc_id = $1 AND bank = $2",
-                doc_id, bank,
-            )
+            if not append:
+                # 只在首次调用时删除旧chunks
+                await conn.execute(
+                    "DELETE FROM vector_chunks WHERE doc_id = $1 AND bank = $2",
+                    doc_id, bank,
+                )
             # Bulk insert
             await conn.executemany(
                 "INSERT INTO vector_chunks (doc_id, chunk_index, bank, content, metadata, embedding) "

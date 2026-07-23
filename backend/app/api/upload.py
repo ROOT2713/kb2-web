@@ -471,10 +471,10 @@ async def _process_upload_task(
         hs = get_vector_store()
         tc = sum(len(m.get("content", "")) for m in memory_items)
         BS = 10 if (tc > 500000 or any(len(m.get("content", "")) > 5000 for m in memory_items)) else 20
-        for bs in range(0, len(memory_items), BS):
+        for batch_i, bs in enumerate(range(0, len(memory_items), BS)):
             batch = memory_items[bs:bs + BS]
             try:
-                retained += await hs.upsert(doc_id, batch, hs_bank)
+                retained += await hs.upsert(doc_id, batch, hs_bank, append=(batch_i > 0))
             except Exception as e:
                 logger.error("indexing error: %s", e)
         invalidate_bm25_cache(bank)
