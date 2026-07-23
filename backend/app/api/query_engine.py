@@ -743,16 +743,7 @@ async def _build_search_context(
                 doc_ids=set(_all_fee_ids),
             )
             if _v2_recall:
-                _v2_new = 0
-                for _chunk in reversed(_v2_recall):
-                    _dedup_key = f"{_chunk.get('doc_id')}:{hash(_chunk.get('text','')[:100])}"
-                    if _dedup_key in _injected_keys:
-                        continue
-                    _injected_keys.add(_dedup_key)
-                    all_results.insert(0, _chunk)
-                    _v2_new += 1
-                if _v2_new:
-                    logger.info("[D2-B] Hindsight recall added %d new fee chunks", _v2_new)
+                logger.info("[D2-B] Hindsight recall returned %d chunks", len(_v2_recall))
         except Exception as e:
             logger.warning("[D2-B] Hindsight recall failed: %s", e)
         # Prepend in score-descending order — put fee parent_chunks first (table headers),
@@ -777,20 +768,36 @@ async def _build_search_context(
                     },
                 })
         for _chunk in reversed(_v2_recall):
-            _dedup_key = f"{_chunk.get('doc_id')}:{hash(_chunk.get('text','')[:100])}"
+            # Extract doc_id from the chunk's tags (recall() returns chunks without top-level doc_id)
+            _chunk_tags = _chunk.get("tags", [])
+            _chunk_doc_id = None
+            _chunk_title = None
+            for _t in _chunk_tags:
+                if _t.startswith("doc_id:"):
+                    _chunk_doc_id = _t[7:]
+                elif _t.startswith("title:"):
+                    _chunk_title = _t[6:]
+            if not _chunk_doc_id:
+                _chunk_doc_id = _chunk.get("metadata", {}).get("doc_id") or _chunk.get("document_id", "")
+            if not _chunk_title:
+                _chunk_title = _chunk.get("metadata", {}).get("title", "未知文档")
+            if not _chunk_doc_id:
+                logger.warning("[D2-B] skip v2_recall chunk without doc_id")
+                continue
+            _dedup_key = f"{_chunk_doc_id}:{hash(_chunk.get('text','')[:100])}"
             if _dedup_key in _injected_keys:
                 continue
             _injected_keys.add(_dedup_key)
             all_results.insert(0, {
-                    "text": _chunk["text"],
+                    "text": _chunk.get("text", ""),
                     "tags": [
-                        f"doc_id:{_chunk['doc_id']}",
-                        f"title:{_chunk['title']}",
+                        f"doc_id:{_chunk_doc_id}",
+                        f"title:{_chunk_title}",
                         "source:industry_fallback",
                     ],
                     "metadata": {
-                        "doc_id": _chunk["doc_id"],
-                        "title": _chunk["title"],
+                        "doc_id": _chunk_doc_id,
+                        "title": _chunk_title,
                         "source": "industry_fallback",
                     },
                 })

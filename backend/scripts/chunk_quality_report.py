@@ -29,15 +29,22 @@ from collections import Counter
 
 def boundary_breakage_rate(chunks: list) -> tuple[float, list]:
     """边界断裂率：chunk 不以句子结束符结尾的占比"""
-    sentence_enders = set(['。', '！', '？', '；', '\n', '.', '!', '?', '>', '】', '）', ')', '】'])
+    sentence_enders = set(['。', '！', '？', '；', '\n', '.', '!', '?', '>', '】', '）', ')', '】', '】', '」', '』', '…', '、'])
     broken = []
     for c in chunks:
         text = c.get("child", c.get("text", ""))
         if not text.strip():
             continue
-        last_char = text.rstrip()[-1] if text.rstrip() else ''
-        if last_char not in sentence_enders:
-            broken.append(text[-30:] if len(text) > 30 else text)
+        # 取原始文本（保留末尾符）检查是否以句子结束符结尾
+        raw_last = text.rstrip()
+        if not raw_last:
+            continue
+        last_char = raw_last[-1]
+        # 放宽检测：chunk 以 \n 结尾（段落边界）视为完整
+        if text.rstrip('\n') != text:
+            pass  # 以换行结尾表示有自然段落结束符，视为良好
+        elif last_char not in sentence_enders:
+            broken.append(text[-40:] if len(text) > 40 else text)
     rate = len(broken) / max(len(chunks), 1)
     return rate, broken[:10]  # 最多展示 10 个断裂样本
 
@@ -102,8 +109,12 @@ def title_match_rate(chunks: list) -> tuple[float, int, int]:
 
 
 def embedding_redundancy(chunks: list, expected_overlap_pct: float = 0.15) -> tuple[float, list]:
-    """embedding 冗余率：相邻 chunk 间实际重叠超出预期的比例"""
+    """embedding 冗余率：相邻 chunk 间实际重叠超出预期的比例
+    注意：短文本（全文 < 2×child_size）的 overlap 尾迹不计入异常"""
     anomalous = []
+    total_chars = sum(len(c.get("child", c.get("text", ""))) for c in chunks)
+    if total_chars < 1000:  # 短文本跳过冗余检测（尾迹是预期行为）
+        return 0.0, []
     for i in range(1, len(chunks)):
         prev = chunks[i-1].get("child", chunks[i-1].get("text", ""))
         curr = chunks[i].get("child", chunks[i].get("text", ""))
@@ -250,7 +261,7 @@ def load_from_db(limit: int = 5) -> list:
         doc_reports = []
         for doc in docs:
             parents = db.query(ParentChunk).filter(
-                ParentChunk.doc_id == doc.id
+                ParentChunk.doc_id == doc.doc_id
             ).order_by(ParentChunk.parent_idx).all()
             if not parents:
                 continue
@@ -261,9 +272,9 @@ def load_from_db(limit: int = 5) -> list:
                 child_size=settings.default_chunk_size,
                 parent_size=settings.default_parent_size,
                 overlap=settings.chunk_overlap,
-                doc_title=doc.title or doc.filename or f"doc_{doc.id}",
+                doc_title=doc.title or doc.filename or f"doc_{doc.doc_id}",
             )
-            title = f"{doc.title or doc.filename} ({doc.id})"
+            title = f"{doc.title or doc.filename} ({doc.doc_id})"
             report = generate_report(chunk_list, title=title)
             doc_reports.append(report)
 
