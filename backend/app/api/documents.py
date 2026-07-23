@@ -1157,7 +1157,7 @@ async def reparse_document(
         pc_chunks = parent_child_chunk(
             text,
             child_size=settings.default_chunk_size,
-            parent_size=settings.default_chunk_size * 4,
+            parent_size=settings.default_parent_size,
             overlap=settings.chunk_overlap,
             doc_title=doc_title,
         )

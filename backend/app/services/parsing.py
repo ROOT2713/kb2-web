@@ -185,7 +185,7 @@ async def mineru_parse_pdf(filename: str, content: bytes) -> str:
 
                 # Step 3: 轮询结果
                 poll_url = f"{mineru_base}/extract-results/batch/{batch_id}"
-                max_wait = 300
+                max_wait = 900
 
                 for _ in range(max_wait // 3):
                     await asyncio.sleep(3)

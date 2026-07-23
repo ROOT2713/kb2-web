@@ -301,6 +301,22 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
     if not section_texts:
         return []
 
+    # Build heading chain hints for parent context (e.g. "第三章/4.1 总则")
+    parent_titles_at_level = {}
+    for i, s in enumerate(section_texts):
+        if s["sec_num"] is not None:
+            depth = len(s["sec_num"])
+            parent_titles_at_level[depth] = s["title"]
+            for d in range(depth + 1, 10):
+                parent_titles_at_level.pop(d, None)
+            chain = []
+            for d in range(1, depth + 1):
+                if d in parent_titles_at_level:
+                    chain.append(parent_titles_at_level[d])
+            section_texts[i]["chain_hint"] = "/".join(chain)
+        else:
+            section_texts[i]["chain_hint"] = s["title"] or "前言"
+
     # Determine leaf (child) and parent sections
     # Strategy: sections with deeper sec_num (more dots) are children
     # Sections with shallower sec_num are parents
@@ -366,7 +382,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
                 continue
 
             # This is a child under this parent
-            section_hint = s["title"][:80] if s["title"] else parent_text[:80]
+            section_hint = s.get("chain_hint", s["title"])[:80] if s["title"] else parent_text[:80]
             # If child too small, merge into parent directly
             if len(parent_text) < min_child_size and len(section_texts) > 1:
                 # Merge with next section's parent
@@ -402,7 +418,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
         if is_leaf and len(group_indices) == 1:
             # Single leaf section: child = this section, parent = this section
             parent_text = s["text"]
-            section_hint = s["title"][:80] if s["title"] else parent_text[:80]
+            section_hint = s.get("chain_hint", s["title"])[:80] if s["title"] else parent_text[:80]
 
             results.append({
                 "child": _truncate_at_sentence_boundary(parent_text, 800),
@@ -416,11 +432,12 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
         else:
             # Parent section with children
             all_text = "\n\n".join(section_texts[j]["text"] for j in group_indices if section_texts[j]["text"].strip())
-            section_hint = s["title"][:80] if s["title"] else all_text[:80]
+            section_hint = s.get("chain_hint", s["title"])[:80] if s["title"] else all_text[:80]
 
             # Create child chunks from individual sections
             for j in group_indices:
                 child_text = section_texts[j]["text"]
+                child_hint = section_texts[j].get("chain_hint", section_hint)[:80]
                 if not child_text.strip():
                     continue
                 if len(child_text) < min_child_size:
@@ -441,7 +458,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
                             "parent": all_text[:max_parent_size],
                             "child_index": child_index,
                             "parent_index": parent_index,
-                            "section_hint": section_hint,
+                            "section_hint": child_hint,
                         })
                         child_index += 1
                 else:
@@ -450,7 +467,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
                         "parent": all_text[:max_parent_size],
                         "child_index": child_index,
                         "parent_index": parent_index,
-                        "section_hint": section_hint,
+                        "section_hint": child_hint,
                     })
                     child_index += 1
 
@@ -753,11 +770,13 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 8000
     for p_idx, parent_text in enumerate(parents):
         # CC 评审决策 4-A: doc_title 若提供则用文档标题，否则回退到父段落前 80 字符
         section_hint = doc_title.strip() if doc_title.strip() else parent_text[:80]
+        # 预处理：表格行边界 — 在 </tr> 后插换行，滑动窗口自然对齐到整行
+        parent_text = parent_text.replace('</tr>', '</tr>\n')
         # 按 child_size 滑动窗口切子块（子块可以跨段落边界）
         pos = 0
         while pos < len(parent_text):
             end = min(pos + child_size, len(parent_text))
-            # 在目标位置附近找最近的句子边界（中文：。！？；\n，英文：.!?）
+            # 在目标位置附近找最近的句子边界（中文：。！？；\\n，英文：.!?）
             if end < len(parent_text):
                 # 在 child_size ±20% 范围内找最近的句子结束符
                 search_start = max(pos + int(child_size * 0.8), pos + 1)
@@ -779,7 +798,8 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 8000
                     "section_hint": section_hint,
                 })
                 child_index += 1
-            pos += child_size - overlap  # 带重叠的滑动窗口
+            # 表格文档：按实际 end 步进（对齐 <tr>），否则标准滑窗
+            pos = max(end - overlap, pos + 1) if '<tr>' in parent_text else pos + child_size - overlap
             if pos >= len(parent_text):
                 break
 

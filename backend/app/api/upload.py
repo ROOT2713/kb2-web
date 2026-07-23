@@ -327,24 +327,21 @@ async def _process_upload_task(
                 uc.append(text[prev:])
             uct = "\n\n".join(uc)
             if len(uct.strip()) > 500:
+                # Use parent_child_chunk for proper sentence/table boundary handling
+                nearest_hint = pc_chunks[-1].get("section_hint", doc_title) if pc_chunks else doc_title
+                gc_dicts = parent_child_chunk(uct, child_size=settings.default_chunk_size,
+                                              parent_size=settings.default_parent_size,
+                                              overlap=settings.chunk_overlap,
+                                              doc_title=nearest_hint or doc_title)
                 gc = []
-                buf = []  # buffer for short paragraphs (<200 chars) to merge
-                for p in uct.split("\n\n"):
-                    p_stripped = p.strip()
-                    if not p_stripped:
-                        continue
-                    if len(p_stripped) < 200:
-                        buf.append(p_stripped)
-                        continue
-                    # Long paragraph: flush buffer first, then add self
-                    if buf:
-                        merged = "\n".join(buf)
-                        gc.append({"child": merged[:12000], "parent": merged[:12000], "child_index": 0, "parent_index": 0, "section_hint": ""})
-                        buf = []
-                    gc.append({"child": p_stripped[:12000], "parent": p_stripped[:12000], "child_index": 0, "parent_index": 0, "section_hint": ""})
-                if buf:  # flush remaining short paragraphs
-                    merged = "\n".join(buf)
-                    gc.append({"child": merged[:12000], "parent": merged[:12000], "child_index": 0, "parent_index": 0, "section_hint": ""})
+                for g in gc_dicts:
+                    gc.append({
+                        "child": g["child"],
+                        "parent": g["parent"],
+                        "child_index": g["child_index"],
+                        "parent_index": g["parent_index"],
+                        "section_hint": nearest_hint,
+                    })
                 if gc:
                     mp = max(pc["parent_index"] for pc in pc_chunks) + 1
                     for i, g in enumerate(gc):
@@ -357,7 +354,7 @@ async def _process_upload_task(
             doc_type = "excel_checklist"
         else:
             doc_type = "generic"
-            pc_chunks = parent_child_chunk(text, child_size=settings.default_chunk_size, parent_size=settings.default_chunk_size * 4, overlap=settings.chunk_overlap, doc_title=doc_title)
+            pc_chunks = parent_child_chunk(text, child_size=settings.default_chunk_size, parent_size=settings.default_parent_size, overlap=settings.chunk_overlap, doc_title=doc_title)
     try:
         tc = extract_table_chunks(text)
     except Exception:
