@@ -799,7 +799,9 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 8000
                 })
                 child_index += 1
             # 表格文档：按实际 end 步进（对齐 <tr>），否则标准滑窗
-            pos = max(end - overlap, pos + 1) if '<tr>' in parent_text else pos + child_size - overlap
+            # 仅当前 chunk 含表格内容时才用表模式，避免非表格段步进过短
+            chunk_has_tr = '<tr>' in parent_text[pos:end]
+            pos = end - overlap if chunk_has_tr else pos + child_size - overlap
             if pos >= len(parent_text):
                 break
 

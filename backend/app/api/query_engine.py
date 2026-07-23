@@ -755,16 +755,29 @@ async def _build_search_context(
                     logger.info("[D2-B] Hindsight recall added %d new fee chunks", _v2_new)
         except Exception as e:
             logger.warning("[D2-B] Hindsight recall failed: %s", e)
-        # Prepend in score-descending order — put hindsight recall (with actual data) first,
-        # then fee parent_chunks (may be only table headers) after.
-        for _chunk in reversed(_v2_recall):
-            _dedup_key = f"{_chunk.get('doc_id')}:{hash(_chunk.get('text','')[:100])}"
+        # Prepend in score-descending order — put fee parent_chunks first (table headers),
+        # then hindsight recall (with actual rate data) second so real numbers come AFTER headers
+        # and LLM sees data last in context.
+        for _chunk in reversed(_fee_chunks_to_inject):
+            _dedup_key = f"{_chunk['doc_id']}:{hash(_chunk['text'][:100])}"
             if _dedup_key in _injected_keys:
                 continue
             _injected_keys.add(_dedup_key)
-            all_results.insert(0, _chunk)
-        for _chunk in reversed(_fee_chunks_to_inject):
-            _dedup_key = f"{_chunk['doc_id']}:{hash(_chunk['text'][:100])}"
+            all_results.insert(0, {
+                    "text": _chunk["text"],
+                    "tags": [
+                        f"doc_id:{_chunk['doc_id']}",
+                        f"title:{_chunk['title']}",
+                        "source:industry_fallback",
+                    ],
+                    "metadata": {
+                        "doc_id": _chunk["doc_id"],
+                        "title": _chunk["title"],
+                        "source": "industry_fallback",
+                    },
+                })
+        for _chunk in reversed(_v2_recall):
+            _dedup_key = f"{_chunk.get('doc_id')}:{hash(_chunk.get('text','')[:100])}"
             if _dedup_key in _injected_keys:
                 continue
             _injected_keys.add(_dedup_key)
