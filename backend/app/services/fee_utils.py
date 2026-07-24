@@ -192,10 +192,17 @@ def find_fee_relevant_chunks(
             # (e.g. 验收测评), give extra points to chunks that mention it
             if fee_type_keywords:
                 for fk in fee_type_keywords:
-                    if fk in ptext:
-                        score += 4  # Bigger boost than generic fee keywords
+                    # Expand "等保" to also match "等级保护" in chunk text
+                    if fk == "等保":
+                        if "等保" in ptext or "等级保护" in ptext:
+                            score += 4
+                    else:
+                        if fk in ptext:
+                            score += 4  # Bigger boost than generic fee keywords
                 # Cross-type exclusion: if user asked "等保", penalize "验收测评" chunks
                 # These are distinct service types in cost guides and should not be conflated
+                # BUT: don't penalize if the chunk ALSO mentions the queried type
+                # (e.g. "等级保护测评服务(含差距测评、验收测评服务)" covers both)
                 _exclusion_map = {
                     "等保": ["验收测评", "验收评测"],
                     "验收测评": [],
@@ -203,6 +210,14 @@ def find_fee_relevant_chunks(
                 }
                 for fk in fee_type_keywords:
                     if fk in _exclusion_map:
+                        # Skip exclusion if chunk also mentions queried type
+                        _chunk_mentions_queried = False
+                        if fk == "等保":
+                            _chunk_mentions_queried = "等保" in ptext or "等级保护" in ptext
+                        else:
+                            _chunk_mentions_queried = fk in ptext
+                        if _chunk_mentions_queried:
+                            continue  # Don't penalize — chunk is about both types
                         for _excl_kw in _exclusion_map[fk]:
                             if _excl_kw in ptext:
                                 score -= 15  # Strong penalty — wrong fee type
