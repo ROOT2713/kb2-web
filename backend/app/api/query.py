@@ -435,6 +435,22 @@ async def query(
     # ── 审计日志（使用共用工具函数）──
     _write_audit_log(request, q, answer, sources, cache_hit=1 if cache_hit else 0, reject=reject["reject_type"] if reject else None)
 
+    # ── Query 日志（fire-and-forget，非侵入）──
+    try:
+        from app.services.query_logger import log_query
+        reject_type = (reject or {}).get("reject_type", "") if reject else ""
+        is_rejected = bool(reject_type)
+        log_query(
+            query_text=q, bank=bank,
+            answer_length=len(answer or ""),
+            source_count=len(sources) if isinstance(sources, list) else 0,
+            rejected=is_rejected,
+            rejection_reason=reject_type,
+            cache_hit=bool(cache_hit),
+        )
+    except Exception:
+        pass  # query logging must never break the query
+
     return result
 
 

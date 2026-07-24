@@ -10,6 +10,7 @@ from datetime import datetime
 BASE = "http://localhost:3027"
 TOKEN = None
 OUTPUT_FILE = None
+CI_MODE = False
 
 REJECT_KEYWORDS = ["未找到", "没有找到", "未收录", "未提供", "无法给出",
                    "未直接命中", "没有相关信息", "未涉及", "未能找到",
@@ -122,9 +123,12 @@ def run_one(q_item):
     }
 
 def main():
-    global OUTPUT_FILE
+    global OUTPUT_FILE, CI_MODE
+    CI_MODE = "--ci" in sys.argv
+    if CI_MODE:
+        sys.argv.remove("--ci")
     if len(sys.argv) < 2:
-        print("Usage: python3 kb2_66test_v3.py <questions.jsonl> [concurrency=3]", flush=True)
+        print("Usage: python3 kb2_66test_v3.py <questions.jsonl> [concurrency=3] [--ci]", flush=True)
         sys.exit(1)
     
     jsonl_path = sys.argv[1]
@@ -162,6 +166,8 @@ def main():
                 _save(results, t_start, time.time()-t_start, total, done=i+1, partial=True)
     
     _save(results, t_start, time.time()-t_start, total)
+    if CI_MODE:
+        pass  # _save's _ci_check handles exit code
 
 def _save(results, t_start, t_total, total, done=None, partial=False):
     by_status = {}
@@ -202,6 +208,35 @@ def _save(results, t_start, t_total, total, done=None, partial=False):
         print(f"  [partial] {done}/{total}, pass={rate:.0f}%", flush=True)
     elif not partial:
         print(f"\nSaved: {OUTPUT_FILE}", flush=True)
+        # ── CI mode: write history and check for regression ──
+        _ci_check(rate, total, pass_c)
+
+def _ci_check(rate, total, pass_c):
+    """CI mode: write evaluation history, exit with code 1 if pass rate dropped >5%."""
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    history_path = os.path.join(script_dir, "..", "..", ".evaluation_history.json")
+    hist = {}
+    if os.path.exists(history_path):
+        try:
+            with open(history_path) as f:
+                hist = json.load(f)
+        except Exception:
+            pass
+    prev_rate = hist.get("last_pass_rate", 100.0)
+    if prev_rate > rate and (prev_rate - rate) > 5:
+        print(f"\n❌ CI FAILED: pass rate dropped {prev_rate:.0f}% -> {rate:.0f}% (drop >5%)", flush=True)
+        sys.exit(1)
+    else:
+        print(f"\n✅ CI PASSED: pass rate {prev_rate:.0f}% -> {rate:.0f}%", flush=True)
+    # Write new history
+    json.dump({
+        "last_run": datetime.now().isoformat(),
+        "last_pass_rate": rate,
+        "total": total,
+        "pass_count": pass_c,
+        "prev_pass_rate": prev_rate,
+    }, open(history_path, "w"), ensure_ascii=False, indent=2)
 
 if __name__ == '__main__':
     main()

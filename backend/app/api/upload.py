@@ -213,6 +213,13 @@ async def _process_upload_task(
     source: str = "manual", published_date: str = None, geo_scope: str = None,
 ):
     _update_upload_task(task_id, status="processing", stage="parsing", progress=0.05)
+
+    # ── Checkpoint: mark job start for resume tracking ──
+    try:
+        from app.services.job_checkpoint import checkpoint_manager
+        _cp_job_id = checkpoint_manager.create(doc_id=task_id, filename=filename)
+    except Exception:
+        _cp_job_id = ""
     parsed_pub_date = None
     if published_date and isinstance(published_date, str):
         try:
@@ -453,6 +460,12 @@ async def _process_upload_task(
         db.rollback()
         logger.exception("save failed: %s", e)
         _update_upload_task(task_id, status="failed", stage="save", error_message=str(e))
+        try:
+            if _cp_job_id:
+                from app.services.job_checkpoint import checkpoint_manager
+                checkpoint_manager.mark_failed(_cp_job_id, str(e))
+        except Exception:
+            pass
         return
     finally:
         db.close()
@@ -542,6 +555,13 @@ async def _process_upload_task(
 
     result_dict = {"ok": True, "doc_id": doc_id, "title": doc_title, "category": doc_category, "filename": filename, "chunks": retained, "total_chars": len(text), "preview": text[:200] + ("..." if len(text) > 200 else ""), "quality": {"score": quality["score"], "issues": quality["issues"], "needs_confirm": quality["score"] < 80}, "integrity": integrity, "doc_type": doc_type, "kg_indexed": True}
     _update_upload_task(task_id, status="done", progress=1.0, stage="complete", result_doc_id=doc_id, result=json.dumps(result_dict, ensure_ascii=False))
+    # ── Checkpoint: mark job completed ──
+    try:
+        if _cp_job_id:
+            from app.services.job_checkpoint import checkpoint_manager
+            checkpoint_manager.mark_completed(_cp_job_id)
+    except Exception:
+        pass
     logger.info("[upload] task %s complete: doc=%s", task_id[:8], doc_id[:8])
 
 

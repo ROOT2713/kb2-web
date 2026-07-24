@@ -36,3 +36,22 @@ def init_db():
     import app.models.audit        # noqa: F401 — AuditLog
 
     Base.metadata.create_all(bind=engine)
+
+    # ── Query log table (raw SQL, not ORM) ──
+    with engine.connect() as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS query_log ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  query_text TEXT,"
+            "  bank TEXT DEFAULT '',"
+            "  timestamp TEXT,"
+            "  answer_length INTEGER DEFAULT 0,"
+            "  source_count INTEGER DEFAULT 0,"
+            "  rejected INTEGER DEFAULT 0,"
+            "  rejection_reason TEXT DEFAULT '',"
+            "  latency_ms INTEGER DEFAULT 0,"
+            "  cache_hit INTEGER DEFAULT 0,"
+            "  concept_used INTEGER DEFAULT 0"
+            ")"
+        )
+        conn.commit()

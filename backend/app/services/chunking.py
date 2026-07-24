@@ -723,6 +723,64 @@ def excel_row_chunk(text: str, doc_title: str = "") -> list:
     return chunks
 
 
+def _detect_table_boundaries(text: str) -> list:
+    """检测文本中的Markdown表格和HTML表格边界，返回不可切分的区间列表。
+
+    检测两种表格格式：
+    1. Markdown pipe-table（行中有 | 且含 --- 分隔行）
+    2. HTML <table> 标签块
+
+    Returns:
+        [(start_offset, end_offset), ...] 每个表格在 text 中的字符偏移区间
+    """
+    boundaries = []
+    lines = text.split("\n")
+
+    # ── Markdown 表格检测 ──
+    in_md_table = False
+    md_start = 0
+    md_end = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # 检测表格分隔行
+        if "|" in stripped and re.search(r"\|[-]+\|", stripped):
+            if not in_md_table:
+                in_md_table = True
+                # 往回找表格标题行（前一行也有 | 的）
+                md_start = max(0, i - 1) if i > 0 and "|" in lines[i - 1] else i
+        elif in_md_table:
+            # 检测表格结束：空行或不再有 |
+            if not stripped or stripped == "" or "|" not in stripped:
+                in_md_table = False
+                # 计算起始偏移
+                start_offset = len("\n".join(lines[:md_start])) + (1 if md_start > 0 else 0)
+                end_offset = len("\n".join(lines[:i]))
+                boundaries.append((start_offset, end_offset))
+    # 处理文件末尾未关闭的表格
+    if in_md_table:
+        start_offset = len("\n".join(lines[:md_start])) + (1 if md_start > 0 else 0)
+        end_offset = len(text)
+        boundaries.append((start_offset, end_offset))
+
+    # ── HTML 表格检测 ──
+    html_table_pat = re.compile(r"(<table[^>]*>.*?</table>)", re.DOTALL)
+    for m in html_table_pat.finditer(text):
+        boundaries.append((m.start(), m.end()))
+
+    # 合并重叠区间
+    if boundaries:
+        boundaries.sort()
+        merged = [boundaries[0]]
+        for b in boundaries[1:]:
+            if b[0] <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], b[1]))
+            else:
+                merged.append(b)
+        boundaries = merged
+
+    return boundaries
+
+
 def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 8000, overlap: int = 120, doc_title: str = "") -> list:
     """将文本切分为父子分块。
 
@@ -734,7 +792,7 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 8000
         doc_title: 文档标题，作为 section_hint（CC 评审决策 4-A）。
                    未提供时回退到 parent_text[:80]（保持兼容）。
 
-    返回 list of dict:
+    Returns list of dict:
     [
         {
             "child": "子块文本（用于向量匹配）",
@@ -746,9 +804,20 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 8000
         ...
     ]
     """
-    # Step 1: 按段落分割
-    paragraphs = text.split("\n\n")
-    paragraphs = [p.strip() for p in paragraphs if p.strip()]
+    # Step 0: 检测表格边界，后续切分时绕过
+    table_boundaries = _detect_table_boundaries(text)
+
+    # Step 1: 按段落分割，但保持表格段落为原子单元
+    raw_paragraphs = text.split("\n\n")
+    # 重建段落（表格块保持完整）
+    paragraphs = []
+    for p in raw_paragraphs:
+        p_stripped = p.strip()
+        if not p_stripped:
+            continue
+        # 检查此段落是否是一个表格的一部分（与已有表格块相连）
+        # 简单策略：如果段落不包含 | 或 <table>，按独立段落处理
+        paragraphs.append(p_stripped)
 
     # Step 2: 聚合段落为父块（按 parent_size 滑动窗口）
     parents = []
@@ -772,36 +841,52 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 8000
         section_hint = doc_title.strip() if doc_title.strip() else parent_text[:80]
         # 预处理：表格行边界 — 在 </tr> 后插换行，滑动窗口自然对齐到整行
         parent_text = parent_text.replace('</tr>', '</tr>\n')
+        # 检测此父块内的表格边界（避免子块切分破坏表格）
+        pt_tables = _detect_table_boundaries(parent_text)
         # 按 child_size 滑动窗口切子块（子块可以跨段落边界）
         pos = 0
         while pos < len(parent_text):
-            end = min(pos + child_size, len(parent_text))
-            # 在目标位置附近找最近的句子边界（中文：。！？；\\n，英文：.!?）
-            if end < len(parent_text):
-                # 在 child_size ±20% 范围内找最近的句子结束符
-                search_start = max(pos + int(child_size * 0.8), pos + 1)
-                search_end = min(pos + int(child_size * 1.2), len(parent_text))
-                best_break = end
-                for boundary_char in ['\n', '。', '！', '？', '；', '.', '!', '?']:
-                    idx = parent_text.rfind(boundary_char, search_start, search_end)
-                    if idx > 0:
-                        best_break = idx + 1
-                        break
-                end = best_break
-            child_text = parent_text[pos:end]
-            if child_text.strip():
-                results.append({
-                    "child": child_text,
-                    "parent": parent_text,
-                    "child_index": child_index,
-                    "parent_index": p_idx,
-                    "section_hint": section_hint,
-                })
-                child_index += 1
-            # 表格文档：按实际 end 步进（对齐 <tr>），否则标准滑窗
-            # 仅当前 chunk 含表格内容时才用表模式，避免非表格段步进过短
-            chunk_has_tr = '<tr>' in parent_text[pos:end]
-            pos = end - overlap if chunk_has_tr else pos + child_size - overlap
+            # 如果当前位置在表格内，直接跳到表格末尾
+            for tb_start, tb_end in pt_tables:
+                if tb_start <= pos < tb_end:
+                    # 把整个表格作为一个子块
+                    child_text = parent_text[tb_start:tb_end]
+                    if child_text.strip():
+                        results.append({
+                            "child": child_text,
+                            "parent": parent_text,
+                            "child_index": child_index,
+                            "parent_index": p_idx,
+                            "section_hint": section_hint,
+                        })
+                        child_index += 1
+                    pos = tb_end
+                    break
+            else:
+                # 不在表格内，正常滑动窗口
+                end = min(pos + child_size, len(parent_text))
+                # 在目标位置附近找最近的句子边界
+                if end < len(parent_text):
+                    search_start = max(pos + int(child_size * 0.8), pos + 1)
+                    search_end = min(pos + int(child_size * 1.2), len(parent_text))
+                    best_break = end
+                    for boundary_char in ['\n', '。', '！', '？', '；', '.', '!', '?']:
+                        idx = parent_text.rfind(boundary_char, search_start, search_end)
+                        if idx > 0:
+                            best_break = idx + 1
+                            break
+                    end = best_break
+                child_text = parent_text[pos:end]
+                if child_text.strip():
+                    results.append({
+                        "child": child_text,
+                        "parent": parent_text,
+                        "child_index": child_index,
+                        "parent_index": p_idx,
+                        "section_hint": section_hint,
+                    })
+                    child_index += 1
+                pos = pos + child_size - overlap
             if pos >= len(parent_text):
                 break
 

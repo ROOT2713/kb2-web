@@ -1,0 +1,39 @@
+name: Evaluation Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - "v3.0-quality-foundation"
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install requests python-dotenv
+
+      - name: Run evaluation suite
+        env:
+          API_BASE: ${{ secrets.API_BASE || 'http://localhost:3027' }}
+        run: |
+          python3 backend/scripts/kb2_66test_v3.py backend/scripts/66_questions_v5.jsonl 1 --ci 2>&1
+
+      - name: Store results
+        if: always()
+        run: |
+          if [ -f .evaluation_history.json ]; then
+            cp .evaluation_history.json evaluation_history.json
+          fi
+          echo "Results stored"

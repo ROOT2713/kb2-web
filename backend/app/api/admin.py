@@ -512,3 +512,66 @@ async def get_categories():
     # Any remaining
     result.extend(groups.values())
     return result
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: GET /queries — recent query log
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/queries")
+async def get_queries(
+    limit: int = Query(100, ge=1, le=1000),
+    rejected: bool = None,
+    bank: str = None,
+    since: str = None,
+):
+    """Return recent query log entries."""
+    from app.services.query_logger import get_recent_queries
+    return get_recent_queries(limit=limit, rejected=rejected, bank=bank, since=since)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: GET /query-stats — query statistics
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/query-stats")
+async def get_query_stats():
+    """Return today's query statistics (total, rejection rate, latency)."""
+    from app.services.query_logger import get_query_stats
+    return get_query_stats()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: GET /checkpoints — list all checkpoints
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/checkpoints")
+async def list_checkpoints():
+    """Return all ingestion checkpoints."""
+    from app.services.job_checkpoint import checkpoint_manager
+    return {"checkpoints": checkpoint_manager.list_all()}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: GET /checkpoints/stuck — list stuck jobs
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/checkpoints/stuck")
+async def list_stuck_checkpoints(timeout: int = Query(30, ge=5, le=120)):
+    """Return checkpoints that haven't been updated in N minutes (likely crashed)."""
+    from app.services.job_checkpoint import checkpoint_manager
+    return {"stuck": checkpoint_manager.list_stuck_jobs(timeout_minutes=timeout)}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: POST /checkpoints/{job_id}/retry — retry a failed checkpoint
+# ═══════════════════════════════════════════════════════════════════
+
+@router.post("/checkpoints/{job_id}/retry")
+async def retry_checkpoint(job_id: str):
+    """Mark a failed checkpoint as ready for retry."""
+    from app.services.job_checkpoint import checkpoint_manager
+    ok = checkpoint_manager.reset_for_retry(job_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Checkpoint {job_id} not found")
+    return {"ok": True, "job_id": job_id}
