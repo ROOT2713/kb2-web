@@ -78,7 +78,7 @@ def get_recent_queries(limit: int = 100, rejected: bool = None,
             sql = f"SELECT * FROM query_log WHERE {where} ORDER BY id DESC LIMIT :lim"
             params["lim"] = limit
             rows = db.execute(text(sql), params).fetchall()
-            columns = [desc[0] for desc in db.description]
+            columns = rows[0]._mapping.keys() if rows else []
             return [dict(zip(columns, row)) for row in rows]
         finally:
             db.close()

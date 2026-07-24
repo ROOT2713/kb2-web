@@ -131,7 +131,7 @@ class CheckpointManager:
                 ).fetchone()
                 if not row:
                     return {}
-                columns = [desc[0] for desc in db.description]
+                columns = row._mapping.keys() if row else []
                 result = dict(zip(columns, row))
                 if result.get("step_data"):
                     try:
