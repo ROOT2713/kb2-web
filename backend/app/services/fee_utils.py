@@ -231,8 +231,25 @@ def find_fee_relevant_chunks(
         # Sort by score descending, then by parent_idx (within same score)
         results.sort(key=lambda r: (-r["score"], r["parent_idx"]))
         
-        # Take top N
-        top = results[:max_chunks]
+        # ── Per-doc fairness: ensure at least 1 chunk from each doc ──
+        # Prevents a single doc (e.g. 东莞) from crowding out others (e.g. 佛山)
+        # Phase 1: reserve 1 top chunk per doc
+        top = []
+        reserved_ids = set()
+        for r in results:
+            if r["doc_id"] not in reserved_ids:
+                top.append(r)
+                reserved_ids.add(r["doc_id"])
+                if len(top) >= max_chunks:
+                    break
+        
+        # Phase 2: fill remaining slots with next-best chunks (round-robin by remaining capacity)
+        if len(top) < max_chunks:
+            remaining_capacity = max_chunks - len(top)
+            # Flat top-N from remaining unselected chunks
+            unselected = [r for r in results if r["doc_id"] in reserved_ids and r not in top]
+            unselected_sorted = sorted(unselected, key=lambda r: (-r["score"], r["parent_idx"]))
+            top.extend(unselected_sorted[:remaining_capacity])
         
         if top:
             logger.info(
