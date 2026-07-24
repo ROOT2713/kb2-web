@@ -1441,6 +1441,7 @@ async def _generate_answer(
     _tier_extra: list,
     title_map: dict,
     kg_context_text: str = "",
+    ctx: dict = None,
 ) -> dict:
     """
     生成LLM答案 — 构建上下文 + 组装prompt + LLM调用 + 后处理。
@@ -1699,6 +1700,15 @@ async def _generate_answer(
             + "\n\n---\n\n"
             + context
         )
+
+    # ── Wiki 结构化知识注入（高于 RAG chunks，与速查卡同级）──
+    if ctx and ctx.get("wiki_context") and ctx.get("wiki_context", "").strip():
+        context = (
+            ctx["wiki_context"]
+            + "\n\n---\n\n"
+            + context
+        )
+        logger.info("[Wiki] Injected structured knowledge block into prompt context (has_wiki=True)")
 
     # ── C2 速查卡 注入（最顶层，让 LLM 先读凝练事实） ──
     if core_claims_context:

@@ -56,6 +56,11 @@ const router = createRouter({
       component: () => import('@/views/WikiView.vue'),
     },
     {
+      path: '/wiki-entries',
+      name: 'wikiEntries',
+      component: () => import('@/views/WikiEntryView.vue'),
+    },
+    {
       path: '/extract',
       name: 'extract',
       component: () => import('@/views/ExtractView.vue'),

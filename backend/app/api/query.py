@@ -360,6 +360,69 @@ async def query(
         except Exception as e:
             logger.warning("KG traversal failed: %s", e)
 
+    # ── Wiki 结构化知识检索（补充 RAG，在置信度评估前注入）──
+    _wiki_injected = []
+    try:
+        from app.services.wiki_service import retrieve_for_query as _wiki_retrieve
+        _wiki_injected = _wiki_retrieve(q)
+    except Exception as e:
+        logger.warning("[Wiki] retrieve failed: %s", e)
+    if _wiki_injected:
+        logger.info("[Wiki] Retrieved %d relevant entries for: %s", len(_wiki_injected), q[:40])
+        _wiki_parts = []
+        for _we in _wiki_injected:
+            _content_text = _we.get("summary", "") or ""
+            _content_obj = _we.get("content", {})
+            if isinstance(_content_obj, str):
+                try:
+                    _content_obj = json.loads(_content_obj)
+                except (json.JSONDecodeError, TypeError):
+                    _content_obj = {}
+            _sc = _content_obj if isinstance(_content_obj, dict) else {}
+            _entry_parts = [f"【标准条目】{_we['title']}（{_we['standard_no']}）"]
+            if _content_text:
+                _entry_parts.append(f"摘要：{_content_text}")
+            if _sc.get("scope"):
+                _entry_parts.append(f"适用范围：{_sc['scope']}")
+            if _sc.get("key_clauses"):
+                _entry_parts.append(f"核心条款：{_sc['key_clauses']}")
+            _wiki_parts.append("\n".join(_entry_parts))
+            logger.info("[Wiki] Injected entry %d: %s (%d chars total)",
+                        _we['id'], _we['title'], sum(len(p) for p in _entry_parts))
+
+        # Inject as a structured knowledge block in the prompt context
+        # Use a dedicated key that the prompt template picks up
+        _wiki_block = (
+            "【结构化知识 — 以下条目来自Wiki知识库，属于高信源结构化条目，与RAG来源文档同等重要】\n"
+            + "\n\n".join(_wiki_parts)
+        )
+        ctx["wiki_context"] = _wiki_block
+        ctx["has_wiki"] = True
+
+        # Also inject into doc_facts for source attribution (single string per entry)
+        for _we in _wiki_injected:
+            _wid = f"__wiki_{_we['id']}"
+            _content_text = _we.get("summary", "") or ""
+            _content_obj = _we.get("content", {})
+            if isinstance(_content_obj, str):
+                try:
+                    _content_obj = json.loads(_content_obj)
+                except (json.JSONDecodeError, TypeError):
+                    _content_obj = {}
+            _sc = _content_obj if isinstance(_content_obj, dict) else {}
+            _structured = (
+                f"【标准条目】{_we['title']}（{_we['standard_no']}）\n"
+                f"摘要：{_content_text}\n"
+            )
+            if _sc.get("scope"):
+                _structured += f"适用范围：{_sc['scope']}\n"
+            if _sc.get("key_clauses"):
+                _structured += f"核心条款：{_sc['key_clauses']}\n"
+            _entry_name = _we['title']
+            if _we.get("standard_no"):
+                _entry_name += f"（{_we['standard_no']}）"
+            ctx["doc_facts"][_wid] = [(_structured, _entry_name, _structured[:3000], None)]
+
     # ── Confidence Gate (L1+L2): 召回置信度评估 — 三级门控 ──
     reject = _assess_recall_confidence(ctx, q, query_keywords, session_doc_ids, _is_multi_turn)
     if reject:
@@ -385,6 +448,7 @@ async def query(
         _tier_extra=ctx["_tier_extra"],
         title_map=ctx["title_map"],
         kg_context_text=kg_context_text,
+        ctx=ctx,
     )
 
     answer = gen["answer"]
