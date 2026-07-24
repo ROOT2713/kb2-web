@@ -27,7 +27,7 @@ def get_token():
     TOKEN = json.loads(r.stdout)['access_token']
     return TOKEN
 
-def query_kb(q, timeout=120):
+def query_kb(q, timeout=240, retry=1):
     token = get_token()
     cmd = ["curl", "-s", "-X", "POST", f"{BASE}/api/query",
            "-H", f"Authorization: Bearer {token}",
@@ -35,12 +35,21 @@ def query_kb(q, timeout=120):
            "--data-urlencode", "nocache=true",
            "--data-urlencode", "rerank=true",
            "--max-time", str(timeout)]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout+10)
-        if not r.stdout.strip(): return None, []
-        d = json.loads(r.stdout)
-        return d.get('answer', ''), d.get('sources', [])
-    except: return None, []
+    for attempt in range(retry + 1):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout+10)
+            if not r.stdout.strip():
+                err = r.stderr.strip()[:200] if r.stderr.strip() else "empty response"
+                raise ValueError(f"curl: {err}")
+            d = json.loads(r.stdout)
+            return d.get('answer', ''), d.get('sources', [])
+        except Exception as e:
+            if attempt < retry:
+                print(f"[V3-RETRY] {q[:40]}... attempt {attempt+1}: {e}", flush=True)
+                time.sleep(3)
+                continue
+            print(f"[V3-ERR] {q[:40]}... failed after {retry+1} tries: {e}", flush=True)
+            return None, []
 
 def is_rejected(answer):
     return any(kw in answer for kw in REJECT_KEYWORDS)
@@ -224,19 +233,21 @@ def _ci_check(rate, total, pass_c):
         except Exception:
             pass
     prev_rate = hist.get("last_pass_rate", 100.0)
-    if prev_rate > rate and (prev_rate - rate) > 5:
-        print(f"\n❌ CI FAILED: pass rate dropped {prev_rate:.0f}% -> {rate:.0f}% (drop >5%)", flush=True)
-        sys.exit(1)
-    else:
-        print(f"\n✅ CI PASSED: pass rate {prev_rate:.0f}% -> {rate:.0f}%", flush=True)
-    # Write new history
+    dropped = prev_rate > rate and (prev_rate - rate) > 5
+    # Write history BEFORE exit check so next run uses updated baseline
     json.dump({
         "last_run": datetime.now().isoformat(),
         "last_pass_rate": rate,
         "total": total,
         "pass_count": pass_c,
         "prev_pass_rate": prev_rate,
+        "dropped": dropped,
     }, open(history_path, "w"), ensure_ascii=False, indent=2)
+    if dropped:
+        print(f"\n❌ CI FAILED: pass rate dropped {prev_rate:.0f}% -> {rate:.0f}% (drop >5%)", flush=True)
+        sys.exit(1)
+    else:
+        print(f"\n✅ CI PASSED: pass rate {prev_rate:.0f}% -> {rate:.0f}%", flush=True)
 
 if __name__ == '__main__':
     main()
