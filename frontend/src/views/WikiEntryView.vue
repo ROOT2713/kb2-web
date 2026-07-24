@@ -92,15 +92,16 @@
         </div>
 
         <div v-if="authStore.isAdmin && selectedEntry" class="admin-row">
+          <button @click="editEntry()" class="btn-secondary btn-sm" style="margin-right:0.5rem">编辑</button>
           <button @click="deleteEntry(selectedEntry.id)" class="btn-danger btn-sm">删除</button>
         </div>
       </div>
     </div>
 
-    <!-- Create form -->
-    <div v-if="showCreate" class="modal-overlay" @click.self="showCreate = false">
+    <!-- Create/Edit form -->
+    <div v-if="showCreate" class="modal-overlay" @click.self="showCreate = false; editingId = null">
       <div class="modal-card">
-        <h2>新建 Wiki 条目</h2>
+        <h2>{{ editingId ? '编辑 Wiki 条目' : '新建 Wiki 条目' }}</h2>
         <div class="form-row">
           <label>标题 *</label>
           <input v-model="form.title" type="text" class="form-input" />
@@ -132,8 +133,9 @@
           <textarea v-model="form.key_clauses" class="form-input" rows="4"></textarea>
         </div>
         <div class="form-actions">
-          <button @click="submitCreate" class="btn-primary" :disabled="!form.title.trim()">创建</button>
-          <button @click="showCreate = false" class="btn-secondary">取消</button>
+          <button @click="editingId ? submitUpdate() : submitCreate()" class="btn-primary"
+                  :disabled="!form.title.trim()">{{ editingId ? '保存' : '创建' }}</button>
+          <button @click="showCreate = false; editingId = null" class="btn-secondary">取消</button>
         </div>
       </div>
     </div>
@@ -173,6 +175,7 @@ const error = ref('')
 const searchQuery = ref('')
 const filterCategory = ref('')
 const showCreate = ref(false)
+const editingId = ref<number | null>(null)
 
 const form = ref({
   title: '', standard_no: '', category: 'standard',
@@ -240,6 +243,7 @@ async function submitCreate() {
       importance: 5,
     })
     showCreate.value = false
+    editingId.value = null
     form.value = { title: '', standard_no: '', category: 'standard', summary: '', scope: '', key_clauses: '' }
     doSearch()
   } catch (e: unknown) {
@@ -257,6 +261,52 @@ async function deleteEntry(id: number) {
     doSearch()
   } catch (e: unknown) {
     error.value = (e as Error).message || '删除失败'
+  }
+}
+
+function editEntry() {
+  if (!selectedEntry.value) return
+  editingId.value = selectedEntry.value.id
+  const c = selectedEntry.value.content || {}
+  form.value = {
+    title: selectedEntry.value.title,
+    standard_no: selectedEntry.value.standard_no || '',
+    category: selectedEntry.value.category || 'standard',
+    summary: selectedEntry.value.summary || '',
+    scope: (c as Record<string, string>).scope || '',
+    key_clauses: (c as Record<string, string>).key_clauses || '',
+  }
+  showCreate.value = true
+}
+
+async function submitUpdate() {
+  if (!editingId.value || !form.value.title.trim()) return
+  loading.value = true
+  try {
+    const content: Record<string, string> = {}
+    if (form.value.scope) content.scope = form.value.scope
+    if (form.value.key_clauses) content.key_clauses = form.value.key_clauses
+    await api.put(`/wiki/entry/${editingId.value}`, {
+      title: form.value.title,
+      standard_no: form.value.standard_no,
+      category: form.value.category,
+      summary: form.value.summary || form.value.title,
+      content,
+    })
+    showCreate.value = false
+    editingId.value = null
+    form.value = { title: '', standard_no: '', category: 'standard', summary: '', scope: '', key_clauses: '' }
+    // 刷新详情
+    if (selectedEntry.value) {
+      const { data } = await api.get(`/wiki/entry/${selectedEntry.value.id}`)
+      selectedEntry.value = data
+      selectedContent.value = (data.content || {}) as Record<string, string>
+    }
+    doSearch()
+  } catch (e: unknown) {
+    error.value = (e as Error).message || '更新失败'
+  } finally {
+    loading.value = false
   }
 }
 </script>

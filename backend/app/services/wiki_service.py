@@ -223,6 +223,37 @@ def search_entries_count(
         db.close()
 
 
+def list_entries(
+    limit: int = 50,
+    offset: int = 0,
+    status: str = "",
+) -> list:
+    """List all wiki entries with pagination."""
+    return search_entries(
+        query="", limit=limit, offset=offset, status=status,
+    )
+
+
+def list_entries_count(status: str = "") -> int:
+    """Count all wiki entries."""
+    conditions = []
+    params = {}
+    if status:
+        conditions.append("status = :status")
+        params["status"] = status
+    where = " AND ".join(conditions) if conditions else "1=1"
+    db = SessionLocal()
+    try:
+        return db.execute(sa_text(
+            f"SELECT COUNT(*) FROM wiki_entries WHERE {where}"
+        ), params).scalar()
+    except Exception as e:
+        logger.error("[Wiki] list_entries_count failed: %s", e)
+        return 0
+    finally:
+        db.close()
+
+
 def list_categories() -> list:
     """Return distinct (category, subcategory, count) groups."""
     db = SessionLocal()

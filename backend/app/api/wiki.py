@@ -63,6 +63,18 @@ class RelationCreate(BaseModel):
 # ── Public endpoints ──
 
 
+@router.get("/wiki/entries")
+async def wiki_list_entries(
+    status: str = Query("", description="状态过滤"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """列出所有 Wiki 条目（分页）"""
+    items = wiki_service.list_entries(limit=limit, offset=offset, status=status)
+    total = wiki_service.list_entries_count(status=status)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
 @router.get("/wiki/search")
 async def wiki_search(
     q: str = Query("", description="搜索关键词"),
