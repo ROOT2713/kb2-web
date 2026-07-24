@@ -9,6 +9,8 @@ import logging
 import time
 from datetime import datetime, timezone
 
+from sqlalchemy import text
+
 from app.models.database import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -29,24 +31,24 @@ def log_query(query_text: str, bank: str, answer_length: int,
         db = SessionLocal()
         try:
             db.execute(
-                "INSERT INTO query_log "
-                "(query_text, bank, timestamp, answer_length, source_count, "
-                " rejected, rejection_reason, latency_ms, cache_hit, concept_used) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (query_text[:500], bank, datetime.now(timezone.utc).isoformat(),
-                 answer_length, source_count,
-                 1 if rejected else 0, rejection_reason[:200],
-                 latency_ms, 1 if cache_hit else 0, 1 if concept_used else 0)
+                text("INSERT INTO query_log "
+                     "(query_text, bank, timestamp, answer_length, source_count, "
+                     " rejected, rejection_reason, latency_ms, cache_hit, concept_used) "
+                     "VALUES (:qt, :bk, :ts, :al, :sc, :rj, :rr, :lm, :ch, :cu)"),
+                {"qt": query_text[:500], "bk": bank, "ts": datetime.now(timezone.utc).isoformat(),
+                 "al": answer_length, "sc": source_count,
+                 "rj": 1 if rejected else 0, "rr": rejection_reason[:200],
+                 "lm": latency_ms, "ch": 1 if cache_hit else 0, "cu": 1 if concept_used else 0}
             )
             db.commit()
 
             # Trim old entries
-            count = db.execute("SELECT COUNT(*) FROM query_log").fetchone()[0]
+            count = db.execute(text("SELECT COUNT(*) FROM query_log")).scalar()
             if count > _MAX_RECENT_QUERIES:
                 db.execute(
-                    "DELETE FROM query_log WHERE id IN "
-                    "(SELECT id FROM query_log ORDER BY id ASC LIMIT ?)",
-                    (count - _MAX_RECENT_QUERIES,)
+                    text("DELETE FROM query_log WHERE id IN "
+                         "(SELECT id FROM query_log ORDER BY id ASC LIMIT :limit)"),
+                    {"limit": count - _MAX_RECENT_QUERIES}
                 )
                 db.commit()
         finally:
@@ -61,20 +63,21 @@ def get_recent_queries(limit: int = 100, rejected: bool = None,
     try:
         db = SessionLocal()
         try:
-            sql = "SELECT * FROM query_log WHERE 1=1"
-            params = []
+            conditions = []
+            params = {}
             if rejected is not None:
-                sql += " AND rejected = ?"
-                params.append(1 if rejected else 0)
+                conditions.append("rejected = :rj")
+                params["rj"] = 1 if rejected else 0
             if bank:
-                sql += " AND bank = ?"
-                params.append(bank)
+                conditions.append("bank = :bk")
+                params["bk"] = bank
             if since:
-                sql += " AND timestamp >= ?"
-                params.append(since)
-            sql += " ORDER BY id DESC LIMIT ?"
-            params.append(limit)
-            rows = db.execute(sql, params).fetchall()
+                conditions.append("timestamp >= :ts")
+                params["ts"] = since
+            where = " AND ".join(conditions) if conditions else "1=1"
+            sql = f"SELECT * FROM query_log WHERE {where} ORDER BY id DESC LIMIT :lim"
+            params["lim"] = limit
+            rows = db.execute(text(sql), params).fetchall()
             columns = [desc[0] for desc in db.description]
             return [dict(zip(columns, row)) for row in rows]
         finally:
@@ -91,23 +94,23 @@ def get_query_stats() -> dict:
         try:
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             total = db.execute(
-                "SELECT COUNT(*) FROM query_log WHERE timestamp >= ?",
-                (today,)
-            ).fetchone()[0]
+                text("SELECT COUNT(*) FROM query_log WHERE timestamp >= :ts"),
+                {"ts": today}
+            ).scalar()
             rejected = db.execute(
-                "SELECT COUNT(*) FROM query_log WHERE rejected = 1 AND timestamp >= ?",
-                (today,)
-            ).fetchone()[0]
+                text("SELECT COUNT(*) FROM query_log WHERE rejected = 1 AND timestamp >= :ts"),
+                {"ts": today}
+            ).scalar()
             avg_latency = db.execute(
-                "SELECT COALESCE(AVG(latency_ms), 0) FROM query_log WHERE timestamp >= ?",
-                (today,)
-            ).fetchone()[0]
+                text("SELECT COALESCE(AVG(latency_ms), 0) FROM query_log WHERE timestamp >= :ts"),
+                {"ts": today}
+            ).scalar()
             # Rejection reasons breakdown
             reasons = db.execute(
-                "SELECT rejection_reason, COUNT(*) as cnt FROM query_log "
-                "WHERE rejected = 1 AND timestamp >= ? AND rejection_reason != '' "
-                "GROUP BY rejection_reason ORDER BY cnt DESC LIMIT 10",
-                (today,)
+                text("SELECT rejection_reason, COUNT(*) as cnt FROM query_log "
+                     "WHERE rejected = 1 AND timestamp >= :ts AND rejection_reason != '' "
+                     "GROUP BY rejection_reason ORDER BY cnt DESC LIMIT 10"),
+                {"ts": today}
             ).fetchall()
             return {
                 "total_today": total,

@@ -38,8 +38,9 @@ def init_db():
     Base.metadata.create_all(bind=engine)
 
     # ── Query log table (raw SQL, not ORM) ──
+    from sqlalchemy import text as sa_text
     with engine.connect() as conn:
-        conn.execute(
+        conn.execute(sa_text(
             "CREATE TABLE IF NOT EXISTS query_log ("
             "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
             "  query_text TEXT,"
@@ -53,5 +54,5 @@ def init_db():
             "  cache_hit INTEGER DEFAULT 0,"
             "  concept_used INTEGER DEFAULT 0"
             ")"
-        )
+        ))
         conn.commit()

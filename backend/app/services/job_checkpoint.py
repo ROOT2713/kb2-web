@@ -9,6 +9,8 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
+from sqlalchemy import text
+
 from app.models.database import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -27,17 +29,19 @@ class CheckpointManager:
             db = SessionLocal()
             try:
                 db.execute(
-                    "CREATE TABLE IF NOT EXISTS job_checkpoints ("
-                    "  job_id TEXT PRIMARY KEY,"
-                    "  doc_id TEXT,"
-                    "  filename TEXT,"
-                    "  step TEXT,"
-                    "  step_data TEXT DEFAULT '{}',"
-                    "  created_at TEXT,"
-                    "  updated_at TEXT,"
-                    "  status TEXT DEFAULT 'running',"
-                    "  error TEXT DEFAULT ''"
-                    ")"
+                    text(
+                        "CREATE TABLE IF NOT EXISTS job_checkpoints ("
+                        "  job_id TEXT PRIMARY KEY,"
+                        "  doc_id TEXT,"
+                        "  filename TEXT,"
+                        "  step TEXT,"
+                        "  step_data TEXT DEFAULT '{}',"
+                        "  created_at TEXT,"
+                        "  updated_at TEXT,"
+                        "  status TEXT DEFAULT 'running',"
+                        "  error TEXT DEFAULT ''"
+                        ")"
+                    )
                 )
                 db.commit()
             finally:
@@ -53,9 +57,10 @@ class CheckpointManager:
             db = SessionLocal()
             try:
                 db.execute(
-                    "INSERT INTO job_checkpoints (job_id, doc_id, filename, step, created_at, updated_at, status) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (job_id, doc_id, filename, "uploaded", now, now, "running")
+                    text("INSERT INTO job_checkpoints (job_id, doc_id, filename, step, created_at, updated_at, status) "
+                         "VALUES (:jd, :di, :fn, :st, :ca, :ua, :ss)"),
+                    {"jd": job_id, "di": doc_id, "fn": filename, "st": "uploaded",
+                     "ca": now, "ua": now, "ss": "running"}
                 )
                 db.commit()
                 logger.info("Checkpoint created: %s for %s", job_id, filename)
@@ -74,8 +79,8 @@ class CheckpointManager:
             db = SessionLocal()
             try:
                 db.execute(
-                    "UPDATE job_checkpoints SET step=?, step_data=?, updated_at=? WHERE job_id=?",
-                    (step, data_json, now, job_id)
+                    text("UPDATE job_checkpoints SET step=:st, step_data=:sd, updated_at=:ua WHERE job_id=:jd"),
+                    {"st": step, "sd": data_json, "ua": now, "jd": job_id}
                 )
                 db.commit()
             finally:
@@ -90,8 +95,8 @@ class CheckpointManager:
             db = SessionLocal()
             try:
                 db.execute(
-                    "UPDATE job_checkpoints SET status='failed', error=?, updated_at=? WHERE job_id=?",
-                    (error[:500], now, job_id)
+                    text("UPDATE job_checkpoints SET status='failed', error=:err, updated_at=:ua WHERE job_id=:jd"),
+                    {"err": error[:500], "ua": now, "jd": job_id}
                 )
                 db.commit()
             finally:
@@ -106,8 +111,8 @@ class CheckpointManager:
             db = SessionLocal()
             try:
                 db.execute(
-                    "UPDATE job_checkpoints SET status='completed', step='concept_generated', updated_at=? WHERE job_id=?",
-                    (now, job_id)
+                    text("UPDATE job_checkpoints SET status='completed', step='concept_generated', updated_at=:ua WHERE job_id=:jd"),
+                    {"ua": now, "jd": job_id}
                 )
                 db.commit()
             finally:
@@ -121,7 +126,8 @@ class CheckpointManager:
             db = SessionLocal()
             try:
                 row = db.execute(
-                    "SELECT * FROM job_checkpoints WHERE job_id=?", (job_id,)
+                    text("SELECT * FROM job_checkpoints WHERE job_id=:jd"),
+                    {"jd": job_id}
                 ).fetchone()
                 if not row:
                     return {}
@@ -140,21 +146,17 @@ class CheckpointManager:
             return {}
 
     def resume(self, job_id: str) -> tuple:
-        """Return (step_to_resume_from, data) for a job.
-
-        Returns the first step that hasn't been completed yet.
-        """
+        """Return (step_to_resume_from, data) for a job."""
         cp = self.load(job_id)
         if not cp:
             return ("uploaded", {})
         current_step = cp.get("step", "uploaded")
         step_data = cp.get("step_data", {})
-        # Find the next step after current
         try:
             idx = _STEPS.index(current_step)
             if idx + 1 < len(_STEPS):
                 return (_STEPS[idx + 1], step_data)
-            return ("completed", step_data)  # already at last step
+            return ("completed", step_data)
         except ValueError:
             return ("uploaded", step_data)
 
@@ -164,8 +166,8 @@ class CheckpointManager:
             db = SessionLocal()
             try:
                 rows = db.execute(
-                    "SELECT job_id, doc_id, filename, step, status, error, created_at, updated_at "
-                    "FROM job_checkpoints ORDER BY updated_at DESC"
+                    text("SELECT job_id, doc_id, filename, step, status, error, created_at, updated_at "
+                         "FROM job_checkpoints ORDER BY updated_at DESC")
                 ).fetchall()
                 columns = ["job_id", "doc_id", "filename", "step", "status", "error", "created_at", "updated_at"]
                 return [dict(zip(columns, row)) for row in rows]
@@ -183,10 +185,10 @@ class CheckpointManager:
                 from datetime import timedelta
                 cutoff = (datetime.now(timezone.utc) - timedelta(minutes=timeout_minutes)).isoformat()
                 rows = db.execute(
-                    "SELECT job_id, doc_id, filename, step, status, error, created_at, updated_at "
-                    "FROM job_checkpoints WHERE status='running' AND updated_at < ? "
-                    "ORDER BY updated_at ASC",
-                    (cutoff,)
+                    text("SELECT job_id, doc_id, filename, step, status, error, created_at, updated_at "
+                         "FROM job_checkpoints WHERE status='running' AND updated_at < :cut "
+                         "ORDER BY updated_at ASC"),
+                    {"cut": cutoff}
                 ).fetchall()
                 columns = ["job_id", "doc_id", "filename", "step", "status", "error", "created_at", "updated_at"]
                 return [dict(zip(columns, row)) for row in rows]
@@ -203,8 +205,8 @@ class CheckpointManager:
             db = SessionLocal()
             try:
                 result = db.execute(
-                    "UPDATE job_checkpoints SET status='running', error='', updated_at=? WHERE job_id=? AND status='failed'",
-                    (now, job_id)
+                    text("UPDATE job_checkpoints SET status='running', error='', updated_at=:ua WHERE job_id=:jd AND status='failed'"),
+                    {"ua": now, "jd": job_id}
                 )
                 db.commit()
                 return result.rowcount > 0
