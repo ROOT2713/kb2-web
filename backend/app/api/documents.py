@@ -893,6 +893,7 @@ async def patch_document(
     # 元数据变更 → BM25索引失效（查该doc的bank以精细失效）
     _b = repo.get(doc_id)
     invalidate_bm25_cache(bank=str(_b.bank) if _b else "all")
+    invalidate_bm25_cache(bank="all")
     return {"ok": True, "doc_id": doc_id, "title": title, "category": category, "subcategory": subcategory}
 
 
@@ -956,6 +957,7 @@ async def patch_document_bank(
     db.commit()
     # bank变更 → BM25索引失效（只清旧bank，doc已移走）
     invalidate_bm25_cache(bank=old_bank)
+    invalidate_bm25_cache(bank="all")
     return {"ok": True, "doc_id": doc_id, "bank": bank}
 
 
@@ -1283,8 +1285,9 @@ async def reparse_document(
 
     asyncio.create_task(_verify_searchable(new_doc_id, doc_title, len(text), hs_bank)).add_done_callback(_log_task_exception)
 
-    # 重解析 → BM25索引失效（内容已变，只清旧bank）
+    # 重解析 → BM25索引失效（内容已变，清旧bank+全量）
     invalidate_bm25_cache(bank=old_bank)
+    invalidate_bm25_cache(bank="all")
 
     return {
         "ok": True,
