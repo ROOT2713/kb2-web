@@ -106,6 +106,8 @@ def _load_b03_keywords() -> dict:
             _b03_mtime = cur_mtime
             logger.info("B03 keywords loaded: %d domains from %s", len(_b03_kb_domains), _b03_config_path)
     except Exception:
+        if not _b03_kb_domains:
+            logger.error("B03 keywords load FAILED from %s — B03 gate disabled", _b03_config_path)
         _b03_kb_domains = _b03_kb_domains or {}
     return _b03_kb_domains
 
