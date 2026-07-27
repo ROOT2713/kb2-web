@@ -890,6 +890,8 @@ async def patch_document(
     updated = repo.update(doc_id, title=title, category=category, subcategory=subcategory)
     if updated is None:
         raise HTTPException(404, f"Document {doc_id} not found")
+    # 元数据变更 → BM25索引失效
+    invalidate_bm25_cache()
     return {"ok": True, "doc_id": doc_id, "title": title, "category": category, "subcategory": subcategory}
 
 
@@ -925,6 +927,8 @@ async def batch_patch_documents(
         result = repo.update(doc_id, **kwargs)
         if result is not None:
             updated += 1
+    # 批量元数据变更 → BM25索引失效
+    invalidate_bm25_cache()
     return {"ok": True, "updated": updated, "total": len(body.doc_ids)}
 
 
@@ -948,6 +952,8 @@ async def patch_document_bank(
         raise HTTPException(404, f"Document {doc_id} not found")
     doc.bank = bank
     db.commit()
+    # bank变更 → BM25索引失效
+    invalidate_bm25_cache()
     return {"ok": True, "doc_id": doc_id, "bank": bank}
 
 
@@ -1274,6 +1280,9 @@ async def reparse_document(
     db.commit()
 
     asyncio.create_task(_verify_searchable(new_doc_id, doc_title, len(text), hs_bank)).add_done_callback(_log_task_exception)
+
+    # 重解析 → BM25索引失效（内容已变）
+    invalidate_bm25_cache()
 
     return {
         "ok": True,
