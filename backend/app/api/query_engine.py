@@ -92,7 +92,7 @@ def _extract_high_signal_terms(query_keywords: list[str] | None) -> set[str]:
 _b03_kb_domains: dict | None = None
 _b03_mtime: float = 0
 _b03_config_path: str = os.path.normpath(os.path.join(
-    os.path.dirname(__file__), "..", "config", "b03_keywords.json"
+    os.path.dirname(__file__), "..", "..", "config", "b03_keywords.json"
 ))
 
 
