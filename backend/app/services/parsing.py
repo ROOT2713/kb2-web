@@ -23,6 +23,26 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# ── MinerU 健康计数器 ──
+mineru_stats = {"success": 0, "fail": 0, "last_error": None}
+mineru_stats_lock = asyncio.Lock()
+
+
+async def inc_mineru_success():
+    async with mineru_stats_lock:
+        mineru_stats["success"] += 1
+
+
+async def inc_mineru_fail(err: str):
+    async with mineru_stats_lock:
+        mineru_stats["fail"] += 1
+        mineru_stats["last_error"] = err[:200] if err else None
+
+
+def get_mineru_stats() -> dict:
+    """Thread-safe read of MinerU health stats. 用于 admin health endpoint."""
+    return dict(mineru_stats)
+
 
 def ocr_pdf(pdf_bytes: bytes) -> str:
     """用 pdftoppm + tesseract 对扫描件 PDF 做 OCR，返回纯文本"""
@@ -302,11 +322,13 @@ async def parse_document(filename: str, content: bytes) -> str:
                 text = await mineru_parse_pdf(filename, content)
                 if text and text.strip():
                     logger.info("MinerU 完成，提取 %d 字符", len(text))
+                    await inc_mineru_success()
                     return text
                 logger.info("MinerU 返回空结果，回退 pypdf")
             except Exception as e:
                 logger.warning("MinerU 失败，回退 pypdf: %s", e)
                 logger.error("", exc_info=True)
+                await inc_mineru_fail(str(e))
 
         # ── 兜底: pypdf 提取文字层 ──
         text = "\n\n".join(p.extract_text() or "" for p in reader.pages)

@@ -60,6 +60,16 @@ _FEE_MISMATCH_KEYWORDS = [
     "封面",
 ]
 
+# ── 费用查询白名单（供 retrieval.py 导入，单点维护） ──
+# 检测用户查询是否为费用类，命中时跳过同义词扩展避免"GB"等稀释
+_FEE_WHITELIST = [
+    "造价", "取费", "费用", "费率", "收费",
+    "验收测评", "验收评测", "检测费", "测评费", "评测费",
+    "审计费", "管理费", "设计费", "监理费", "招标",
+    "等保", "密评", "咨询费",
+    "商密", "商用密码", "密码应用",
+]
+
 # Formula definition keywords — chunks near these contain the actual formula text
 _FORMULA_KEYWORDS = [
     "计算公式",

@@ -107,17 +107,21 @@ router = APIRouter()
 async def query(
     request: Request,
     q: str = Form(...),
+    nocache: str = Form(""),
     bank: str = Form("all"),
     history: str = Form(""),
     rerank: str = Form("false"),
     rerank_mode: str = Form("default"),
-    nocache: str = Form(""),
     session_id: str = Form(""),
     categories: str = Form(""),
 ):
     """搜索知识库 → 召回 → DeepSeek 合成答案（支持多 bank）"""
     if not q.strip():
-        raise HTTPException(400, "问题不能为空")
+        raise HTTPException(400, "query q is required")
+
+    # ── nocache 参数解析（兼容 "false"/"0" 为空）──
+    _skip_cache = nocache and nocache.lower() not in ("false", "0", "")
+    _use_rerank = rerank and rerank.lower() not in ("false", "0", "")
 
     # bank 白名单校验
     if bank not in BANKS:
@@ -156,7 +160,7 @@ async def query(
     q = normalize_standard_numbers(q)
 
     # ── 缓存命中检查（L1精确 + L2语义）──
-    if not nocache:
+    if not _skip_cache:
         try:
             cached = cache_get_exact(q, bank)
             if cached:
@@ -473,7 +477,7 @@ async def query(
 
     # ── 缓存写入 ──
     # 有文档事实的查询可缓存；空结果不缓存；缓存命中时动态重建 suggestions
-    if not nocache and ctx["doc_facts"]:
+    if not _skip_cache and ctx["doc_facts"]:
         try:
             doc_ids = set(ctx["doc_facts"].keys()) if ctx["doc_facts"] else set()
             await cache_set(q, bank, answer, sources, doc_ids)

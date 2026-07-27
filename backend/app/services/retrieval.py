@@ -227,16 +227,11 @@ async def _llm_chat(messages: list, stream: bool = False, max_retries: int = 3) 
 # 同义词扩展
 # ═══════════════════════════════════════════════════════════════════
 
+from app.services.fee_utils import _FEE_WHITELIST
+
 def expand_query_synonyms(q: str) -> str:
-    """D8: 术语同义词扩展——在查询前注入相关术语提升召回率"""
-    # ── 费用类查询白名单：含费用关键词时不扩展，避免“GB”等术语稀释召回 ──
-    _FEE_WHITELIST = [
-        "造价", "取费", "费用", "费率", "收费",
-        "验收测评", "验收评测", "检测费", "测评费", "评测费",
-        "审计费", "管理费", "设计费", "监理费", "招标",
-        "等保", "密评", "咨询费",
-        "商密", "商用密码", "密码应用",
-    ]
+    """D8: 术语同义词扩展——在查询前注入相关术语提升召回率
+    费用类查询白名单已迁移到 fee_utils._FEE_WHITELIST 集中维护。"""
     q_lower_for_check = q.lower()
     if any(kw.lower() in q_lower_for_check for kw in _FEE_WHITELIST):
         return q

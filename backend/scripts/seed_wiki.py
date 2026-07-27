@@ -175,6 +175,73 @@ entries.append({
     "importance": 6, "status": "published",
 })
 
+# ── 政务核心条目 ──
+{
+    "title": "政府投资条例",
+    "standard_no": "国务院令第712号",
+    "category": "regulation", "subcategory": "政府投资",
+    "tags": ["政府投资", "投资管理", "基本建设"],
+    "summary": "政府投资条例（国务院令第712号）是规范政府投资行为的行政法规，对政府投资决策、年度计划、项目实施和监督管理作出全面规定。",
+    "content": json.dumps({
+        "scope": "适用于使用预算安排的资金进行的固定资产投资建设活动，包括新建、扩建、改建、技术改造等。",
+        "key_clauses": "政府投资以非经营性项目为主\\n投资决策需经过前期论证和审批（重大项目需专家评审）\\n年度计划经批准后必须严格执行\\n项目完工后应及时办理竣工财务决算和资产移交",
+        "application": "政务信息化项目的立项审批、预算审批、竣工决算的核心行政法规依据。",
+    }, ensure_ascii=False),
+    "importance": 9, "status": "published",
+},
+{
+    "title": "中华人民共和国招标投标法",
+    "standard_no": "主席令第21号",
+    "category": "regulation", "subcategory": "招标投标",
+    "tags": ["招标", "投标", "采购"],
+    "summary": "招标投标法是规范招标投标活动的基本法律，对招标、投标、开标、评标和中标等环节作出全面规定。",
+    "content": json.dumps({
+        "scope": "适用于在中华人民共和国境内进行的所有招标投标活动。大型基础设施、公用事业等关系社会公共利益、公众安全的项目必须招标。",
+        "key_clauses": "公开招标为原则，邀请招标为例外\\n招标文件不得要求特定供应商或含有倾向性条款\\n评标委员会由5人以上单数组成，技术经济专家不少于2/3\\n中标人确定后15日内向有关行政监督部门提交招标投标情况书面报告",
+        "application": "政务信息化项目招标采购、工程建设招标、服务采购等场景的核心法律依据。",
+    }, ensure_ascii=False),
+    "importance": 9, "status": "published",
+},
+{
+    "title": "信息系统工程监理规范",
+    "standard_no": "GB/T 19668",
+    "category": "standard", "subcategory": "监理",
+    "tags": ["监理", "信息化监理", "信息系统"],
+    "summary": "GB/T 19668 系列标准规定了信息系统工程监理的术语、通用布缆、电子设备机房等工程的监理规范。",
+    "content": json.dumps({
+        "scope": "适用于信息系统工程监理单位的监理活动，以及建设单位、承建单位对监理工作的配合与检查。覆盖信息化项目的质量、进度、投资控制等。",
+        "key_clauses": "监理工作应贯穿系统规划、招标、设计、实施、验收全过程\\n监理方应独立于建设方和承建方\\n质量控制包括设备验收、施工监督、系统测试等环节",
+        "application": "信息化项目监理、质量监督、验收评估的核心标准依据。",
+    }, ensure_ascii=False),
+    "importance": 8, "status": "published",
+},
+{
+    "title": "中华人民共和国政府采购法",
+    "standard_no": "主席令第14号",
+    "category": "regulation", "subcategory": "政府采购",
+    "tags": ["政府采购", "采购", "政务采购"],
+    "summary": "政府采购法规定了政府机关使用财政性资金进行采购的行为规范，明确采购方式、程序和监督管理要求。",
+    "content": json.dumps({
+        "scope": "适用于各级国家机关、事业单位和团体组织使用财政性资金采购货物、工程和服务的行为。",
+        "key_clauses": "政府采购实行集中采购和分散采购相结合\\n采购方式包括公开招标（为主）、邀请招标、竞争性谈判、询价、单一来源等\\n采购金额达到公开招标数额标准的必须公开招标\\n采购人不得以不合理的条件对供应商实行差别待遇",
+        "application": "政务信息化采购、软件服务采购、硬件设备采购等场景的核心法律依据。",
+    }, ensure_ascii=False),
+    "importance": 8, "status": "published",
+},
+{
+    "title": "中华人民共和国网络安全法",
+    "standard_no": "主席令第53号",
+    "category": "regulation", "subcategory": "网络安全",
+    "tags": ["网络安全", "等级保护", "安全"],
+    "summary": "网络安全法是网络安全领域的基础性法律，确立网络安全等级保护制度、关键信息基础设施保护、个人信息保护等核心制度。",
+    "content": json.dumps({
+        "scope": "适用于在中华人民共和国境内建设、运营、维护和使用网络以及网络安全的监督管理。",
+        "key_clauses": "国家实行网络安全等级保护制度（第21条）\\n关键信息基础设施在等保基础上实行重点保护（第31条）\\n重要数据应境内存储、出境需安全评估（第37条）\\n网络运营者应制定应急预案并定期演练（第25条）",
+        "application": "等保测评、网络安全建设、数据安全合规等场景的核心法律依据。",
+    }, ensure_ascii=False),
+    "importance": 9, "status": "published",
+},
+
 print(f"Inserting {len(entries)} wiki entries...")
 count = 0
 for e in entries:

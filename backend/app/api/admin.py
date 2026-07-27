@@ -160,6 +160,15 @@ async def admin_health():
         health_status["vector_store"] = "unreachable"
         health_status["status"] = "degraded"
 
+    # MinerU 解析器健康
+    try:
+        ms = get_mineru_stats()
+        health_status["mineru"] = ms
+        if ms["fail"] > 5 and ms["success"] == 0:
+            health_status["status"] = "degraded"
+    except Exception:
+        health_status["mineru"] = "unavailable"
+
     return health_status
 
 
@@ -167,7 +176,10 @@ async def admin_health():
 # P1-3: Quality Gates endpoints
 # ═══════════════════════════════════════════════════════
 
+from app.services.parsing import get_mineru_stats
 from app.services.quality_gates import check_document, check_all_documents
+
+@router.post("/quality/check")
 
 
 @router.post("/quality/check")

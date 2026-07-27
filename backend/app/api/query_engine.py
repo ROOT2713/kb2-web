@@ -88,6 +88,28 @@ def _extract_high_signal_terms(query_keywords: list[str] | None) -> set[str]:
     return high_signal
 
 
+# ── B03 关键词热加载缓存 ──
+_b03_kb_domains: dict | None = None
+_b03_mtime: float = 0
+_b03_config_path: str = os.path.normpath(os.path.join(
+    os.path.dirname(__file__), "..", "config", "b03_keywords.json"
+))
+
+
+def _load_b03_keywords() -> dict:
+    global _b03_kb_domains, _b03_mtime
+    try:
+        cur_mtime = os.path.getmtime(_b03_config_path)
+        if _b03_kb_domains is None or cur_mtime > _b03_mtime:
+            with open(_b03_config_path) as f:
+                _b03_kb_domains = json.load(f)
+            _b03_mtime = cur_mtime
+            logger.info("B03 keywords loaded: %d domains from %s", len(_b03_kb_domains), _b03_config_path)
+    except Exception:
+        _b03_kb_domains = _b03_kb_domains or {}
+    return _b03_kb_domains
+
+
 # ═══════════════════════════════════════════════════════════════════
 # 摘要文档检测
 # ═══════════════════════════════════════════════════════════════════
@@ -2184,17 +2206,9 @@ def _assess_recall_confidence(
     # 如查"莎士比亚"→12个政务标准片段,虽然coverage高但没有实质相关
     if source_count >= 2 and coverage >= 0.3 and not has_exact_match:
         try:
-            # KB领域关键词表（政务知识库覆盖的领域）
-            _kb_domains = {
-                "信息化": ["信息化", "测评", "软件", "功能点", "造价", "取费", "验收", "评测", "审计"],
-                "标准": ["标准", "规范", "规定", "要求", "条款", "GB", "GB/T", "规程"],
-                "安全": ["等保", "等级保护", "安全", "防火墙", "入侵", "漏洞", "密码", "合规"],
-                "机房": ["数据中心", "机房", "供配电", "UPS", "温湿度", "配电"],
-                "声学": ["声学", "噪声", "混响", "隔声", "厅堂", "剧场", "电影院"],
-                "网络": ["WiFi", "信道", "AP", "无线", "802.11", "路由器"],
-                "建筑": ["弱电", "消防", "安防", "综合布线"],
-                "政务": ["政务", "政府", "投资", "采购", "招标"],
-            }
+            # KB领域关键词表（从 config/b03_keywords.json 加载，热更新）
+            # 修改JSON文件后无需重启
+            _kb_domains = _load_b03_keywords()
             _q_lower = q.lower()
             # 检查查询是否包含任何KB领域词
             _has_kb_domain = any(
