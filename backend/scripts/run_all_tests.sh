@@ -39,8 +39,20 @@ else
 fi
 echo ""
 
-# ── 3. 84 题诊断测试（如存在）──
-echo "━━━ [3/3] 84 题诊断测试 ━━━"
+# ── 3. 95 题V6测试集（覆盖fee/edge/B03/compound/bank边界）──
+echo "━━━ [3/4] 95 题V6 回归测试 ━━━"
+cd "$DIR"
+if python3 scripts/kb2_66test_v3.py scripts/95_questions_v6.jsonl 1 2>&1 | tail -5; then
+    echo "✅ 95-test PASSED"
+    PASS=$((PASS+1))
+else
+    echo "❌ 95-test FAILED"
+    FAIL=$((FAIL+1))
+fi
+echo ""
+
+# ── 4. 84 题诊断测试（如存在）──
+echo "━━━ [4/4] 84 题诊断测试 ━━━"
 if [ -f "$DIR/scripts/kb2_84test.py" ]; then
     cd "$DIR"
     if python3 scripts/kb2_84test.py 2>&1 | tail -5; then
