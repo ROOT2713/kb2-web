@@ -589,7 +589,7 @@ async def _web_search(query: str, max_results: int = 3) -> tuple:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=90)
         if proc.returncode == 0 and stdout:
             result = stdout.decode("utf-8", errors="replace").strip()
             # 检测 AnySearch 错误（配额耗尽等）

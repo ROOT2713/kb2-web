@@ -131,7 +131,7 @@ def _score_fee_chunk(text: str, amount_keywords: list[str]) -> int:
 def find_fee_relevant_chunks(
     doc_ids: list[str],
     amount_keywords: list[str] | None = None,
-    max_chunks: int = 8,
+    max_chunks: int = 5,
     fee_type_keywords: list[str] | None = None,
 ) -> list[dict]:
     """

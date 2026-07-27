@@ -365,20 +365,20 @@ async def _build_search_context(
         hs_list = [h.strip() for h in hs_bank.split(",") if h.strip()]
         for hs in hs_list:
             try:
-                bank_results = await recall(q_recalled, limit=40, bank=hs)
+                bank_results = await recall(q_recalled, limit=20, bank=hs)
                 all_recall_results.extend(bank_results)
             except Exception as e:
                 logger.warning("recall(%s) failed: %s", hs, e)
     elif bank != "all" and hs_bank and hs_bank != "kb":
         try:
-            all_recall_results = await recall(q_recalled, limit=40, bank=hs_bank)
+            all_recall_results = await recall(q_recalled, limit=20, bank=hs_bank)
         except Exception as e:
             logger.warning("recall(%s) failed: %s", hs_bank, e)
     else:
         active_banks = await _get_active_hindsight_banks()
         for _hs_bank in active_banks:
             try:
-                bank_results = await recall(q_recalled, limit=40, bank=_hs_bank)
+                bank_results = await recall(q_recalled, limit=20, bank=_hs_bank)
                 all_recall_results.extend(bank_results)
             except Exception:
                 pass
@@ -739,7 +739,7 @@ async def _build_search_context(
         logger.info("[D2-B] Also doing hindsight recall for %d fee docs", len(_all_fee_ids))
         try:
             _v2_recall = await recall(
-                q, limit=30, bank=bank,
+                q, limit=20, bank=bank,
                 doc_ids=set(_all_fee_ids),
             )
             if _v2_recall:
