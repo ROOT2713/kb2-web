@@ -108,8 +108,8 @@ def _load_b03_keywords() -> dict:
     except Exception:
         if not _b03_kb_domains:
             logger.error("B03 keywords load FAILED from %s — B03 gate disabled", _b03_config_path)
-        _b03_kb_domains = _b03_kb_domains or {}
-    return _b03_kb_domains
+        return _b03_kb_domains or {}
+    return _b03_kb_domains or {}
 
 
 # ═══════════════════════════════════════════════════════════════════

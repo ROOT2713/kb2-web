@@ -31,6 +31,9 @@ mineru_stats_lock = asyncio.Lock()
 async def inc_mineru_success():
     async with mineru_stats_lock:
         mineru_stats["success"] += 1
+        # 成功后重置失败计数，避免累计失败数导致永久degraded
+        mineru_stats["fail"] = 0
+        mineru_stats["last_error"] = None
 
 
 async def inc_mineru_fail(err: str):
