@@ -430,8 +430,10 @@ async def query(
     # ── Comparison Query Detection ──
     _comparison_patterns = [
         (r"([\u4e00-\u9fff\w]+)(?:和|与|跟|同|及)([\u4e00-\u9fff\w]+)(?:有[什么]?[区别差异不同]|[的]?区别[是]?|[的]?差异[是]?|[的]?不同[是]?|对比|进行比较)", "diff"),
-        (r"对比(?:一下|分析|研究)?([\u4e00-\u9fff\w]+)(?:和|与|跟|同)([\u4e00-\u9fff\w]+)", "compare"),
+        (r"对比(?:一下|分析|研究)?([\u4e00-\u9fff\w\s\/\-\d]+)(?:和|与|跟|同)([\u4e00-\u9fff\w\s\/\-\d]+)", "compare"),
         (r"([\u4e00-\u9fff\w]+)(?:和|与|跟|同)([\u4e00-\u9fff\w]+)(?:对比)", "compare"),
+        # Fallback: standard numbers with hyphens (e.g. "GB 50174-2017和GB 50311-2016")
+        (r"([\w\s\/\-]{3,30})(?:和|与|跟|同)([\w\s\/\-]{3,30})(?:有[什么]?[区别差异不同])", "std_compare"),
     ]
     _cmp_match = None
     _cmp_entity_a = ""
