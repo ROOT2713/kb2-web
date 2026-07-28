@@ -2054,6 +2054,41 @@ def _assess_recall_confidence(
             "message": _REJECT_MSG_KNOWLEDGE_GAP,
         }
 
+    # ── Hard Deny: 已知KB不覆盖的主题模式（不触发B03域匹配 ──
+    # 这些模式即使包含KB域名关键词（如"机房"+"咖啡机"），也应立即拒答
+    # 优先级高于后续所有检查
+    _HARD_DENY_PATTERNS = re.compile(
+        r"(?:"
+        r"食堂(?!标准)(?:消费|系统|就餐)?|"
+        r"咖啡机|"
+        r"玻璃幕墙|"
+        r"(?:医院)?手术室(?:气体灭火)?|"
+        r"工业厂房|"
+        r"防火分区|"
+        r"气体灭火系统(?:设计|配置|喷头)?|"
+        r"灭火器|"
+        r"消防报警系统|"
+        r"消防泵房|"
+        r"排烟管道|防火包覆|"
+        r"厨房|排气(?:管道|系统)|"
+        r"电梯维保|"
+        r"(?:足球|篮球|世界杯|网球|奥运会|运动员|夺冠|比赛)|"
+        r"周杰伦|七里香|歌词|音乐作品|"
+        r"高血压|糖尿病|患者|药物|治疗|"
+        r"背景音乐|扬声器功率|"
+        r"窗帘|桌椅"
+        r")"
+    )
+    if _HARD_DENY_PATTERNS.search(q):
+        logger.info(
+            "[CONFIDENCE] Hard deny: q=%s matched hard_deny pattern",
+            q[:60],
+        )
+        return {
+            "reject_type": "knowledge_gap",
+            "message": _REJECT_MSG_KNOWLEDGE_GAP,
+        }
+
     # ── [categories 模式] 用户明确指定了分类且有匹配文档 → 跳过 L2 coverage 检查 ──
     # 理由：categories 过滤后的结果自然少，但不代表不可信。
     # 用户选择了 category=security 且有 security 文档被召回 → 应该信任结果。

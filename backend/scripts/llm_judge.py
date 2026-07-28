@@ -10,7 +10,7 @@ LLM_KEY = os.environ.get("LLM_API_KEY", "")
 if not LLM_KEY:
     print("WARNING: LLM_API_KEY not set in environment, LLM-Judge will fail")
 
-OPEN_DIMENSIONS = {"open", "edge", "fee"}
+OPEN_DIMENSIONS = {"open", "edge", "fee", "cross", "fact"}  # cross/fact: LLM evaluation overrides keyword strictness
 REJECT_DIMENSIONS = {"rejection"}
 
 def llm_judge(question, answer, dimension):
@@ -39,7 +39,7 @@ FAIL条件：答案拒答（说"未找到"/"无法回答"/"未提供"），或�
     for attempt in range(2):
         try:
             body = json.dumps({
-                "model": "deepseek-v4-flash",
+                "model": "deepseek-chat",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.1, "max_tokens": 8,
             }).encode()
