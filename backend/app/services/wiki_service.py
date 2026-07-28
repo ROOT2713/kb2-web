@@ -338,7 +338,7 @@ def retrieve_for_query(query: str, limit: int = 5, bank: str = "all") -> list:
             if _bank_filter:
                 _hint = (r.get("bank_hint") or "").strip()
                 if _hint:  # non-empty bank_hint = restricted
-                    if _bank_filter not in _hint.split(","):
+                    if _bank_filter not in [h.strip() for h in _hint.split(",")]:
                         continue  # skip entries not relevant to this bank
             text = (r["title"] + " " + r["standard_no"] + " " + r["summary"]).upper()
             score = sum(1 for t in terms if t in text)

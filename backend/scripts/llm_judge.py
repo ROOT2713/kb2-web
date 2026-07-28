@@ -1,12 +1,14 @@
 """LLM-Judge: Re-evaluate open/edge test questions using DeepSeek.
 Usage: python3 llm_judge.py <results.json> [questions.jsonl]
 Output: <results>.llmjudged.json — corrected pass/fail with LLM evaluation"""
-import json, sys, re, time
+import json, sys, re, time, os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import urllib.request
 
 LLM_URL = "https://api.deepseek.com/v1/chat/completions"
-LLM_KEY = "sk-c1061aca0e794bf9aa039a09c9263c5a"
+LLM_KEY = os.environ.get("LLM_API_KEY", "")
+if not LLM_KEY:
+    print("WARNING: LLM_API_KEY not set in environment, LLM-Judge will fail")
 
 OPEN_DIMENSIONS = {"open", "edge", "fee"}
 REJECT_DIMENSIONS = {"rejection"}
