@@ -368,7 +368,7 @@ async def query(
     _wiki_injected = []
     try:
         from app.services.wiki_service import retrieve_for_query as _wiki_retrieve
-        _wiki_injected = _wiki_retrieve(q)
+        _wiki_injected = _wiki_retrieve(q, bank=bank)
     except Exception as e:
         logger.warning("[Wiki] retrieve failed: %s", e)
     if _wiki_injected:

@@ -303,11 +303,12 @@ def remove_relation(relation_id: int) -> bool:
 # ── Query-time integration ──
 
 
-def retrieve_for_query(query: str, limit: int = 5) -> list:
+def retrieve_for_query(query: str, limit: int = 5, bank: str = "all") -> list:
     """Retrieve wiki entries relevant to a user query.
 
     Matches by keyword overlap between query and (title + summary + standard_no).
-    Uses jieba segmentation for Chinese queries to avoid treating full sentences as single terms.
+    Uses jieba segmentation for Chinese queries.
+    When bank != "all", filters by bank_hint (empty bank_hint = always included).
     """
     db = SessionLocal()
     try:
@@ -326,11 +327,19 @@ def retrieve_for_query(query: str, limit: int = 5) -> list:
         if not terms:
             return []
         rows = db.execute(sa_text(
-            "SELECT id, title, standard_no, category, summary, content, importance "
+            "SELECT id, title, standard_no, category, summary, content, importance, bank_hint "
             "FROM wiki_entries WHERE status = 'published'"
         )).mappings().all()
+        # Apply bank-specific filter
+        _bank_filter = bank if bank != "all" else None
         scored = []
         for r in rows:
+            # Check bank_hint: empty (all-bank) or contains current bank
+            if _bank_filter:
+                _hint = (r.get("bank_hint") or "").strip()
+                if _hint:  # non-empty bank_hint = restricted
+                    if _bank_filter not in _hint.split(","):
+                        continue  # skip entries not relevant to this bank
             text = (r["title"] + " " + r["standard_no"] + " " + r["summary"]).upper()
             score = sum(1 for t in terms if t in text)
             if score > 0:
