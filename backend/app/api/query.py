@@ -427,6 +427,38 @@ async def query(
                 _entry_name += f"（{_we['standard_no']}）"
             ctx["doc_facts"][_wid] = [(_structured, _entry_name, _structured[:3000], None)]
 
+    # ── Comparison Query Detection ──
+    _comparison_patterns = [
+        (r"([\u4e00-\u9fff\w]+)(?:和|与|跟|同|及)([\u4e00-\u9fff\w]+)(?:有[什么]?[区别差异不同]|[的]?区别[是]?|[的]?差异[是]?|[的]?不同[是]?|对比|进行比较)", "diff"),
+        (r"对比(?:一下|分析|研究)?([\u4e00-\u9fff\w]+)(?:和|与|跟|同)([\u4e00-\u9fff\w]+)", "compare"),
+        (r"([\u4e00-\u9fff\w]+)(?:和|与|跟|同)([\u4e00-\u9fff\w]+)(?:对比)", "compare"),
+    ]
+    _cmp_match = None
+    _cmp_entity_a = ""
+    _cmp_entity_b = ""
+    for _pattern, _type in _comparison_patterns:
+        _m = re.search(_pattern, q)
+        if _m:
+            _cmp_entity_a = _m.group(1).strip()
+            _cmp_entity_b = _m.group(2).strip()
+            _cmp_match = _type
+            break
+    if _cmp_match and len(_cmp_entity_a) >= 2 and len(_cmp_entity_b) >= 2:
+        ctx["is_comparison"] = True
+        ctx["comparison_entities"] = [_cmp_entity_a, _cmp_entity_b]
+        logger.info("[COMPARE] Detected: %s vs %s (type=%s)", _cmp_entity_a, _cmp_entity_b, _cmp_match)
+        ctx["comparison_hint"] = (
+            f"\n【对比查询指令】\n"
+            f"用户问题要求对比「{_cmp_entity_a}」和「{_cmp_entity_b}」。\n"
+            f"请严格按照以下结构回答：\n"
+            f"1. 分别说明「{_cmp_entity_a}」和「{_cmp_entity_b}」各自的核心要求/标准/参数\n"
+            f"2. 列出两者的关键差异（如果适用，用表格对比）\n"
+            f"3. 列出两者的相同点（如果有）\n"
+            f"4. 给出适用场景建议或结论\n"
+            f"注意：如果文档中只涉及其中一个实体，在回答中应明确标注"
+            f"「关于{_cmp_entity_b}的知识库内容不足，以下仅基于{_cmp_entity_a}的相关信息」。\n"
+        )
+
     # ── Confidence Gate (L1+L2): 召回置信度评估 — 三级门控 ──
     reject = _assess_recall_confidence(ctx, q, query_keywords, session_doc_ids, _is_multi_turn)
     if reject:

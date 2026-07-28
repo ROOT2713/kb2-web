@@ -1,9 +1,8 @@
 {
-  "last_run": "2026-07-24T20:30:00",
-  "last_pass_rate": 66.0,
-  "total": 66,
-  "pass_count": 43,
-  "prev_pass_rate": 100.0,
-  "dropped": false,
-  "comment": "manual baseline: V3 concurrency=1 reported 52%, corrected to ~66% via keyword-underestimation formula"
+  "last_run": "2026-07-27T16:55:38.928068",
+  "last_pass_rate": 53.68421052631579,
+  "total": 95,
+  "pass_count": 51,
+  "prev_pass_rate": 66.0,
+  "dropped": true
 }
