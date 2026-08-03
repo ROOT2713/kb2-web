@@ -36,7 +36,7 @@ from app.utils.text_cleaning import (
 )
 from app.utils.tokenizer import extract_keyword_snippet
 from app.config import settings
-from app.services.fee_utils import find_fee_relevant_chunks
+from app.services.fee_utils import filter_conflicting_fee_types
 
 logger = logging.getLogger(__name__)
 
@@ -690,152 +690,97 @@ async def _build_search_context(
     except Exception as e:
         logger.warning("short summary enrichment (post-rerank) failed: %s", e)
 
-    # ── D2-B: 金额类查询定向注入费率表chunk ──
-    # 旧方案: LIMIT 3 parent_chunks → 命中封面/编委会，不含费率表。
-    # 新方案: keyword scoring + formula-aware → 命中 idx=38-55 的真实费率表。
-    _d2q = q
+    # ── 费用类查询增强召回（D2-B 精简版，2026-07-30）──
+    # 当查询含费用关键词时，对费表文档做定向 Hindsight recall，
+    # 确保费率表数据在 top results 中。不评分、不注入空表头。
+    logger.info("[FEE-DEBUG] entering fee block, q=%s", (q or "")[:50])
+    _dq = q
     try:
-        _d2q = q.encode('latin-1').decode('utf-8')
+        _dq = q.encode('latin-1').decode('utf-8')
     except (UnicodeEncodeError, UnicodeDecodeError):
         pass
-    _fee_q = any(kw in _d2q for kw in [
+    _fee_q = any(kw in _dq for kw in [
         "造价", "取费", "费用", "费率", "收费",
         "验收测评", "验收评测", "检测费", "测评费", "评测费",
         "审计费", "管理费", "设计费", "监理费", "招标",
         "等保", "密评", "咨询费",
-        "商密", "商用密码", "密码应用",
         "概算", "佛山", "东莞", "造价指南", "概算编制",
-        "概算指南", "取费标准", "设计费比例", "比例范围",
-        "计价", "计价表", "投资比例",
+        "取费标准", "设计费比例", "计价",
     ])
-    logger.info("[D2B-MARKER] _fee_q=%s q=%s", _fee_q, q[:50])
     if _fee_q:
+        logger.info("[FEE-RECALL] _fee_q=%s q=%s", _fee_q, q[:60])
         try:
             _fdocs = SessionLocal()
             _frows = _fdocs.execute(sa_text(
-                "SELECT d.doc_id, d.title FROM documents d "
-                "WHERE d.searchable=1 AND d.status='active' "
-                "AND (d.bank IN ('industry_docs', 'industry', 'standards', 'general')) "
-                "AND (d.title LIKE '%造价%' OR d.title LIKE '%费用%' OR d.title LIKE '%取费%' OR d.title LIKE '%概算%')"
+                "SELECT doc_id FROM documents "
+                "WHERE searchable=1 AND status='active' "
+                "AND (title LIKE '%造价%' OR title LIKE '%费用%' OR title LIKE '%取费%' OR title LIKE '%概算%')"
             )).fetchall()
         except Exception:
             _frows = []
         finally:
-            if '_fdocs' in locals():
+            try: _fdocs.close()
+            except: pass
+        if _frows:
+            _fee_doc_ids = [r[0] for r in _frows]
+            try:
+                _fee_results = await recall(q, limit=10, bank=bank,
+                    doc_ids=set(_fee_doc_ids))
+                if _fee_results:
+                    _existing_keys = set()
+                    for r in all_results:
+                        for t in r.get("tags", []):
+                            if t.startswith("doc_id:"):
+                                _existing_keys.add(t[7:])
+                                break
+                    for r in _fee_results:
+                        _did = None
+                        for t in r.get("tags", []):
+                            if t.startswith("doc_id:"):
+                                _did = t[7:]
+                                break
+                        if _did and _did not in _existing_keys:
+                            all_results.insert(0, r)
+                            _existing_keys.add(_did)
+                # Also inject parent_chunks with fee table content
                 try:
-                    _fdocs.close()
+                    _pdb = SessionLocal()
+                    _placeholders = ",".join(f":d{i}" for i in range(len(_fee_doc_ids)))
+                    _params = {f"d{i}": d for i, d in enumerate(_fee_doc_ids)}
+                    _pc_rows = _pdb.execute(sa_text(
+                        f"SELECT p.doc_id, p.parent_idx, p.parent_text, d.title "
+                        f"FROM parent_chunks p JOIN documents d ON p.doc_id=d.doc_id "
+                        f"WHERE p.doc_id IN ({_placeholders}) "
+                        f"AND (p.parent_text LIKE '%表%' OR p.parent_text LIKE '%费率%' OR "
+                        f"p.parent_text LIKE '%V=D%' OR p.parent_text LIKE '%收费基价%' "
+                        f"OR p.parent_text LIKE '%最终费用%') "
+                        f"ORDER BY p.parent_idx"
+                    ), _params).fetchall()
+                    _injected = set()
+                    for d_id, p_idx, p_text, d_title in _pc_rows:
+                        _key = f"{d_id}:{p_idx}"
+                        if _key not in _injected and len(p_text) > 100:
+                            # Prefer chunks with actual fee numbers
+                            _has_numbers = '%' in p_text or '万' in p_text or 'V=' in p_text or 'g≥' in p_text
+                            if not _has_numbers and len(p_text) < 300:
+                                continue  # skip short table headers without data
+                            _injected.add(_key)
+                            all_results.insert(0, {
+                                "text": p_text[:3000],
+                                "tags": [f"doc_id:{d_id}", f"title:{d_title}",
+                                         "source:industry_fallback"],
+                                "metadata": {"doc_id": d_id, "title": d_title},
+                            })
                 except Exception:
                     pass
-        _fee_docs = {r[0]: r[1] for r in _frows}
+                finally:
+                    try: _pdb.close()
+                    except: pass
+            except Exception as e:
+                logger.warning("[FEE-RECALL] failed: %s", e)
 
-        # Build dedup set from existing results to avoid double-injecting same chunks
-        _injected_keys = set()
-        for r in all_results:
-            _did = None
-            for t in r.get("tags", []):
-                if t.startswith("doc_id:"):
-                    _did = t[7:]
-                    break
-            if _did:
-                _txt = (r.get("text", "") or "")[:100]
-                _injected_keys.add(f"{_did}:{hash(_txt)}")
-
-        # Build amount keywords from query for scoring
-        _amount_kw = [kw for kw in (_tier_extra or []) if "万" in kw]
-        _amount_kw.extend(re.findall(r'\d+[\.\d]*\s*万', q))
-        
-        # Extract fee type keywords from query for boosting
-        _fee_type_kw = []
-        _fee_type_patterns = re.findall(r'(验收测评|验收评测|监理|设计|等保|咨询|审计|招标|检测|评测|评估|造价|管理费|商密|商用密码|密评|密码应用)', q)
-        if _fee_type_patterns:
-            _fee_type_kw = list(set(_fee_type_patterns))
-            logger.info("[D2-B] Fee type detected: %s", _fee_type_kw)
-
-        # Use fee-aware chunk selection — inject ALL fee docs
-        _all_fee_ids = list(_fee_docs.keys())
-        _fee_chunks_to_inject = []
-        if _all_fee_ids:
-            _fee_chunks_to_inject = find_fee_relevant_chunks(
-                _all_fee_ids,
-                amount_keywords=_amount_kw,
-                max_chunks=8,
-                fee_type_keywords=_fee_type_kw,
-            )
-        # ── Always also recall from hindsight for v2 uploads (no parent_chunks) ──
-        _v2_recall = []
-        logger.info("[D2-B] Also doing hindsight recall for %d fee docs", len(_all_fee_ids))
-        try:
-            _v2_recall = await recall(
-                q, limit=20, bank=bank,
-                doc_ids=set(_all_fee_ids),
-            )
-            if _v2_recall:
-                logger.info("[D2-B] Hindsight recall returned %d chunks", len(_v2_recall))
-        except Exception as e:
-            logger.warning("[D2-B] Hindsight recall failed: %s", e)
-        # Prepend in score-descending order — put fee parent_chunks first (table headers),
-        # then hindsight recall (with actual rate data) second so real numbers come AFTER headers
-        # and LLM sees data last in context.
-        for _chunk in reversed(_fee_chunks_to_inject):
-            _dedup_key = f"{_chunk['doc_id']}:{hash(_chunk['text'][:100])}"
-            if _dedup_key in _injected_keys:
-                continue
-            _injected_keys.add(_dedup_key)
-            all_results.insert(0, {
-                    "text": _chunk["text"],
-                    "tags": [
-                        f"doc_id:{_chunk['doc_id']}",
-                        f"title:{_chunk['title']}",
-                        "source:industry_fallback",
-                    ],
-                    "metadata": {
-                        "doc_id": _chunk["doc_id"],
-                        "title": _chunk["title"],
-                        "source": "industry_fallback",
-                    },
-                })
-        for _chunk in reversed(_v2_recall):
-            # Extract doc_id from the chunk's tags (recall() returns chunks without top-level doc_id)
-            _chunk_tags = _chunk.get("tags", [])
-            _chunk_doc_id = None
-            _chunk_title = None
-            for _t in _chunk_tags:
-                if _t.startswith("doc_id:"):
-                    _chunk_doc_id = _t[7:]
-                elif _t.startswith("title:"):
-                    _chunk_title = _t[6:]
-            if not _chunk_doc_id:
-                _chunk_doc_id = _chunk.get("metadata", {}).get("doc_id") or _chunk.get("document_id", "")
-            if not _chunk_title:
-                _chunk_title = _chunk.get("metadata", {}).get("title", "未知文档")
-            if not _chunk_doc_id:
-                logger.warning("[D2-B] skip v2_recall chunk without doc_id")
-                continue
-            _dedup_key = f"{_chunk_doc_id}:{hash(_chunk.get('text','')[:100])}"
-            if _dedup_key in _injected_keys:
-                continue
-            _injected_keys.add(_dedup_key)
-            all_results.insert(0, {
-                    "text": _chunk.get("text", ""),
-                    "tags": [
-                        f"doc_id:{_chunk_doc_id}",
-                        f"title:{_chunk_title}",
-                        "source:industry_fallback",
-                    ],
-                    "metadata": {
-                        "doc_id": _chunk_doc_id,
-                        "title": _chunk_title,
-                        "source": "industry_fallback",
-                    },
-                })
-        if _fee_chunks_to_inject:
-            logger.info(
-                "[D2-B] Injected %d fee chunks (from %d docs), top score=%s",
-                len(_fee_chunks_to_inject), len(_all_fee_ids),
-                max(c["score"] for c in _fee_chunks_to_inject) if _fee_chunks_to_inject else 0,
-            )
-        else:
-            logger.info("[D2-B] No fee chunks found for query: %s", q[:60])
+    # ── 费用类型互斥后滤 ──
+    all_results = filter_conflicting_fee_types(all_results, q)
 
     # ── 清洗 + 过滤 + 去重合并 ──
     doc_facts = {}
@@ -1628,6 +1573,57 @@ async def _generate_answer(
     context = "\n\n---\n\n".join(context_parts)
     sources = sources[:12]
 
+    # ── [FEE] 费率表速查区块：费表数据独立注入 prompt 顶部（2026-08-03）──
+    # 背景：多地市费表并存时，LLM 只看前 2-3 个来源，忽略排后面的东莞表5/表9。
+    # 解法：把含费率数字的费表 chunk 压缩成独立区块，插到 context 最前。
+    _fee_q_check = any(kw in q for kw in [
+        "造价", "取费", "费用", "费率", "收费",
+        "验收测评", "验收评测", "检测费", "测评费", "评测费",
+        "设计费", "监理费", "等保", "密评",
+        "概算", "佛山", "东莞", "造价指南", "概算编制",
+    ])
+    if _fee_q_check and doc_facts:
+        _fee_quick_lines = ["## 费率表速查（多地市并存，逐表核对）"]
+        _added = 0
+        # 直接查 parent_chunks 全表，精确找含"表N"+"费率/收费/基价"的表格块
+        # （不依赖 doc_facts 顺序——doc_facts 前几条可能是封面/前言，费率表在深处）
+        try:
+            _quick_db = SessionLocal()
+            _fee_doc_ids = list(doc_facts.keys())
+            _placeholders = ",".join(f":d{i}" for i in range(len(_fee_doc_ids)))
+            _qparams = {f"d{i}": d for i, d in enumerate(_fee_doc_ids)}
+            _qrows = _quick_db.execute(sa_text(
+                f"SELECT p.doc_id, p.parent_text, d.title FROM parent_chunks p "
+                f"JOIN documents d ON p.doc_id = d.doc_id "
+                f"WHERE p.doc_id IN ({_placeholders}) "
+                f"AND (p.parent_text LIKE '%费率表%' OR p.parent_text LIKE '%收费%基价%' "
+                f"OR p.parent_text LIKE '%计算标准%' OR p.parent_text LIKE '%收费基价%' "
+                f"OR (p.parent_text LIKE '%表%' AND p.parent_text LIKE '%速算%')) "
+                f"ORDER BY p.parent_idx"
+            ), _qparams).fetchall()
+            _seen_blocks = set()
+            for _qd, _qtext, _qtitle in _qrows:
+                # 提取表格行（每行 ≤200 字，只取管道符行）
+                _qrows_tbl = [l for l in _qtext.split("\n")
+                              if l.strip().startswith("|") and len(l) < 200]
+                if len(_qrows_tbl) >= 3:
+                    # 表头 = 第一个含 表/费率/收费 的非管道行，或直接用表格首行
+                    _block_key = f"{_qd}:{_qrows_tbl[0][:40]}"
+                    if _block_key in _seen_blocks:
+                        continue  # 跳过重复块（表2-28 有 15 份）
+                    _seen_blocks.add(_block_key)
+                    _snippet = "\n".join(_qrows_tbl[:12])
+                    _fee_quick_lines.append(f"\n[{_qtitle}]\n{_snippet}")
+                    _added += 1
+                    if _added >= 10:
+                        break
+            _quick_db.close()
+        except Exception as _qe:
+            logger.warning("[FEE-QUICK] direct query failed: %s", _qe)
+        if _added:
+            context = "\n".join(_fee_quick_lines) + "\n\n---\n\n" + context
+            logger.info("[FEE-QUICK] Injected %d fee table quick blocks (direct query)", _added)
+
     # ── [P1] 文档元数据信息卡（独立block，不污染来源标签）──
     # 在 context 中附加每个文档的版本/地域信息，让 LLM 在需要时参考。
     # 设计原则：独立结构化block，不做 inline 标签（避免V8退化）。
@@ -1803,6 +1799,14 @@ async def _generate_answer(
             "   公式：V = 单价 × 数量 × (1-Z)\n"
             "   或 V = c × (1-Z)（一口价）\n"
             "\n"
+            "⑤ 速算增加额法（东莞表9、佛山表2-30 等分档+速算表）：\n"
+            "   公式：V = 本级速算增加额 + 项目本级金额 × 本级费率\n"
+            "   ⚠️ **'项目本级金额'指超出所在档位下限的部分，不是全额！**\n"
+            "   示例（东莞表9）：500万落 400＜N≤1000 档（费率1.6%，速算增加额8）\n"
+            "   正确：V = 8 + (500-400)×1.6% = 8 + 1.6 = 9.6万元\n"
+            "   错误：V = 8 + 500×1.6% = 16万元 ❌（把全额当本级金额）\n"
+            "   验证：档位下限400，500-400=100 才是'项目本级金额'\n"
+            "\n"
             "【核心规则】\n"
             "1. 'X万以下'包含X万本身——例如'100万以下'包含100万元整\n"
             "2. 'X万以上'不包含X万——例如'100万以上'从100.01万开始\n"
@@ -1817,9 +1821,14 @@ async def _generate_answer(
 
     # ── 费用规则条件注入：仅当用户问题涉及费用/计费时加载 ──
     _fee_rules = ""
-    # Note: q is already decoded by FastAPI Form(), but curl -d raw Chinese
-    # can vary by encoding. Use raw q directly (no latin-1 re-encode).
+    # Note: FastAPI Form() decodes UTF-8 correctly, but the requests library
+    # may encode Chinese text as latin-1 re-encoded UTF-8 bytes.
+    # Fix: try latin-1→utf-8 recovery (same pattern as D2-B check at line ~696)
     _d2q_fee = q
+    try:
+        _d2q_fee = q.encode('latin-1').decode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
     if any(kw in _d2q_fee for kw in [
         "造价", "取费", "费用", "费率", "收费",
         "验收测评", "验收评测", "检测费", "测评费", "评测费",
@@ -1849,8 +1858,37 @@ async def _generate_answer(
             "      | 等保/等保测评 | 等保测评服务费、网络安全等级保护测评服务费、表2-28 | 验收测评费/表9（等保≠验收测评）|\n"
             "      | 验收测评/验收评测 | 验收测评费/表9、验收评测费率表 | 等保测评（仅当问等保时）|\n"
             "      | 监理费 | 工程监理服务费/表2-27 | — |\n"
-            "      如果提供的费率表是验收测评费但用户问的是等保，必须明确注明\"提供的费率表为验收测评费，与等保测评是不同费用类型，不应混用\"，然后在回答中提供等保测评服务费的定义和参考依据而非验收测评费率。\n"
-        )
+            "      如果提供的费率表是验收测评费但用户问的是等保，必须明确注明\n"
+            "\"提供的费率表为验收测评费，与等保测评是不同费用类型，不应混用\"\n"
+            "，然后在回答中提供等保测评服务费的定义和参考依据而非验收测评费率。\n"
+            "   j. **多地市/多层次标准共存时 -- 层级优先顺序**"
+            "（最高优先级，覆盖 rule (a) 的\"名称最匹配\"）：\n"
+            "      当检索到的文档同时包含**省级/国家级指导文件**"
+            "和**地市具体实施细则**时：\n"
+            "      - **Step 1 -- 省级框架优先**："
+            "先输出省级指导文件（如《电子政务工程造价指导书》）"
+            "中的计算公式和费率体系。即使用户给了具体金额，也先写省级框架。\n"
+            "      - **Step 2 -- 地市补充（独立计算，禁止参照替代）**："
+            "然后逐一列出各地市（佛山、东莞、广州等）对应的具体费率、"
+            "速算增加额和计算结果。**每个地市必须使用自己的费率表独立计算**，"
+            "当地市有自己的费率表（如东莞表9、佛山表2-30）时，"
+            "**禁止用\"参照X类似标准\"替代其独立结果**——必须给出该地市自己的档位、费率、速算增加额和金额。"
+            "每个地市单独一行，标注地市名称和具体表号。\n"
+            "      - **Step 2b -- 逐个核对来源，禁止漏检**："
+            "回答地市差异时，**必须逐一检查「文档内容」中每个地市的费率表来源**"
+            "（东莞表9、佛山表2-30、省表5-49 等），"
+            "**只要来源中出现该地市的费率表数据，就必须引用**，"
+            "不得因来源排在后位或内容较长而忽略。"
+            "若某地市费率表确实不在「文档内容」中，才可标注\"该地市费率表未检索到\"。\n"
+            "      - **Step 3 -- 档位边界判定（各地市边界不同，逐一确认）**：\n"
+            "        - 档位表达式含义：`N≤X` 或 `D≤X` **包含 X 本身**；`X<N≤Y` 不包含 X。\n"
+            "        - 例如 500万：省表5-49 落 `D≤500` 档（g≥3.0%，Z≤0）；"
+            "东莞表9 落 `400＜N≤1000` 档（费率1.6%，速算增加额8万）；"
+            "佛山表2-30 落 `500及以下` 档（费率2.0%，速算增加额0）。\n"
+            "        - **各地市档位边界可能不同（省500/东莞400/佛山500），必须按各自费率表逐一判定**，"
+            "不得用省表档位套用到地市。\n"
+            "      - **禁止**只选一个地市回答忽略其他，"
+            "也禁止跳过省级框架直接用地市数据。\n"        )
         logger.info("[FEE_RULES] Injected fee calculation rules (query contains fee keywords)")
 
     # ── 对 q 做安全处理（注入防护 + 长度限制）──
@@ -2105,7 +2143,12 @@ def _assess_recall_confidence(
     # 检测 top-k chunk 的文本是否包含实质性条款内容，
     # 而非仅引用/提及（如"按GB 50058的规定"但没有具体技术条款）
     # 费用类查询跳过 L1.5 gate（D2-B注入的表格数据不含"第X条/应符合"等模式但有实际数值）
-    _fee_q_check = any(kw in q for kw in [
+    _q_check = q
+    try:
+        _q_check = q.encode('latin-1').decode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    _fee_q_check = any(kw in _q_check for kw in [
         "造价", "取费", "费用", "费率", "收费",
         "验收测评", "验收评测", "检测费", "测评费", "评测费",
         "审计费", "管理费", "设计费", "监理费", "招标",

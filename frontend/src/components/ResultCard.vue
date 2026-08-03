@@ -353,7 +353,8 @@ function renderStdText(text: string): string {
   display: block;
   overflow-x: auto;
   max-width: 100%;
-  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  /* 移除 table 级 nowrap：长单元格内容自动换行，避免宽表在微信端被截断 */
 }
 
 .result-body :deep(th),
@@ -373,6 +374,9 @@ function renderStdText(text: string): string {
 
 .result-body :deep(td) {
   color: var(--fg-secondary);
+  /* 数据单元格内容过长时允许换行（长费率表数字/描述不截断） */
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .result-body :deep(tbody tr:hover) {

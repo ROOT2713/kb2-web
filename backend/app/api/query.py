@@ -89,10 +89,6 @@ from app.utils.tokenizer import expand_keywords, extract_keyword_snippet
 
 from app.config import settings
 
-from app.services.fee_utils import (
-    find_fee_relevant_chunks,
-)
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 if not logger.handlers:
