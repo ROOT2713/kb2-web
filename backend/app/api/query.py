@@ -171,7 +171,7 @@ async def query(
                     "session_id": session_id,
                     "suggestions": _build_persistent_suggestions(q, cached["sources"]),
                 }
-            cached = await cache_get_semantic(q, bank)
+            cached = await cache_get_semantic(q, bank, threshold=settings.cache_l2_threshold)
             if cached:
                 # 写入审计日志（缓存命中路径）
                 _write_audit_log(request, q, cached["answer"], cached.get("sources", []), cache_hit=1)
@@ -699,7 +699,7 @@ async def web_search_api(
         answer = await chat([
             {"role": "system", "content": bank_prompt},
             {"role": "user", "content": prompt},
-        ])
+        ], max_tokens=8000)
     except Exception as e:
         answer = f"回答失败: {e}"
 

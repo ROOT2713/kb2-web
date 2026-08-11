@@ -543,7 +543,7 @@ async def rag_evaluation():
             answer = await chat([
                 {"role": "system", "content": bank_prompt},
                 {"role": "user", "content": answer_prompt},
-            ])
+            ], max_tokens=8000)
 
             eval_prompt = (
                 f"You are a RAG system evaluation expert. Score the following Q&A pair on 4 dimensions.\n\n"
@@ -565,7 +565,7 @@ async def rag_evaluation():
             eval_result = await chat([
                 {"role": "system", "content": "You are a strict RAG evaluator. Output JSON only."},
                 {"role": "user", "content": eval_prompt},
-            ])
+            ], max_tokens=8000)
 
             json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', eval_result, re.DOTALL)
             scores = {"retrieval": 0, "groundedness": 0, "relevance": 0, "utilization": 0}

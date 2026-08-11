@@ -70,7 +70,7 @@ class Settings(BaseSettings):
 
     # ── Cache ──
     cache_l1_max: int = 2000
-    cache_l2_threshold: float = 0.82
+    cache_l2_threshold: float = 0.88
     cache_ttl_seconds: int = 86400
 
     # ── Chunking ──
