@@ -122,7 +122,7 @@ async def _generate_hypothesis(
     temp = temp_map.get(perspective, temperature)
 
     try:
-        answer = await llm_chat(messages, temperature=temp)
+        answer = await llm_chat(messages, temperature=temp, max_tokens=8000)
         return {"perspective": perspective, "answer": answer}
     except Exception as e:
         logger.warning("Hypothesis '%s' failed: %s", perspective, e)

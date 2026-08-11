@@ -99,11 +99,21 @@ async def chat(
                         logger.warning("cost_tracker failed: %s", e)
 
                 content = choices[0]["message"]["content"]
-                # reasoning model: content 可能为空，检查 reasoning_content
-                if not content and choices[0]["message"].get("reasoning_content"):
-                    content = choices[0]["message"]["reasoning_content"]
+                finish_reason = choices[0].get("finish_reason", "")
+                # 铁律：content 为空时绝不使用 reasoning_content（思维链不是答案）。
+                # 推理模型 reasoning 会吃满 token 预算 → content 被截断为空（finish_reason=length）
+                # → 翻倍 max_tokens 重试（带上限保护）；其余空内容走正常重试/报错。
+                if not content and finish_reason == "length":
+                    if attempt < max_retries - 1:
+                        next_mt = min(max_tokens * 2, 16000)
+                        logger.warning(
+                            "LLM content empty (finish_reason=length), retrying with max_tokens=%d",
+                            next_mt,
+                        )
+                        max_tokens = next_mt
+                        continue
                 if not content:
-                    logger.warning("LLM returned empty content (likely safety refusal), attempt=%d", attempt + 1)
+                    logger.warning("LLM returned empty content (finish_reason=%s), attempt=%d", finish_reason, attempt + 1)
                     if attempt < max_retries - 1:
                         continue
                     raise ValueError(f"LLM returned empty content after {max_retries} attempts")

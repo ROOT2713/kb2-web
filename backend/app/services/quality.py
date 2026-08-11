@@ -124,10 +124,16 @@ def profile_document(text: str) -> dict:
             continue
 
         # Raw numbered headings (no markdown prefix)
+        # ⚠️ 2026-08-11 修复：原正则 ^(\d+(?:\.\d+)*)\s*(.{1,60})$ 会把条款编号/列举项误判为标题
+        # （CECS 182 实证：1787 个假 headings → chunking 碎片化）
+        # 收窄条件：仅 1-2 级编号 + 标题 ≤25 字 + 不含冒号/分号/顿号（排除条款正文和列举项）
+        re_gb_raw_heading = re.compile(r'^(\d{1,2}(?:\.\d{1,2})?)\s+(.{1,60})$')
         m = re_gb_raw_heading.match(line_stripped)
         if m:
             title = f"{m.group(1)} {m.group(2)}".strip()
-            gb_headings.append((1, title, pos))
+            # 过滤列举项/条款正文：含 : ： ; ； 、 。 或标题过长 → 非标题
+            if len(title) <= 25 and not re.search(r'[:：;；、。，,.]', title) and title.count(" ") <= 4:
+                gb_headings.append((1, title, pos))
             continue
 
         # Raw appendix sub-headings (no markdown prefix): A.1 xxx

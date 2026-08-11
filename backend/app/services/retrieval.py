@@ -171,6 +171,7 @@ async def _llm_chat(messages: list, stream: bool = False, max_retries: int = 3) 
     llm_model = settings.llm_model
 
     last_error = None
+    max_tokens = 3000
     for attempt in range(max_retries):
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
@@ -180,7 +181,7 @@ async def _llm_chat(messages: list, stream: bool = False, max_retries: int = 3) 
                     "model": llm_model,
                     "messages": messages,
                     "temperature": 0.3,
-                    "max_tokens": 3000,
+                    "max_tokens": max_tokens,
                     "stream": stream,
                 },
                 timeout=120,
@@ -212,10 +213,24 @@ async def _llm_chat(messages: list, stream: bool = False, max_retries: int = 3) 
                 raise ValueError(f"LLM API 返回异常: {error_msg or resp.text[:200]}")
             try:
                 content = choices[0]["message"]["content"]
-                # reasoning model: content 可能为空，检查 reasoning_content
-                if not content and choices[0]["message"].get("reasoning_content"):
-                    content = choices[0]["message"]["reasoning_content"]
-                return content or "（模型返回空内容）"
+                finish_reason = choices[0].get("finish_reason", "")
+                # 铁律：content 为空时绝不使用 reasoning_content（思维链不是答案）。
+                # finish_reason=length → 推理吃满预算 → 翻倍 max_tokens 重试（带上限保护）。
+                if not content and finish_reason == "length":
+                    if attempt < max_retries - 1:
+                        next_mt = min(max_tokens * 2, 12000)
+                        logger.warning(
+                            "llm_chat: content empty (finish_reason=length), retrying with max_tokens=%d",
+                            next_mt,
+                        )
+                        max_tokens = next_mt
+                        continue
+                if not content:
+                    logger.warning("llm_chat: empty content (finish_reason=%s), attempt=%d", finish_reason, attempt + 1)
+                    if attempt < max_retries - 1:
+                        continue
+                    raise ValueError("LLM returned empty content")
+                return content
             except (KeyError, IndexError, TypeError) as e:
                 logger.warning("llm_chat: choices 格式异常: %s", e)
                 raise ValueError(f"LLM API choices 格式异常: {e}")
