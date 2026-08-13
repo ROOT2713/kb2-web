@@ -460,13 +460,13 @@ async def build_bm25_index(bank: str = "all") -> tuple:
     cache = _get_bm25_cache(bank)
     # ── 增量检测：TTL 未过期 + 最后更新时间未变 → 跳过重建 ──
     if cache["index"] and (now - cache["ts"]) < _BM25_TTL:
+        _count_db = None
         try:
             _count_db = SessionLocal()
             if bank == "all":
                 row = _count_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND status='active'")).fetchone()
             else:
                 row = _count_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND status='active' AND bank=:bank"), {"bank": bank}).fetchone()
-            _count_db.close()
             current_ts = str(row[0]) if row and row[0] else ""
             current_count = row[1] if row else 0
             cached_ts = cache.get("updated_at", "")
@@ -477,11 +477,18 @@ async def build_bm25_index(bank: str = "all") -> tuple:
                            cached_ts[:19], current_ts[:19], cache.get("doc_count", 0), current_count, bank)
         except Exception:
             pass  # 检测失败时正常走重建流程
+        finally:
+            if _count_db is not None:
+                try:
+                    _count_db.close()
+                except Exception:
+                    pass
 
     docs = []
     seen_texts = set()
 
     # ── 主来源: meta.db parent_chunks (原始文档文本，关键词密度高) ──
+    pdb = None
     try:
         pdb = SessionLocal()
         if bank == "all":
@@ -507,6 +514,7 @@ async def build_bm25_index(bank: str = "all") -> tuple:
                   AND (d.category IS NULL OR d.category = '' OR d.category NOT IN ('daily', 'news'))
             """), {"bank": bank}).fetchall()
         pdb.close()
+        pdb = None
 
         added = 0
         for row in rows:
@@ -523,6 +531,12 @@ async def build_bm25_index(bank: str = "all") -> tuple:
             logger.info("[BM25-DEBUG] +%d parent_chunks from meta.db (primary source) for bank=%s", added, bank)
     except Exception as e:
         logger.warning("BM25 parent_chunks failed: %s", e)
+    finally:
+        if pdb is not None:
+            try:
+                pdb.close()
+            except Exception:
+                pass
 
     # ── Fallback: Hindsight recall (仅当 parent_chunks 为空时) ──
     recall_queries = []
@@ -570,6 +584,7 @@ async def build_bm25_index(bank: str = "all") -> tuple:
     bm25 = BM25Okapi(tokenized)
 
     # 获取最后更新时间用于增量检测
+    _ts_db = None
     try:
         _ts_db = SessionLocal()
         if bank == "all":
@@ -577,9 +592,16 @@ async def build_bm25_index(bank: str = "all") -> tuple:
         else:
             _max_ts = _ts_db.execute(text("SELECT MAX(updated_at) FROM documents WHERE searchable=1 AND status='active' AND bank=:bank"), {"bank": bank}).fetchone()[0]
         _ts_db.close()
+        _ts_db = None
         _max_ts_str = str(_max_ts) if _max_ts else ""
     except Exception:
         _max_ts_str = ""
+    finally:
+        if _ts_db is not None:
+            try:
+                _ts_db.close()
+            except Exception:
+                pass
 
     _bm25_caches[bank] = {"index": bm25, "docs": docs, "ts": now, "doc_count": len(docs), "updated_at": _max_ts_str}
     logger.info("BM25 index built: %d chunks for bank=%s (from %d queries + meta.db)", len(docs), bank, len(recall_queries))
@@ -835,7 +857,7 @@ def rrf_merge(dense_results: list, bm25_results: list, k: int = 60, query_keywor
         # 标准号文档加权：标题包含标准号时 1.3x
         if _STD_TITLE_PAT.search(title):
             keyword_boost *= 1.3
-        chunk_scores[key] = chunk_scores.get(key, 0) + keyword_boost / (k + rank + 1)
+        chunk_scores[key] = chunk_scores.get(key, 0) + keyword_boost / (effective_k + rank + 1)
         if key not in chunk_data:
             chunk_data[key] = r
 
@@ -992,6 +1014,7 @@ def _find_rate_table_snippet(tier_keywords: list, bank: str = "all") -> tuple:
     bank: 指定bank过滤，"all"不过滤。[HOTFIX-0606] 防止跨bank数据泄漏。
     [2026-07-22 FIX] 当 tier_keywords 不含 "万" 时，对费用类查询改用
     模糊关键词(等保/收费/费率)查找费率表。"""
+    _db = None
     try:
         _db = SessionLocal()
         _filtered = [kw for kw in tier_keywords if "万" in kw]
@@ -1023,6 +1046,7 @@ def _find_rate_table_snippet(tier_keywords: list, bank: str = "all") -> tuple:
             """
             _rows = _db.execute(text(_sql), _params).fetchall()
             _db.close()
+            _db = None
             for _did, _dtitle, _ptext in _rows:
                 # 取 chunk 中部含表的部分
                 _mid = len(_ptext) // 2
@@ -1053,6 +1077,7 @@ def _find_rate_table_snippet(tier_keywords: list, bank: str = "all") -> tuple:
         """
         _rows = _db.execute(text(_sql), _params).fetchall()
         _db.close()
+        _db = None
         for _did, _dtitle, _ptext in _rows:
             if any(t in _ptext for t in ["3%", "times 3", "3\\"]):
                 _snippet = None
@@ -1070,6 +1095,12 @@ def _find_rate_table_snippet(tier_keywords: list, bank: str = "all") -> tuple:
                 return _snippet, _dtitle
     except Exception as e:
         logger.warning("_find_rate_table_snippet failed: %s", e)
+    finally:
+        if _db is not None:
+            try:
+                _db.close()
+            except Exception:
+                pass
     return None, None
 
 
@@ -1134,6 +1165,7 @@ def apply_tiebreaker_sort(
 
     doc_meta = {}
     if doc_ids:
+        db = None
         try:
             db = SessionLocal()
             id_list = list(doc_ids)
@@ -1148,6 +1180,7 @@ def apply_tiebreaker_sort(
                 params,
             ).fetchall()
             db.close()
+            db = None
             for row in rows:
                 doc_meta[row[0]] = {
                     "published_date": row[1],
@@ -1155,6 +1188,12 @@ def apply_tiebreaker_sort(
                 }
         except Exception as e:
             logger.warning("tiebreaker: batch query failed: %s", e)
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:
+                    pass
 
     use_geo = _check_geo_query(query)
 
