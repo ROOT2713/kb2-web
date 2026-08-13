@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.middleware.jwt_auth import create_access_token
+from app.middleware.jwt_auth import create_access_token, get_current_user
 from app.models.database import get_db
 from app.models.user import User
 
@@ -109,3 +109,19 @@ async def login(body: LoginRequest, request: Request, db: Session = Depends(get_
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="用户名或密码错误",
     )
+
+
+# ── GET /api/auth/me — 返回当前登录用户信息（2026-08-13 CC 审查 S7）──
+@router.get("/me")
+async def get_me(
+    request: Request,
+    username: str = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """返回当前 JWT 用户信息（username + role），供前端校验角色。"""
+    role = "admin"
+    if username != settings.admin_username:
+        user = db.query(User).filter(User.username == username).first()
+        if user:
+            role = user.role
+    return {"username": username, "role": role}

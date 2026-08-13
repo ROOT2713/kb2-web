@@ -1141,15 +1141,30 @@ async def reparse_document(
         except Exception as e:
             logger.warning("Failed to delete old vectors (continuing): %s", e)
     else:
+        # 2026-08-13 CC 审查修复：hindsight 后端必须先按 doc_id tag 匹配内部 id 再删，
+        # 直接用 app UUID 作 URL 会删错（旧向量成孤儿）
         try:
-            await _hindsight_request(
-                f"/v1/default/banks/{hs_bank}/documents/{doc_id}",
-                "DELETE",
-                timeout=30,
+            bank_docs = await _hindsight_request(
+                f"/v1/default/banks/{hs_bank}/documents?limit=1000",
+                "GET",
+                timeout=15,
             )
-            logger.info("Deleted old vectors: %s", doc_id)
+            deleted_old = 0
+            for item in (bank_docs.get("items", []) or []):
+                tags = item.get("tags", [])
+                if any(t == f"doc_id:{doc_id}" for t in tags):
+                    await _hindsight_request(
+                        f"/v1/default/banks/{hs_bank}/documents/{item['id']}",
+                        "DELETE",
+                        timeout=10,
+                    )
+                    deleted_old += 1
+            if deleted_old:
+                logger.info("Deleted old hindsight vectors: %s (%d docs)", doc_id, deleted_old)
+            else:
+                logger.info("No old hindsight vectors found for: %s", doc_id)
         except Exception as e:
-            logger.warning("Failed to delete old vectors (continuing): %s", e)
+            logger.warning("Failed to delete old hindsight vectors (continuing): %s", e)
 
     profile = profile_document(text)
     doc_type = profile.get("doc_type", "generic")

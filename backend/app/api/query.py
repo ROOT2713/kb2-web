@@ -84,6 +84,7 @@ from app.utils.text_cleaning import (
     deai_postprocess,
     expand_amount_tiers,
     normalize_standard_numbers,
+    _fix_encoding,
 )
 from app.utils.tokenizer import expand_keywords, extract_keyword_snippet
 
@@ -116,6 +117,8 @@ async def query(
         raise HTTPException(400, "query q is required")
     if len(q) > 500:
         raise HTTPException(400, "查询过长（最多 500 字）")
+    # 2026-08-13 CC 审查：统一在入口恢复双重编码，删除散落的 5 处 latin-1 hack
+    q = _fix_encoding(q)
 
     # ── nocache 参数解析（兼容 "false"/"0" 为空）──
     _skip_cache = nocache and nocache.lower() not in ("false", "0", "")
@@ -243,13 +246,8 @@ async def query(
 
     # ── 提取查询关键词 ──
     import jieba as _jieba_mod
-    # [FIX] q 在 FastAPI Form 中被误解码为 Latin-1（UTF-8字节→Latin-1字符），jira 分词需正确 Unicode
+    # 2026-08-13：入口已统一 _fix_encoding 恢复编码，此处不再需要 latin-1 hack
     _q_for_kw = q_recalled
-    if len(_q_for_kw) > 0 and max(ord(c) for c in _q_for_kw[:10]) > 127:
-        try:
-            _q_for_kw = q_recalled.encode('latin-1').decode('utf-8')
-        except (UnicodeEncodeError, UnicodeDecodeError, LookupError):
-            pass
     query_keywords_raw = [w for w in _jieba_mod.cut(_q_for_kw) if len(w.strip()) > 1]
     query_keywords = expand_keywords(query_keywords_raw)
     if _tier_extra:

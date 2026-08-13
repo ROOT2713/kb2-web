@@ -472,12 +472,13 @@ async def _build_search_context(
                 all_results.insert(0, bm25_hit)
                 _injected += 1
 
-    # ── Category 过滤（2026-07-10 新增）──
+    # ── Category 过滤（2026-07-10 新增；2026-08-13 CC 审查修复 doc_id 提取）──
     # categories="" → 排除 isolated; categories="all" → 全部; categories="daily,news" → 只这些
     if all_results and categories != "all":
         import sys as _sys9
         from app.services.category_rules import ISOLATED_CATEGORIES
-        all_doc_ids = list({r.get("doc_id", "") for r in all_results if r.get("doc_id")})
+        # 修复：doc_id 可能在 tags（doc_id:xxx）而非顶层，统一用 _get_doc_key 提取
+        all_doc_ids = list({_get_doc_key(r)[0] for r in all_results if _get_doc_key(r)[0]})
         _sys9.stderr.write(f"[CAT-DEBUG] all_results={len(all_results)} docs_before_filter={len(all_doc_ids)} categories={categories}\n")
         if all_doc_ids:
             db_filter = SessionLocal()
@@ -493,7 +494,8 @@ async def _build_search_context(
             requested = {c.strip() for c in categories.split(",") if c.strip()} if categories else set()
             filtered = []
             for r in all_results:
-                cat = doc_cat.get(r.get("doc_id", ""), "")
+                _did = _get_doc_key(r)[0]
+                cat = doc_cat.get(_did, "")
                 if requested:
                     if cat in requested:
                         filtered.append(r)
@@ -503,7 +505,7 @@ async def _build_search_context(
             all_results = filtered
             _sys9.stderr.write(f"[CAT-DEBUG] after_filter={len(all_results)} requested={requested}\n")
             # printable doc_ids with categories
-            _dbg = [(r.get("doc_id","")[:12], doc_cat.get(r.get("doc_id",""),"?")) for r in all_results[:10]]
+            _dbg = [(_get_doc_key(r)[0][:12], doc_cat.get(_get_doc_key(r)[0], "?")) for r in all_results[:10]]
             _sys9.stderr.write(f"[CAT-DEBUG] filtered tops: {_dbg}\n")
 
     # ── KG 消歧增强 ──
@@ -705,10 +707,6 @@ async def _build_search_context(
     # 确保费率表数据在 top results 中。不评分、不注入空表头。
     logger.info("[FEE-DEBUG] entering fee block, q=%s", (q or "")[:50])
     _dq = q
-    try:
-        _dq = q.encode('latin-1').decode('utf-8')
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        pass
     _fee_q = any(kw in _dq for kw in [
         "造价", "取费", "费用", "费率", "收费",
         "验收测评", "验收评测", "检测费", "测评费", "评测费",
@@ -1844,13 +1842,8 @@ async def _generate_answer(
     # ── 费用规则条件注入：仅当用户问题涉及费用/计费时加载 ──
     _fee_rules = ""
     # Note: FastAPI Form() decodes UTF-8 correctly, but the requests library
-    # may encode Chinese text as latin-1 re-encoded UTF-8 bytes.
-    # Fix: try latin-1→utf-8 recovery (same pattern as D2-B check at line ~696)
+    # 2026-08-13：入口已统一 _fix_encoding，此处不再需要 latin-1 hack
     _d2q_fee = q
-    try:
-        _d2q_fee = q.encode('latin-1').decode('utf-8')
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        pass
     if any(kw in _d2q_fee for kw in [
         "造价", "取费", "费用", "费率", "收费",
         "验收测评", "验收评测", "检测费", "测评费", "评测费",
@@ -2179,11 +2172,8 @@ def _assess_recall_confidence(
     # 检测 top-k chunk 的文本是否包含实质性条款内容，
     # 而非仅引用/提及（如"按GB 50058的规定"但没有具体技术条款）
     # 费用类查询跳过 L1.5 gate（D2-B注入的表格数据不含"第X条/应符合"等模式但有实际数值）
+    # 2026-08-13：入口已统一 _fix_encoding，此处不再需要 latin-1 hack
     _q_check = q
-    try:
-        _q_check = q.encode('latin-1').decode('utf-8')
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        pass
     _fee_q_check = any(kw in _q_check for kw in [
         "造价", "取费", "费用", "费率", "收费",
         "验收测评", "验收评测", "检测费", "测评费", "评测费",

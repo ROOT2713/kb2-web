@@ -73,6 +73,35 @@ app.add_middleware(
 # ── Request-ID (最外层中间件，覆盖全链路) ──
 app.add_middleware(RequestIDMiddleware)
 
+# ── HTTP 安全头中间件（2026-08-13 CC 审查 P2：防点击劫持/MIME嗅探）──
+class SecurityHeadersMiddleware:
+    """注入基础安全响应头：X-Frame-Options / X-Content-Type-Options / Referrer-Policy / CSP"""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = message.get("headers", [])
+                extra = [
+                    (b"X-Frame-Options", b"DENY"),
+                    (b"X-Content-Type-Options", b"nosniff"),
+                    (b"Referrer-Policy", b"no-referrer"),
+                    (b"Content-Security-Policy", b"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"),
+                ]
+                message["headers"] = list(headers) + extra
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+app.add_middleware(SecurityHeadersMiddleware)
+
 # ── Auth routes (NO JWT required) ──
 from app.api.auth import router as auth_router  # noqa: E402
 app.include_router(auth_router, prefix="/api/auth", tags=["认证"])
