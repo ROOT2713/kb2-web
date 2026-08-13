@@ -63,8 +63,14 @@ async def login(body: LoginRequest, request: Request, db: Session = Depends(get_
 
     2026-08-13: 登录限速（每 IP 5 次/分钟）+ 旧 SHA-256 哈希首次登录自动升级 bcrypt。
     """
-    # 获取客户端 IP（FastAPI 无内置，从 request 提取）
-    ip = request.client.host if request else "unknown"
+    # 获取客户端 IP（优先 X-Forwarded-For，反代场景 client.host 是代理 IP）
+    ip = "unknown"
+    if request:
+        xff = request.headers.get("x-forwarded-for", "")
+        if xff:
+            ip = xff.split(",")[0].strip()
+        else:
+            ip = request.client.host if request.client else "unknown"
     _check_rate_limit(ip)
 
     if not settings.admin_password:
@@ -119,8 +125,11 @@ async def get_me(
     db: Session = Depends(get_db),
 ):
     """返回当前 JWT 用户信息（username + role），供前端校验角色。"""
-    role = "admin"
-    if username != settings.admin_username:
+    # 默认 viewer（最小权限）：JWT 有效但用户表查不到（已删）时不得拿到 admin
+    role = "viewer"
+    if username == settings.admin_username:
+        role = "admin"  # 配置账号（admin）不在 User 表，直接给 admin
+    else:
         user = db.query(User).filter(User.username == username).first()
         if user:
             role = user.role

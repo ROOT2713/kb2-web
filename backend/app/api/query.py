@@ -115,10 +115,11 @@ async def query(
     """搜索知识库 → 召回 → DeepSeek 合成答案（支持多 bank）"""
     if not q.strip():
         raise HTTPException(400, "query q is required")
+    # 2026-08-13 CC 审查：统一在入口恢复双重编码，删除散落的 5 处 latin-1 hack。
+    # 先恢复编码再限长：双重编码查询按真实长度计数，避免误判超长（CC P3）
+    q = _fix_encoding(q)
     if len(q) > 500:
         raise HTTPException(400, "查询过长（最多 500 字）")
-    # 2026-08-13 CC 审查：统一在入口恢复双重编码，删除散落的 5 处 latin-1 hack
-    q = _fix_encoding(q)
 
     # ── nocache 参数解析（兼容 "false"/"0" 为空）──
     _skip_cache = nocache and nocache.lower() not in ("false", "0", "")
