@@ -36,7 +36,7 @@ from app.utils.text_cleaning import (
 )
 from app.utils.tokenizer import extract_keyword_snippet
 from app.config import settings
-from app.services.fee_utils import find_fee_relevant_chunks
+from app.services.fee_utils import filter_conflicting_fee_types
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,30 @@ def _extract_high_signal_terms(query_keywords: list[str] | None) -> set[str]:
         elif any(c.isascii() and c.isalnum() for c in kw_s) and len(kw_s) >= 2:
             high_signal.add(kw_s.lower())
     return high_signal
+
+
+# ── B03 关键词热加载缓存 ──
+_b03_kb_domains: dict | None = None
+_b03_mtime: float = 0
+_b03_config_path: str = os.path.normpath(os.path.join(
+    os.path.dirname(__file__), "..", "..", "config", "b03_keywords.json"
+))
+
+
+def _load_b03_keywords() -> dict:
+    global _b03_kb_domains, _b03_mtime
+    try:
+        cur_mtime = os.path.getmtime(_b03_config_path)
+        if _b03_kb_domains is None or cur_mtime > _b03_mtime:
+            with open(_b03_config_path) as f:
+                _b03_kb_domains = json.load(f)
+            _b03_mtime = cur_mtime
+            logger.info("B03 keywords loaded: %d domains from %s", len(_b03_kb_domains), _b03_config_path)
+    except Exception:
+        if not _b03_kb_domains:
+            logger.error("B03 keywords load FAILED from %s — B03 gate disabled", _b03_config_path)
+        return _b03_kb_domains or {}
+    return _b03_kb_domains or {}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -330,12 +354,12 @@ async def _build_search_context(
         import jieba as _jieba_mod
         title_keywords = [w for w in _jieba_mod.cut(q_recalled) if len(w.strip()) >= 2]
         if title_keywords:
+            tdb = None
             try:
                 tdb = SessionLocal()
                 all_docs = tdb.execute(
                     sa_text("SELECT doc_id, title FROM documents WHERE searchable=1")
                 ).fetchall()
-                tdb.close()
                 best_doc = None
                 best_score = 0
                 for row in all_docs:
@@ -357,19 +381,32 @@ async def _build_search_context(
                                 exact_results.append(tr)
             except Exception as e:
                 logger.warning("title fuzzy match: %s", e)
+            finally:
+                if tdb is not None:
+                    try: tdb.close()
+                    except Exception: pass
 
     # ── Hybrid Search: Dense + BM25 RRF 融合 ──
     all_recall_results = []
-    if bank != "all" and hs_bank and hs_bank != "kb":
+    # support comma-separated hindsight_banks (consolidated bank groups)
+    if hs_bank and "," in hs_bank:
+        hs_list = [h.strip() for h in hs_bank.split(",") if h.strip()]
+        for hs in hs_list:
+            try:
+                bank_results = await recall(q_recalled, limit=20, bank=hs)
+                all_recall_results.extend(bank_results)
+            except Exception as e:
+                logger.warning("recall(%s) failed: %s", hs, e)
+    elif bank != "all" and hs_bank and hs_bank != "kb":
         try:
-            all_recall_results = await recall(q_recalled, limit=40, bank=hs_bank)
+            all_recall_results = await recall(q_recalled, limit=20, bank=hs_bank)
         except Exception as e:
             logger.warning("recall(%s) failed: %s", hs_bank, e)
     else:
         active_banks = await _get_active_hindsight_banks()
         for _hs_bank in active_banks:
             try:
-                bank_results = await recall(q_recalled, limit=40, bank=_hs_bank)
+                bank_results = await recall(q_recalled, limit=20, bank=_hs_bank)
                 all_recall_results.extend(bank_results)
             except Exception:
                 pass
@@ -383,15 +420,26 @@ async def _build_search_context(
         raw_results = []
 
     # ── BM25 关键词召回 ──
+    import sys as _sys
+    _sys.stderr.write(f"[BM25-MARKER] entering BM25 block bank={bank} q_bm25={q_bm25[:40]} refund_tokens={hasattr(_sys, 'refund_tokens')}\n")
     bm25_merged = list(raw_results)
     bm25_hits = []
     try:
         bm25_index, bm25_docs = await build_bm25_index(bank)
         if bm25_index:
             bm25_hits = bm25_search(q_bm25, bm25_index, bm25_docs, top_k=30)
+            if bm25_hits:
+                bm25_doc_ids = set()
+                for h in bm25_hits:
+                    did = h.get("doc_id") or ""
+                    for tag in h.get("tags", []):
+                        if tag.startswith("title:"):
+                            did = did or tag[6:]
+                    bm25_doc_ids.add(did[:12])
+                logger.warning("[BM25-DEBUG] bank=%s hits=%d doc_ids=%s", bank, len(bm25_hits), list(bm25_doc_ids)[:10])
             bm25_merged = rrf_merge(raw_results, bm25_hits, k=60, query_keywords=query_keywords, bank=bank)
     except Exception as e:
-        logger.warning("BM25 fallback: %s", e)
+        logger.warning("[BM25-DEBUG] BM25 fallback: %s", e)
 
     # 精确结果排在最前面
     all_results = exact_results + bm25_merged
@@ -427,16 +475,19 @@ async def _build_search_context(
     # ── Category 过滤（2026-07-10 新增）──
     # categories="" → 排除 isolated; categories="all" → 全部; categories="daily,news" → 只这些
     if all_results and categories != "all":
+        import sys as _sys9
         from app.services.category_rules import ISOLATED_CATEGORIES
         all_doc_ids = list({r.get("doc_id", "") for r in all_results if r.get("doc_id")})
+        _sys9.stderr.write(f"[CAT-DEBUG] all_results={len(all_results)} docs_before_filter={len(all_doc_ids)} categories={categories}\n")
         if all_doc_ids:
             db_filter = SessionLocal()
             try:
                 from app.models.document import Document
-                rows = db_filter.query(Document.doc_id, Document.category).filter(
+                rows = db_filter.query(Document.doc_id, Document.category, Document.subcategory).filter(
                     Document.doc_id.in_(all_doc_ids)
                 ).all()
                 doc_cat = {d.doc_id: d.category or "" for d in rows}
+                doc_subcat = {d.doc_id: d.subcategory or "" for d in rows}
             finally:
                 db_filter.close()
             requested = {c.strip() for c in categories.split(",") if c.strip()} if categories else set()
@@ -450,6 +501,10 @@ async def _build_search_context(
                     if cat not in ISOLATED_CATEGORIES:
                         filtered.append(r)
             all_results = filtered
+            _sys9.stderr.write(f"[CAT-DEBUG] after_filter={len(all_results)} requested={requested}\n")
+            # printable doc_ids with categories
+            _dbg = [(r.get("doc_id","")[:12], doc_cat.get(r.get("doc_id",""),"?")) for r in all_results[:10]]
+            _sys9.stderr.write(f"[CAT-DEBUG] filtered tops: {_dbg}\n")
 
     # ── KG 消歧增强 ──
     if kg_info.get("disambiguated") and kg_info.get("suggested_doc_ids"):
@@ -603,6 +658,7 @@ async def _build_search_context(
 
     # ── 短摘要扩展：从 parent_chunks 取回全文（在 rerank 之后，D2-B 之前）──
     # [T0-1] 从 raw_results[:30] 移到此处，确保 rerank 后的全量结果都被覆盖
+    _pdb = None
     try:
         _pdb = SessionLocal()
         for _ri, _r in enumerate(all_results):
@@ -636,103 +692,105 @@ async def _build_search_context(
                 if len(_full_text) > len(_text) * 2:
                     all_results[_ri] = {**_r, "text": _full_text}
         _pdb.close()
+        _pdb = None
     except Exception as e:
         logger.warning("short summary enrichment (post-rerank) failed: %s", e)
+    finally:
+        if _pdb is not None:
+            try: _pdb.close()
+            except Exception: pass
 
-    # ── D2-B: 金额类查询定向注入费率表chunk ──
-    # 旧方案: LIMIT 3 parent_chunks → 命中封面/编委会，不含费率表。
-    # 新方案: keyword scoring + formula-aware → 命中 idx=38-55 的真实费率表。
-    _d2q = q
+    # ── 费用类查询增强召回（D2-B 精简版，2026-07-30）──
+    # 当查询含费用关键词时，对费表文档做定向 Hindsight recall，
+    # 确保费率表数据在 top results 中。不评分、不注入空表头。
+    logger.info("[FEE-DEBUG] entering fee block, q=%s", (q or "")[:50])
+    _dq = q
     try:
-        _d2q = q.encode('latin-1').decode('utf-8')
+        _dq = q.encode('latin-1').decode('utf-8')
     except (UnicodeEncodeError, UnicodeDecodeError):
         pass
-    _fee_q = any(kw in _d2q for kw in [
+    _fee_q = any(kw in _dq for kw in [
         "造价", "取费", "费用", "费率", "收费",
         "验收测评", "验收评测", "检测费", "测评费", "评测费",
         "审计费", "管理费", "设计费", "监理费", "招标",
         "等保", "密评", "咨询费",
-        "商密", "商用密码", "密码应用",
+        "概算", "佛山", "东莞", "造价指南", "概算编制",
+        "取费标准", "设计费比例", "计价",
     ])
     if _fee_q:
+        logger.info("[FEE-RECALL] _fee_q=%s q=%s", _fee_q, q[:60])
         try:
             _fdocs = SessionLocal()
             _frows = _fdocs.execute(sa_text(
-                "SELECT d.doc_id, d.title FROM documents d "
-                "WHERE d.searchable=1 AND d.status='active' "
-                "AND d.bank='industry_docs' "
-                "AND (d.title LIKE '%造价%' OR d.title LIKE '%费用%' OR d.title LIKE '%取费%')"
+                "SELECT doc_id FROM documents "
+                "WHERE searchable=1 AND status='active' "
+                "AND (title LIKE '%造价%' OR title LIKE '%费用%' OR title LIKE '%取费%' OR title LIKE '%概算%')"
             )).fetchall()
         except Exception:
             _frows = []
         finally:
-            if '_fdocs' in locals():
+            try: _fdocs.close()
+            except: pass
+        if _frows:
+            _fee_doc_ids = [r[0] for r in _frows]
+            try:
+                _fee_results = await recall(q, limit=10, bank=bank,
+                    doc_ids=set(_fee_doc_ids))
+                if _fee_results:
+                    _existing_keys = set()
+                    for r in all_results:
+                        for t in r.get("tags", []):
+                            if t.startswith("doc_id:"):
+                                _existing_keys.add(t[7:])
+                                break
+                    for r in _fee_results:
+                        _did = None
+                        for t in r.get("tags", []):
+                            if t.startswith("doc_id:"):
+                                _did = t[7:]
+                                break
+                        if _did and _did not in _existing_keys:
+                            all_results.insert(0, r)
+                            _existing_keys.add(_did)
+                # Also inject parent_chunks with fee table content
                 try:
-                    _fdocs.close()
+                    _pdb = SessionLocal()
+                    _placeholders = ",".join(f":d{i}" for i in range(len(_fee_doc_ids)))
+                    _params = {f"d{i}": d for i, d in enumerate(_fee_doc_ids)}
+                    _pc_rows = _pdb.execute(sa_text(
+                        f"SELECT p.doc_id, p.parent_idx, p.parent_text, d.title "
+                        f"FROM parent_chunks p JOIN documents d ON p.doc_id=d.doc_id "
+                        f"WHERE p.doc_id IN ({_placeholders}) "
+                        f"AND (p.parent_text LIKE '%表%' OR p.parent_text LIKE '%费率%' OR "
+                        f"p.parent_text LIKE '%V=D%' OR p.parent_text LIKE '%收费基价%' "
+                        f"OR p.parent_text LIKE '%最终费用%') "
+                        f"ORDER BY p.parent_idx"
+                    ), _params).fetchall()
+                    _injected = set()
+                    for d_id, p_idx, p_text, d_title in _pc_rows:
+                        _key = f"{d_id}:{p_idx}"
+                        if _key not in _injected and len(p_text) > 100:
+                            # Prefer chunks with actual fee numbers
+                            _has_numbers = '%' in p_text or '万' in p_text or 'V=' in p_text or 'g≥' in p_text
+                            if not _has_numbers and len(p_text) < 300:
+                                continue  # skip short table headers without data
+                            _injected.add(_key)
+                            all_results.insert(0, {
+                                "text": p_text[:3000],
+                                "tags": [f"doc_id:{d_id}", f"title:{d_title}",
+                                         "source:industry_fallback"],
+                                "metadata": {"doc_id": d_id, "title": d_title},
+                            })
                 except Exception:
                     pass
-        _fee_docs = {r[0]: r[1] for r in _frows}
+                finally:
+                    try: _pdb.close()
+                    except: pass
+            except Exception as e:
+                logger.warning("[FEE-RECALL] failed: %s", e)
 
-        # Build dedup set from existing results to avoid double-injecting same chunks
-        _injected_keys = set()
-        for r in all_results:
-            _did = None
-            for t in r.get("tags", []):
-                if t.startswith("doc_id:"):
-                    _did = t[7:]
-                    break
-            if _did:
-                _txt = (r.get("text", "") or "")[:100]
-                _injected_keys.add(f"{_did}:{hash(_txt)}")
-
-        # Build amount keywords from query for scoring
-        _amount_kw = [kw for kw in (_tier_extra or []) if "万" in kw]
-        _amount_kw.extend(re.findall(r'\d+[\.\d]*\s*万', q))
-        
-        # Extract fee type keywords from query for boosting
-        _fee_type_kw = []
-        _fee_type_patterns = re.findall(r'(验收测评|验收评测|监理|设计|等保|咨询|审计|招标|检测|评测|评估|造价|管理费|商密|商用密码|密评|密码应用)', q)
-        if _fee_type_patterns:
-            _fee_type_kw = list(set(_fee_type_patterns))
-            logger.info("[D2-B] Fee type detected: %s", _fee_type_kw)
-
-        # Use fee-aware chunk selection — inject ALL fee docs
-        _all_fee_ids = list(_fee_docs.keys())
-        _fee_chunks_to_inject = []
-        if _all_fee_ids:
-            _fee_chunks_to_inject = find_fee_relevant_chunks(
-                _all_fee_ids,
-                amount_keywords=_amount_kw,
-                max_chunks=8,
-                fee_type_keywords=_fee_type_kw,
-            )
-        # Prepend in score-descending order, skip already-injected chunks
-        for _chunk in reversed(_fee_chunks_to_inject):
-            _dedup_key = f"{_chunk['doc_id']}:{hash(_chunk['text'][:100])}"
-            if _dedup_key in _injected_keys:
-                continue
-            _injected_keys.add(_dedup_key)
-            all_results.insert(0, {
-                    "text": _chunk["text"],
-                    "tags": [
-                        f"doc_id:{_chunk['doc_id']}",
-                        f"title:{_chunk['title']}",
-                        "source:industry_fallback",
-                    ],
-                    "metadata": {
-                        "doc_id": _chunk["doc_id"],
-                        "title": _chunk["title"],
-                        "source": "industry_fallback",
-                    },
-                })
-        if _fee_chunks_to_inject:
-            logger.info(
-                "[D2-B] Injected %d fee chunks (from %d docs), top score=%d",
-                len(_fee_chunks_to_inject), len(_all_fee_ids),
-                _fee_chunks_to_inject[0]["score"] if _fee_chunks_to_inject else 0,
-            )
-        else:
-            logger.info("[D2-B] No fee chunks found for query: %s", q[:60])
+    # ── 费用类型互斥后滤 ──
+    all_results = filter_conflicting_fee_types(all_results, q)
 
     # ── 清洗 + 过滤 + 去重合并 ──
     doc_facts = {}
@@ -754,15 +812,27 @@ async def _build_search_context(
         if not doc_id:
             doc_id = f"_notag_{id(r)}"
 
+        logger.warning("[P0.5-DEBUG] processing doc_id=%s bank=%s title_map_has=%s", doc_id[:20], bank, doc_id in title_map)
+
         # 过滤 skip bank
         if bank_map.get(doc_id) == "skip":
             continue
 
-        # 过滤指定 bank
+        # 过滤指定 bank — 兼容旧 bank 名（standards→industry, industry_docs→industry 等）
         if bank != "all":
-            mapped = bank_map.get(doc_id)
-            if mapped is not None and mapped != bank:
-                continue
+            if not bank.startswith("kb_"):
+                mapped = bank_map.get(doc_id)
+                if mapped is not None and mapped != bank:
+                    # 旧 bank 名映射（2026-07-21 合并后遗留）
+                    _old_bank_map = {
+                        "standards": "industry", "industry_docs": "industry", "tech_guides": "industry",
+                        "general": "industry", "checklist": "industry", "templates": "industry",
+                        "methodology": "industry", "business": "industry",
+                        "咨询": "personal", "xhs": "personal", "kb_xhs": "personal",
+                        "management": "project", "consulting": "project",
+                    }
+                    if _old_bank_map.get(mapped) != bank:
+                        continue
 
         # 提取文档名
         doc_name = ""
@@ -777,8 +847,31 @@ async def _build_search_context(
             meta_title = title_map.get(doc_id, "")
             if meta_title:
                 doc_name = meta_title
+        # [P0-fix] Fallback: extract title from hindsight tags "doc:doc_<uuid>_<title>" format
+        if not doc_name or doc_name == "未知文档":
+            for t in tags:
+                if t.startswith("doc:"):
+                    # Format: doc:doc_uuid_【机】GB XXX-YYYY 规范名称.pdf
+                    parts = t.split("_", 2)
+                    if len(parts) >= 3:
+                        doc_name = parts[2]
+                        break
         if not doc_name:
             doc_name = "未知文档"
+
+        # [P0.5] 跳过无来源归属的孤儿 chunk（旧 Hindsight 数据，metadata 不可恢复）
+        # 策略：doc_id 不在 SQLite 中 → 用 metadata title 兜底 → 仍空则跳过
+        # ⚠️ D2-B 注入的 chunks（source:industry_fallback）跳过此检查 — 来自已验证的 fee docs
+        if any(_t == "source:industry_fallback" for _t in tags):
+            pass
+        elif doc_id not in title_map and not doc_id.startswith("_notag_"):
+            meta_title = (r.get("metadata") or {}).get("title", "")
+            if meta_title:
+                doc_name = meta_title
+                logger.info("[P0.5-DEBUG] orphan kept via meta_title: doc_id=%s meta_title=%s", doc_id[:16], doc_name[:40])
+            else:
+                logger.info("[P0.5-DEBUG] skip orphan: doc_id=%s no meta.title, title_map_size=%d", doc_id[:16], len(title_map))
+                continue
 
         # 清理 Hindsight 元数据
         cleaned = re.sub(r'\s*\|\s*(When|Involving|Entities|Location|Type|Source):[^|]*', '', text_val).strip()
@@ -868,6 +961,7 @@ async def _build_search_context(
         "_tier_extra": _tier_extra,
         "bank_map": bank_map,
         "title_map": title_map,
+        "categories": categories,  # 透传分类选择，供 confidence gate 使用
     }
 
 
@@ -893,15 +987,16 @@ def _keyword_suggestion_rules(q: str) -> list:
 
 # ── 模块级标准号正则 ──
 _STD_PATTERN = re.compile(
-    r'(GB\s*/?\s*T?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
-    r'|ISO(?:\s*/\s*IEC)?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
-    r'|(?:YD|SJ|GA|HJ|CJJ|JGJ|WS)\s*/?\s*T?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
-    r'|T\s*/\s*EGAG\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
-    r'|TEGAG\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
-    r'|GDZW\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
+    r'(GB\s*/?\s*T?\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
+    r'|ISO(?:\s*/\s*IEC)?\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
+    r'|(?:YD|SJ|GA|HJ|CJJ|JGJ|WS|GY|JJF|JJG)\s*/?\s*T?\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
+    r'|T\s*/\s*EGAG\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
+    r'|TEGAG\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
+    r'|GDZW\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
     r'|STC[\w\-]+'
     r'|DB\d+[\w\-]*'
-    r'|[一-鿿]+〔\d+〕\d+号)'
+    r'|[一-鿿]+〔\d+〕\d+号)',
+    re.IGNORECASE,
 )
 
 
@@ -913,11 +1008,12 @@ def _normalize_doc_title_for_standard(title: str) -> str:
 def _normalize_standard_keyword(raw: str) -> str:
     """规范化标准号关键词，统一空格和 GB/T 写法。"""
     kw = re.sub(r"\s+", " ", raw).strip()
-    kw = re.sub(r"GB\s*/\s*T", "GB/T", kw, flags=re.IGNORECASE)
+    kw = re.sub(r"GB\s*/?\s*T", "GB/T", kw, flags=re.IGNORECASE)
+    kw = re.sub(r"GB\s*-?\s*T", "GB/T", kw, flags=re.IGNORECASE)
     kw = re.sub(r"GB\s+T", "GB/T", kw, flags=re.IGNORECASE)
     kw = re.sub(r"T\s*/\s*EGAG", "T/EGAG", kw, flags=re.IGNORECASE)
     kw = re.sub(r"ISO\s*/\s*IEC", "ISO/IEC", kw, flags=re.IGNORECASE)
-    kw = re.sub(r"\s*([\—\-–])\s*", r"\1", kw)
+    kw = re.sub(r"\s*([\—\-\–])\s*", r"\1", kw)
     return kw
 
 
@@ -927,8 +1023,8 @@ def _normalize_standard_keyword(raw: str) -> str:
 
 _STD_VERSION_PATTERN = re.compile(
     r'(?P<prefix>'
-    r'GB(?:/T)?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
-    r'|ISO(?:\s*/\s*IEC)?\s*\d+(?:[\.\—\-–]\s*\d{1,4})?'
+    r'GB(?:/T)?\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
+    r'|ISO(?:\s*/\s*IEC)?\s*\d+(?:[\.\—\-\–]\s*\d{1,4})?'
     r'|YD\s*/?\s*T?\s*\d+'
     r'|SJ\s*/?\s*T?\s*\d+'
     r'|GA\s*/?\s*T?\s*\d+'
@@ -936,6 +1032,9 @@ _STD_VERSION_PATTERN = re.compile(
     r'|CJJ\s*/?\s*T?\s*\d+'
     r'|JGJ\s*/?\s*T?\s*\d+'
     r'|WS\s*/?\s*T?\s*\d+'
+    r'|GY\s*/?\s*T?\s*\d+'
+    r'|JJF\s*/?\s*T?\s*\d+'
+    r'|JJG\s*/?\s*T?\s*\d+'
     r'|T\s*/\s*EGAG\s*\d+'
     r'|TEGAG\s*\d+'
     r'|GDZW\s*\d+'
@@ -1324,6 +1423,7 @@ async def _generate_answer(
     _tier_extra: list,
     title_map: dict,
     kg_context_text: str = "",
+    ctx: dict = None,
 ) -> dict:
     """
     生成LLM答案 — 构建上下文 + 组装prompt + LLM调用 + 后处理。
@@ -1355,6 +1455,7 @@ async def _generate_answer(
                 parent_keys_to_fetch.add((doc_id, pidx))
 
     if parent_keys_to_fetch:
+        pdb = None
         try:
             pdb = SessionLocal()
             for did, pidx in parent_keys_to_fetch:
@@ -1365,8 +1466,13 @@ async def _generate_answer(
                 if row:
                     parent_text_cache[(did, pidx)] = row[0]
             pdb.close()
+            pdb = None
         except Exception as e:
             logger.warning("parent_chunks query failed: %s", e)
+        finally:
+            if pdb is not None:
+                try: pdb.close()
+                except Exception: pass
 
     # ── 按文档合并：每个文档取 top-2 fact，拼接 ──
     context_parts = []
@@ -1483,6 +1589,63 @@ async def _generate_answer(
     context = "\n\n---\n\n".join(context_parts)
     sources = sources[:12]
 
+    # ── [FEE] 费率表速查区块：费表数据独立注入 prompt 顶部（2026-08-03）──
+    # 背景：多地市费表并存时，LLM 只看前 2-3 个来源，忽略排后面的东莞表5/表9。
+    # 解法：把含费率数字的费表 chunk 压缩成独立区块，插到 context 最前。
+    _fee_q_check = any(kw in q for kw in [
+        "造价", "取费", "费用", "费率", "收费",
+        "验收测评", "验收评测", "检测费", "测评费", "评测费",
+        "设计费", "监理费", "等保", "密评",
+        "概算", "佛山", "东莞", "造价指南", "概算编制",
+    ])
+    if _fee_q_check and doc_facts:
+        _fee_quick_lines = ["## 费率表速查（多地市并存，逐表核对）"]
+        _added = 0
+        # 直接查 parent_chunks 全表，精确找含"表N"+"费率/收费/基价"的表格块
+        # （不依赖 doc_facts 顺序——doc_facts 前几条可能是封面/前言，费率表在深处）
+        try:
+            _quick_db = None
+            _quick_db = SessionLocal()
+            _fee_doc_ids = list(doc_facts.keys())
+            _placeholders = ",".join(f":d{i}" for i in range(len(_fee_doc_ids)))
+            _qparams = {f"d{i}": d for i, d in enumerate(_fee_doc_ids)}
+            _qrows = _quick_db.execute(sa_text(
+                f"SELECT p.doc_id, p.parent_text, d.title FROM parent_chunks p "
+                f"JOIN documents d ON p.doc_id = d.doc_id "
+                f"WHERE p.doc_id IN ({_placeholders}) "
+                f"AND (p.parent_text LIKE '%费率表%' OR p.parent_text LIKE '%收费%基价%' "
+                f"OR p.parent_text LIKE '%计算标准%' OR p.parent_text LIKE '%收费基价%' "
+                f"OR (p.parent_text LIKE '%表%' AND p.parent_text LIKE '%速算%')) "
+                f"ORDER BY p.parent_idx"
+            ), _qparams).fetchall()
+            _seen_blocks = set()
+            for _qd, _qtext, _qtitle in _qrows:
+                # 提取表格行（每行 ≤200 字，只取管道符行）
+                _qrows_tbl = [l for l in _qtext.split("\n")
+                              if l.strip().startswith("|") and len(l) < 200]
+                if len(_qrows_tbl) >= 3:
+                    # 表头 = 第一个含 表/费率/收费 的非管道行，或直接用表格首行
+                    _block_key = f"{_qd}:{_qrows_tbl[0][:40]}"
+                    if _block_key in _seen_blocks:
+                        continue  # 跳过重复块（表2-28 有 15 份）
+                    _seen_blocks.add(_block_key)
+                    _snippet = "\n".join(_qrows_tbl[:12])
+                    _fee_quick_lines.append(f"\n[{_qtitle}]\n{_snippet}")
+                    _added += 1
+                    if _added >= 10:
+                        break
+            _quick_db.close()
+            _quick_db = None
+        except Exception as _qe:
+            logger.warning("[FEE-QUICK] direct query failed: %s", _qe)
+        finally:
+            if _quick_db is not None:
+                try: _quick_db.close()
+                except Exception: pass
+        if _added:
+            context = "\n".join(_fee_quick_lines) + "\n\n---\n\n" + context
+            logger.info("[FEE-QUICK] Injected %d fee table quick blocks (direct query)", _added)
+
     # ── [P1] 文档元数据信息卡（独立block，不污染来源标签）──
     # 在 context 中附加每个文档的版本/地域信息，让 LLM 在需要时参考。
     # 设计原则：独立结构化block，不做 inline 标签（避免V8退化）。
@@ -1583,6 +1746,15 @@ async def _generate_answer(
             + context
         )
 
+    # ── Wiki 结构化知识注入（高于 RAG chunks，与速查卡同级）──
+    if ctx and ctx.get("wiki_context") and ctx.get("wiki_context", "").strip():
+        context = (
+            ctx["wiki_context"]
+            + "\n\n---\n\n"
+            + context
+        )
+        logger.info("[Wiki] Injected structured knowledge block into prompt context (has_wiki=True)")
+
     # ── C2 速查卡 注入（最顶层，让 LLM 先读凝练事实） ──
     if core_claims_context:
         context = core_claims_context + "\n\n---\n\n" + context
@@ -1592,7 +1764,16 @@ async def _generate_answer(
     # 此处只作为兜底：检查 context 中是否已被 D2-B 注入（有 %、费率、计费额等特征），
     # 已注入则跳过 T7 避免重复。
     _has_rate = any(t in p for p in context_parts for t in ["%", "费率", "计费额", "收费基价"])
-    if _tier_extra and not _has_rate:
+    if (_tier_extra or any(kw in q for kw in [
+        "造价", "取费", "费用", "费率", "收费",
+        "验收测评", "验收评测", "检测费", "测评费", "评测费",
+        "审计费", "管理费", "设计费", "监理费", "招标",
+        "等保", "密评", "咨询费",
+        "商密", "商用密码", "密码应用",
+        "概算", "佛山", "东莞", "造价指南", "概算编制",
+        "概算指南", "取费标准", "设计费比例", "比例范围",
+        "计价", "计价表", "投资比例",
+    ])) and not _has_rate:
         _snippet, _dtitle = _find_rate_table_snippet(_tier_extra, bank)
         if _snippet:
             _tier_label = _tier_extra[0]
@@ -1640,6 +1821,14 @@ async def _generate_answer(
             "   公式：V = 单价 × 数量 × (1-Z)\n"
             "   或 V = c × (1-Z)（一口价）\n"
             "\n"
+            "⑤ 速算增加额法（东莞表9、佛山表2-30 等分档+速算表）：\n"
+            "   公式：V = 本级速算增加额 + 项目本级金额 × 本级费率\n"
+            "   ⚠️ **'项目本级金额'指超出所在档位下限的部分，不是全额！**\n"
+            "   示例（东莞表9）：500万落 400＜N≤1000 档（费率1.6%，速算增加额8）\n"
+            "   正确：V = 8 + (500-400)×1.6% = 8 + 1.6 = 9.6万元\n"
+            "   错误：V = 8 + 500×1.6% = 16万元 ❌（把全额当本级金额）\n"
+            "   验证：档位下限400，500-400=100 才是'项目本级金额'\n"
+            "\n"
             "【核心规则】\n"
             "1. 'X万以下'包含X万本身——例如'100万以下'包含100万元整\n"
             "2. 'X万以上'不包含X万——例如'100万以上'从100.01万开始\n"
@@ -1654,15 +1843,23 @@ async def _generate_answer(
 
     # ── 费用规则条件注入：仅当用户问题涉及费用/计费时加载 ──
     _fee_rules = ""
-    # Note: q is already decoded by FastAPI Form(), but curl -d raw Chinese
-    # can vary by encoding. Use raw q directly (no latin-1 re-encode).
+    # Note: FastAPI Form() decodes UTF-8 correctly, but the requests library
+    # may encode Chinese text as latin-1 re-encoded UTF-8 bytes.
+    # Fix: try latin-1→utf-8 recovery (same pattern as D2-B check at line ~696)
     _d2q_fee = q
+    try:
+        _d2q_fee = q.encode('latin-1').decode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
     if any(kw in _d2q_fee for kw in [
         "造价", "取费", "费用", "费率", "收费",
         "验收测评", "验收评测", "检测费", "测评费", "评测费",
         "审计费", "管理费", "设计费", "监理费", "招标",
         "等保", "密评", "咨询费",
         "商密", "商用密码", "密码应用",
+        "概算", "佛山", "东莞", "造价指南", "概算编制",
+        "概算指南", "取费标准", "设计费比例", "比例范围",
+        "计价", "计价表", "投资比例",
     ]):
         _fee_rules = (
             "**计费类查询强制计算规则**：当「文档内容」中包含费率表（分档百分比/基价表）、计算公式（V=Dxgx(1-Z)/直线内插等）或具体计费数据时，你必须基于文档中的公式和数据执行以下操作：\n"
@@ -1676,7 +1873,58 @@ async def _generate_answer(
             "      - \"验收评测费率表\"：g值约2.8%~3.0%，适用于验收评测场景\n"
             "      - \"全流程评测费率表\"：g值约6%~12%，适用于全流程评测场景\n"
             "      用户问验收评测费时，必须使用\"验收评测费率\"列的数据，不得使用\"全流程评测费率\"（g值过高会导致结果错误）。\n"
-        )
+            "   h. **覆盖【输出要求】#2 — 费用类查询改用固定表格模板**：\n"
+            "      - 费用类查询必须输出**固定五列表格**，表头硬编码为：\n"
+            "        `| 地市/标准 | 费用类型 | 金额（万元） | 计算公式 | 依据文件及表号 |`\n"
+            "      - 分隔线 `|---|---|---|---|---|`，每行一个地市/标准，LLM 只填充数据格，不得改表头列名、不得换行展开表格外的计算说明。\n"
+            "      - 每个数字必须标注来源（文档名称+表号）。多档位用多行。\n"
+            "      - 表格后最多 3 行简短说明，禁止长篇分节展开。\n"
+            "   k. **枚举覆盖 — 回答必须包含所有已检索到的地市/标准口径**（2026-08-05）：\n"
+            "      - **先列出所有涉及地市的数字结论**（不得遗漏任何已检索到的地市/标准），\n"
+            "      再按固定格式「地市 | 费用类型 | 金额 | 计算公式 | 依据表号」表格展开。\n"
+            "      - 若某地市/标准在「文档内容」中已检索到费率表，**必须**在回答中列出其数字结论；\n"
+            "      只有确实未检索到该地市费率表时，才可标注\"该地市费率表未检索到\"。\n"
+            "      - **省级框架也必须给具体数字**：若省级指导书（如表5-49）费率表在文档中，"
+            "必须计算省级金额（如 D≤500 档 g=3.0% → 500×3.0%=15万），"
+            "**禁止用\"以各地市标准为准\"\"省级无统一标准\"等推脱语代替具体数值**。\n"
+            "      - **禁止**因详略偏好而选择性忽略某地市（如只答佛山不答东莞，或漏省表）。\n"
+            "   i. **⚠️ 费用类型不可混同 — 必须在回答前确认费用类型匹配**：\n"
+            "      | 用户问 | 应引用 | 不应引用 |\n"
+            "      |--------|--------|---------|\n"
+            "      | 等保/等保测评 | 等保测评服务费、网络安全等级保护测评服务费、表2-28 | 验收测评费/表9（等保≠验收测评）|\n"
+            "      | 验收测评/验收评测 | 验收测评费/表9、验收评测费率表 | 等保测评（仅当问等保时）|\n"
+            "      | 监理费 | 工程监理服务费/表2-27 | — |\n"
+            "      如果提供的费率表是验收测评费但用户问的是等保，必须明确注明\n"
+            "\"提供的费率表为验收测评费，与等保测评是不同费用类型，不应混用\"\n"
+            "，然后在回答中提供等保测评服务费的定义和参考依据而非验收测评费率。\n"
+            "   j. **多地市/多层次标准共存时 -- 层级优先顺序**"
+            "（最高优先级，覆盖 rule (a) 的\"名称最匹配\"）：\n"
+            "      当检索到的文档同时包含**省级/国家级指导文件**"
+            "和**地市具体实施细则**时：\n"
+            "      - **Step 1 -- 省级框架优先**："
+            "先输出省级指导文件（如《电子政务工程造价指导书》）"
+            "中的计算公式和费率体系。即使用户给了具体金额，也先写省级框架。\n"
+            "      - **Step 2 -- 地市补充（独立计算，禁止参照替代）**："
+            "然后逐一列出各地市（佛山、东莞、广州等）对应的具体费率、"
+            "速算增加额和计算结果。**每个地市必须使用自己的费率表独立计算**，"
+            "当地市有自己的费率表（如东莞表9、佛山表2-30）时，"
+            "**禁止用\"参照X类似标准\"替代其独立结果**——必须给出该地市自己的档位、费率、速算增加额和金额。"
+            "每个地市单独一行，标注地市名称和具体表号。\n"
+            "      - **Step 2b -- 逐个核对来源，禁止漏检**："
+            "回答地市差异时，**必须逐一检查「文档内容」中每个地市的费率表来源**"
+            "（东莞表9、佛山表2-30、省表5-49 等），"
+            "**只要来源中出现该地市的费率表数据，就必须引用**，"
+            "不得因来源排在后位或内容较长而忽略。"
+            "若某地市费率表确实不在「文档内容」中，才可标注\"该地市费率表未检索到\"。\n"
+            "      - **Step 3 -- 档位边界判定（各地市边界不同，逐一确认）**：\n"
+            "        - 档位表达式含义：`N≤X` 或 `D≤X` **包含 X 本身**；`X<N≤Y` 不包含 X。\n"
+            "        - 例如 500万：省表5-49 落 `D≤500` 档（g≥3.0%，Z≤0）；"
+            "东莞表9 落 `400＜N≤1000` 档（费率1.6%，速算增加额8万）；"
+            "佛山表2-30 落 `500及以下` 档（费率2.0%，速算增加额0）。\n"
+            "        - **各地市档位边界可能不同（省500/东莞400/佛山500），必须按各自费率表逐一判定**，"
+            "不得用省表档位套用到地市。\n"
+            "      - **禁止**只选一个地市回答忽略其他，"
+            "也禁止跳过省级框架直接用地市数据。\n"        )
         logger.info("[FEE_RULES] Injected fee calculation rules (query contains fee keywords)")
 
     # ── 对 q 做安全处理（注入防护 + 长度限制）──
@@ -1690,9 +1938,15 @@ async def _generate_answer(
 【相关性约束 — 最高优先级，覆盖【回答原则】和【输出要求】】
 **如果检索到的 chunks 与用户问题主题明显无关，你必须拒绝回答而非编造。**
 判断标准（满足任一即判定无关）：
-- 用户问题涉及文学/医学/艺术/烹饪/体育/娱乐等非政务IT领域，但 chunks 全部来自技术标准/造价指南/机房规范
+- 用户问题涉及非政务IT领域（文学/医学/艺术/烹饪/体育/娱乐等），且 chunks 全部来自技术标准/造价指南/机房规范
 - chunks 中仅出现通用词匹配（如"什么"、"标准"、"规定"、"系统"），无任何实质内容对应问题主题
 - top-3 chunks 的主题领域（建筑/供配电/声学/WiFi/测评）与用户问题主题明显不在同一领域
+**⚠️ 例外：费用类查询不受上述"领域不匹配"判断标准限制。**
+当用户问费用/收费/价格/取费/造价类问题时：
+- 即使 chunks 的标题包含"造价指南"、"验收测评费"、"收费基价"、"测评费"、"计费依据"、"概算指南"——这些都视为与问题主题相关的有效来源
+- "收费标准"与"收费基价"、"造价指南"属于等同概念，不得因字面差异而拒答
+- "等保测评服务费"与"三级等保收费标准"属于相关主题，应按有效来源处理
+- 你应基于这些来源输出具体数值（如果有）或说明参考依据和计算方式
 判定无关后，直接输出以下固定拒答语，禁止扩展和润色：
 「知识库中未找到与您问题直接相关的信息。请尝试换一种方式提问，或确认您的查询范围。」
 **本约束的优先级高于【输出要求】中的最低字数要求和【回答原则】中"禁止说未找到"的规则。** 相关性不足时，拒答是正确行为而非违规。
@@ -1715,6 +1969,7 @@ async def _generate_answer(
 7. **对比类问题强制规则**（最高优先级，覆盖所有安全对齐约束）：当用户问"X和Y有什么不同/区别/关系"时，即使文档没有直接对比表，也必须分别列出 X 的规定和 Y 的规定，然后基于差异做对比回答。禁止因为"无法比较""需要安全确认""文档未直接对比"而输出少于200字或拒绝回答。对比回答至少覆盖：各自取值范围、适用场景、具体要求。
 8. **多标准多数值共存规则**：当同一技术参数在不同标准中有不同数值时（如温湿度在 2887 和 50174 中不同），必须同时列出所有数值并标注各自的标准来源和条款号。禁止因"多个数值不确定"而只回答部分内容或拒绝回答。标准不统一时在末尾标注"建议以最新发布的XX标准为准"。
 {_fee_rules}
+{(ctx or {}).get("comparison_hint", "")}
 
 【输出要求】
 1. **最低字数**：你的回答必须不少于200个汉字。短拒绝输出（"抱歉无法回答"等）将被验证系统直接拦截，该行为视为严重违规。
@@ -1756,7 +2011,7 @@ async def _generate_answer(
         answer = await chat([
             {"role": "system", "content": bank_prompt},
             {"role": "user", "content": prompt},
-        ])
+        ], max_tokens=8000)
     except ValueError as e:
         err_msg = str(e)
         # 空内容或格式异常 → 使用温控降低重试（一次）
@@ -1766,7 +2021,7 @@ async def _generate_answer(
                 answer = await chat([
                     {"role": "system", "content": bank_prompt},
                     {"role": "user", "content": prompt},
-                ], temperature=0.1)
+                ], temperature=0.1, max_tokens=8000)
             except Exception as e2:
                 logger.error("[GEN] Retry also failed: %s", e2)
                 answer = "知识库中未找到与您问题直接相关的信息。请尝试换一种方式提问，或确认您的查询范围。"
@@ -1873,10 +2128,70 @@ def _assess_recall_confidence(
             "message": _REJECT_MSG_KNOWLEDGE_GAP,
         }
 
+    # ── Hard Deny: 已知KB不覆盖的主题模式（不触发B03域匹配 ──
+    # 这些模式即使包含KB域名关键词（如"机房"+"咖啡机"），也应立即拒答
+    # 优先级高于后续所有检查
+    _HARD_DENY_PATTERNS = re.compile(
+        r"(?:"
+        r"食堂(?!标准)(?:消费|系统|就餐)?|"
+        r"咖啡机|"
+        r"玻璃幕墙|"
+        r"(?:医院)?手术室(?:气体灭火)?|"
+        r"工业厂房|"
+        r"防火分区|"
+        r"气体灭火系统(?:设计|配置|喷头)?|"
+        r"灭火器|"
+        r"消防报警系统|"
+        r"消防泵房|"
+        r"排烟管道|防火包覆|"
+        r"厨房|排气(?:管道|系统)|"
+        r"电梯维保|"
+        r"(?:足球|篮球|世界杯|网球|奥运会|运动员|夺冠|比赛)|"
+        r"周杰伦|七里香|歌词|音乐作品|"
+        r"高血压|糖尿病|患者|药物|治疗|"
+        r"背景音乐|扬声器功率|"
+        r"窗帘|桌椅"
+        r")"
+    )
+    if _HARD_DENY_PATTERNS.search(q):
+        logger.info(
+            "[CONFIDENCE] Hard deny: q=%s matched hard_deny pattern",
+            q[:60],
+        )
+        return {
+            "reject_type": "knowledge_gap",
+            "message": _REJECT_MSG_KNOWLEDGE_GAP,
+        }
+
+    # ── [categories 模式] 用户明确指定了分类且有匹配文档 → 跳过 L2 coverage 检查 ──
+    # 理由：categories 过滤后的结果自然少，但不代表不可信。
+    # 用户选择了 category=security 且有 security 文档被召回 → 应该信任结果。
+    # L1 已经保证了起码有文档存在。
+    _categories = ctx.get("categories", "")
+    if _categories and _categories != "all" and source_count > 0:
+        logger.info(
+            "[CONFIDENCE] Skip L2-L3 coverage check: categories=%s, source_count=%d (user explicitly filtered)",
+            _categories, source_count,
+        )
+        return None
+
     # ── Level 1.5: 内容实质性检测 ──
     # 检测 top-k chunk 的文本是否包含实质性条款内容，
     # 而非仅引用/提及（如"按GB 50058的规定"但没有具体技术条款）
-    if source_count > 0:
+    # 费用类查询跳过 L1.5 gate（D2-B注入的表格数据不含"第X条/应符合"等模式但有实际数值）
+    _q_check = q
+    try:
+        _q_check = q.encode('latin-1').decode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    _fee_q_check = any(kw in _q_check for kw in [
+        "造价", "取费", "费用", "费率", "收费",
+        "验收测评", "验收评测", "检测费", "测评费", "评测费",
+        "审计费", "管理费", "设计费", "监理费", "招标",
+        "等保", "密评", "咨询费",
+        "商密", "商用密码", "密码应用",
+    ])
+    if source_count > 0 and not _fee_q_check:
         _all_chunk_texts = []
         for doc_fact_list in doc_facts.values():
             for fact in doc_fact_list:
@@ -2017,17 +2332,9 @@ def _assess_recall_confidence(
     # 如查"莎士比亚"→12个政务标准片段,虽然coverage高但没有实质相关
     if source_count >= 2 and coverage >= 0.3 and not has_exact_match:
         try:
-            # KB领域关键词表（政务知识库覆盖的领域）
-            _kb_domains = {
-                "信息化": ["信息化", "测评", "软件", "功能点", "造价", "取费", "验收", "评测", "审计"],
-                "标准": ["标准", "规范", "规定", "要求", "条款", "GB", "GB/T", "规程"],
-                "安全": ["等保", "等级保护", "安全", "防火墙", "入侵", "漏洞", "密码", "合规"],
-                "机房": ["数据中心", "机房", "供配电", "UPS", "温湿度", "配电"],
-                "声学": ["声学", "噪声", "混响", "隔声", "厅堂", "剧场", "电影院"],
-                "网络": ["WiFi", "信道", "AP", "无线", "802.11", "路由器"],
-                "建筑": ["弱电", "消防", "安防", "综合布线"],
-                "政务": ["政务", "政府", "投资", "采购", "招标"],
-            }
+            # KB领域关键词表（从 config/b03_keywords.json 加载，热更新）
+            # 修改JSON文件后无需重启
+            _kb_domains = _load_b03_keywords()
             _q_lower = q.lower()
             # 检查查询是否包含任何KB领域词
             _has_kb_domain = any(

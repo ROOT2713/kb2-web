@@ -64,6 +64,22 @@
   --header-h: 52px;
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* ── 分类色标 ── */
+  --cat-security: hsl(0, 55%, 45%);
+  --cat-security-bg: hsl(0, 60%, 95%);
+  --cat-tech: hsl(210, 65%, 48%);
+  --cat-tech-bg: hsl(210, 60%, 95%);
+  --cat-daily: hsl(145, 45%, 42%);
+  --cat-daily-bg: hsl(145, 50%, 94%);
+  --cat-policy: hsl(38, 70%, 48%);
+  --cat-policy-bg: hsl(38, 70%, 95%);
+  --cat-business: hsl(255, 40%, 50%);
+  --cat-business-bg: hsl(255, 50%, 95%);
+
+  /* ── 代码块 ── */
+  --code-bg: hsl(220, 14%, 90%);
+  --code-border: hsl(220, 12%, 82%);
 }
 
 *,

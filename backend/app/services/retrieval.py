@@ -30,18 +30,19 @@ from app.utils.text_cleaning import normalize_query, expand_amount_tiers
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# ── Bank 配置 ─────────────────────────────────────────────────────
+# ── Bank 配置 ── 2026-07-21 合并为3大类 + 全部 ─────────────────────
 _HARDCODED_BANKS = {
-    "all":           {"name": "全部",           "hindsight": None,         "prompt": "通用政务信息化知识库"},  # [P0-2] 聚合查询，无专属hindsight bank
-    "project_docs":  {"name": "项目资料",       "hindsight": "kb_project", "prompt": "你是政务信息化项目管理专家。熟悉项目管理办法、验收管理细则、财政投资规定、软件行业基准数据。回答时注重管理流程、审批要求和实操经验。"},
-    "standards":     {"name": "规范",           "hindsight": "kb_standard","prompt": "你是政务信息化标准规范专家。精通GB/GA/T/EGAG/GDZW等国家及团体标准，覆盖等保测评、密码应用、监理服务、立项咨询、验收测评、会议系统、安防工程、数据中心等领域。回答时注重条款引用和合规要求。"},
-    "industry_docs": {"name": "信息化行业文档", "hindsight": "kb_industry","prompt": "你是政务信息化行业专家。熟悉电子政务工程造价、软件造价评估、信创替代、验收测评实务、行业政策解读。回答时注重实操经验和行业惯例。"},
-    "tech_guides":   {"name": "技术指导书",     "hindsight": "kb_tech",    "prompt": "你是全栈技术专家。精通前端/后端/Agent/DevOps/安全/渗透测试/AI/LLM。回答注重实战经验、架构设计和攻防思路。"},
-    "general":       {"name": "综合文件",       "hindsight": "kb_general", "prompt": "你是知识管理助手。擅长整理归纳各类知识，回答清晰有条理。"},
-    "checklist":    {"name": "检查标准",       "hindsight": "kb_checklist", "prompt": "你是等保测评机构检查标准专家。回答时优先引用检查项、检查要求、检查方法、核查力度等表格字段。"},
-    "咨询":         {"name": "咨询",           "hindsight": "kb_咨询",     "prompt": "你是互联网产品与技术内容分析专家。精通互联网产品评测、AI/Agent/DevOps 工具体验、技术趋势解读。回答时注重产品能力边界、真实体验和对比分析。善于从社区内容中提炼有实操价值的手法、技巧和避坑建议。"},
-    "business":     {"name": "商业分析",       "hindsight": "kb_general",  "prompt": "你是商业与技术分析专家。精通AI产品评测、技术趋势分析、量化交易、金融知识。回答注重技术能力边界、实践经验和中立对比。"},
-    "methodology":  {"name": "方法论",          "hindsight": "kb_general",  "prompt": "你是知识管理方法论专家。精通OKF知识组织框架、知识库设计、信息架构、SOP编写。回答注重结构化方法和最佳实践。"},
+    "all":     {"name": "全部",     "hindsight_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general", "kb_checklist", "kb_template", "kb_咨询", "kb_xhs", "kb_project"], "prompt": "通用政务信息化知识库"},
+    "industry": {"name": "信息化行业",
+                 "hindsight": "kb_industry",
+                 "hindsight_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general", "kb_checklist", "kb_template"],
+                 "prompt": "你是政务信息化行业专家。精通GB/GA/T/EGAG/GDZW等国家及团体标准，覆盖等保测评、密码应用、监理服务、立项咨询、验收测评、会议系统、安防工程、数据中心等领域。回答时注重条款引用、合规要求和行业实操经验。"},
+    "personal": {"name": "个人资讯",
+                 "hindsight_banks": ["kb_咨询", "kb_xhs"],
+                 "prompt": "你是互联网产品与技术内容分析专家。精通互联网产品评测、AI/Agent/DevOps 工具体验、技术趋势解读。回答时注重产品能力边界、真实体验和对比分析。善于从社区内容中提炼有实操价值的手法、技巧和避坑建议。"},
+    "project":  {"name": "项目文档",
+                 "hindsight": "kb_project",
+                 "prompt": "你是政务信息化项目管理专家。熟悉项目管理办法、验收管理细则、财政投资规定、软件行业基准数据。回答时注重管理流程、审批要求和实操经验。"},
 }
 BANKS = dict(_HARDCODED_BANKS)
 
@@ -170,6 +171,7 @@ async def _llm_chat(messages: list, stream: bool = False, max_retries: int = 3) 
     llm_model = settings.llm_model
 
     last_error = None
+    max_tokens = 3000
     for attempt in range(max_retries):
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
@@ -179,7 +181,7 @@ async def _llm_chat(messages: list, stream: bool = False, max_retries: int = 3) 
                     "model": llm_model,
                     "messages": messages,
                     "temperature": 0.3,
-                    "max_tokens": 3000,
+                    "max_tokens": max_tokens,
                     "stream": stream,
                 },
                 timeout=120,
@@ -211,10 +213,24 @@ async def _llm_chat(messages: list, stream: bool = False, max_retries: int = 3) 
                 raise ValueError(f"LLM API 返回异常: {error_msg or resp.text[:200]}")
             try:
                 content = choices[0]["message"]["content"]
-                # reasoning model: content 可能为空，检查 reasoning_content
-                if not content and choices[0]["message"].get("reasoning_content"):
-                    content = choices[0]["message"]["reasoning_content"]
-                return content or "（模型返回空内容）"
+                finish_reason = choices[0].get("finish_reason", "")
+                # 铁律：content 为空时绝不使用 reasoning_content（思维链不是答案）。
+                # finish_reason=length → 推理吃满预算 → 翻倍 max_tokens 重试（带上限保护）。
+                if not content and finish_reason == "length":
+                    if attempt < max_retries - 1:
+                        next_mt = min(max_tokens * 2, 12000)
+                        logger.warning(
+                            "llm_chat: content empty (finish_reason=length), retrying with max_tokens=%d",
+                            next_mt,
+                        )
+                        max_tokens = next_mt
+                        continue
+                if not content:
+                    logger.warning("llm_chat: empty content (finish_reason=%s), attempt=%d", finish_reason, attempt + 1)
+                    if attempt < max_retries - 1:
+                        continue
+                    raise ValueError("LLM returned empty content")
+                return content
             except (KeyError, IndexError, TypeError) as e:
                 logger.warning("llm_chat: choices 格式异常: %s", e)
                 raise ValueError(f"LLM API choices 格式异常: {e}")
@@ -226,8 +242,15 @@ async def _llm_chat(messages: list, stream: bool = False, max_retries: int = 3) 
 # 同义词扩展
 # ═══════════════════════════════════════════════════════════════════
 
+from app.services.fee_utils import _FEE_WHITELIST
+
 def expand_query_synonyms(q: str) -> str:
-    """D8: 术语同义词扩展——在查询前注入相关术语提升召回率"""
+    """D8: 术语同义词扩展——在查询前注入相关术语提升召回率
+    费用类查询白名单已迁移到 fee_utils._FEE_WHITELIST 集中维护。"""
+    q_lower_for_check = q.lower()
+    if any(kw.lower() in q_lower_for_check for kw in _FEE_WHITELIST):
+        return q
+
     try:
         now = _time.time()
         if now - _synonym_cache["ts"] > _SYNONYM_TTL:
@@ -288,7 +311,14 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
             # query all banks in parallel
             from app.repositories.vector_repo import PgVectorStore
             pg = store if isinstance(store, PgVectorStore) else PgVectorStore()
-            all_banks = [cfg["hindsight"] for k, cfg in BANKS.items() if cfg.get("hindsight")]
+            all_banks = []
+            for k, cfg in BANKS.items():
+                if cfg.get("hindsight_banks"):
+                    all_banks.extend(cfg["hindsight_banks"])
+                elif cfg.get("hindsight"):
+                    all_banks.append(cfg["hindsight"])
+            all_banks = list(set(all_banks))  # dedup
+            logger.warning("[RECALL-DEBUG] bank=%s hs_bank=%s all_banks=%s", bank, hs_bank, all_banks)
             # per-bank 下限保护：防止 limit 过小时每个 bank 只查几条
             per_bank_limit = max(limit // len(all_banks), 10)
             async def _q_one(b):
@@ -309,6 +339,14 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
                     if key not in seen:
                         seen.add(key)
                         merged.append(r)
+            returned_doc_ids = []
+            for r in merged:
+                tags = r.get("tags", [])
+                for t in tags:
+                    if t.startswith("doc_id:"):
+                        returned_doc_ids.append(t[7:])
+                        break
+            logger.warning("[RECALL-DEBUG] bank=%s merged=%d doc_ids=[%s]", bank, len(merged), ",".join(set(returned_doc_ids)))
             return merged[:limit]
         else:
             return await store.query(query_text=query[:1800], bank=hs_bank, top_k=limit)
@@ -482,7 +520,7 @@ async def build_bm25_index(bank: str = "all") -> tuple:
             docs.append({"text": parent_text, "doc_id": row[0], "tags": [f"title:{row[2] or 'unknown'}"]})
             added += 1
         if added:
-            logger.info("BM25: +%d parent_chunks from meta.db (primary source)", added)
+            logger.info("[BM25-DEBUG] +%d parent_chunks from meta.db (primary source) for bank=%s", added, bank)
     except Exception as e:
         logger.warning("BM25 parent_chunks failed: %s", e)
 
@@ -951,12 +989,47 @@ async def llm_rerank(query: str, candidates: list, top_k: int = 15) -> list:
 
 def _find_rate_table_snippet(tier_keywords: list, bank: str = "all") -> tuple:
     """在 meta.db 中查找费率表片段。返回 (snippet, title) 或 (None, None)。
-    bank: 指定bank过滤，"all"不过滤。[HOTFIX-0606] 防止跨bank数据泄漏。"""
+    bank: 指定bank过滤，"all"不过滤。[HOTFIX-0606] 防止跨bank数据泄漏。
+    [2026-07-22 FIX] 当 tier_keywords 不含 "万" 时，对费用类查询改用
+    模糊关键词(等保/收费/费率)查找费率表。"""
     try:
         _db = SessionLocal()
         _filtered = [kw for kw in tier_keywords if "万" in kw]
         if not _filtered:
+            # ── 无金额关键词时的 fallback ──
+            # 用费用类关键词模糊匹配，找到费率表 chunk
+            _fallback_kws = ["等保评测", "验收测评", "收费基价", "费率", "三级", "3%",
+                             "表2-28", "表5-47", "表9", "V=D×g"]
+            _params = {}
+            _cond_parts = []
+            for i, kw in enumerate(_fallback_kws):
+                key = f"fb{i}"
+                _cond_parts.append(f"p.parent_text LIKE :{key}")
+                _params[key] = f"%{kw}%"
+            _conditions = " OR ".join(_cond_parts)
+            _bank_filter = ""
+            if bank and bank != "all":
+                _bank_filter = " AND d.bank = :bank"
+                _params["bank"] = bank
+            _sql = f"""
+                SELECT d.doc_id, d.title, p.parent_text
+                FROM documents d
+                JOIN parent_chunks p ON d.doc_id = p.doc_id
+                WHERE ({_conditions})
+                  AND length(p.parent_text) > 200
+                  {_bank_filter}
+                ORDER BY length(p.parent_text) DESC
+                LIMIT 3
+            """
+            _rows = _db.execute(text(_sql), _params).fetchall()
+            _db.close()
+            for _did, _dtitle, _ptext in _rows:
+                # 取 chunk 中部含表的部分
+                _mid = len(_ptext) // 2
+                _snippet = _ptext[max(0, _mid-500):min(len(_ptext), _mid+500)]
+                return _snippet, _dtitle
             return None, None
+
         # Use parameterized LIKE to prevent SQL injection
         _params = {}
         _conditions_parts = []

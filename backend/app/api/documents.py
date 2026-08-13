@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
+from pydantic import BaseModel
 
 import docx as _docx_lib
 import httpx
@@ -64,13 +65,7 @@ def _log_task_exception(task: asyncio.Task):
     except asyncio.CancelledError:
         pass
 
-# ── Default categories (matches v1 DEFAULT_CATEGORIES) ──────────
-DEFAULT_CATEGORIES = [
-    "\U0001f4a1想法", "\U0001f4bc工作", "\U0001f4da学习", "\U0001f3e0生活", "\U0001f680项目",
-    "\U0001f4ad灵感", "\U0001f4dd会议", "\U0001f527技术", "\U0001f4ca数据", "\U0001f4f0资讯",
-    "\U0001f512安全", "\U0001f916AI", "其他",
-]
-
+# ── DEFAULT_CATEGORIES removed — from category_rules.py ─────────
 # ── Max file size (matches v1 MAX_FILE_SIZE, 50MB) ──────────────
 MAX_FILE_SIZE = 50 * 1024 * 1024
 
@@ -127,7 +122,15 @@ async def list_documents(bank: str = Query("all"), db: Session = Depends(get_db)
     """List documents (from meta.db, Hindsight supplements chunk/size)."""
     repo = DocumentRepository(db)
 
-    if bank == "all":
+    # Map consolidated bank keys to actual DB bank values
+    _CONSOLIDATED_BANK_MAP = {
+        "industry": ["standards", "industry_docs", "tech_guides", "general", "checklist", "templates", "methodology", "business"],
+        "personal": ["咨询", "kb_xhs", "xhs"],
+        "project": ["project_docs"],
+    }
+    if bank in _CONSOLIDATED_BANK_MAP:
+        docs_list = repo.list_by_banks(_CONSOLIDATED_BANK_MAP[bank])
+    elif bank == "all":
         docs_list = repo.list_all()
     else:
         docs_list = repo.list_all(bank=bank)
@@ -135,10 +138,20 @@ async def list_documents(bank: str = Query("all"), db: Session = Depends(get_db)
     # Supplement chunk/size data
     hs_stats = {}
     if settings.vector_backend == "pgvector":
-        store = get_vector_store()
-        store_docs = await store.list_documents(bank if bank != "all" else "kb")
-        for item in store_docs:
-            hs_stats[item["doc_id"]] = {"chunks": 0, "size": 0}
+        # 2026-08-13 修复：之前硬编码 chunks=0/size=0（PG 路径 list_documents 无计数）
+        # 改为直接查 pgvector 聚合（COUNT + SUM(content length)），显示真实 chunk 数
+        try:
+            # 2026-08-13 CC 审查修复：复用 vector_repo 连接池（避免每次新开 TCP + 泄漏）
+            store = get_vector_store()
+            pool = await store._get_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT doc_id, COUNT(*) AS n, COALESCE(SUM(LENGTH(content)),0) AS sz "
+                    "FROM vector_chunks GROUP BY doc_id")
+            for row in rows:
+                hs_stats[row["doc_id"]] = {"chunks": row["n"], "size": row["sz"]}
+        except Exception as e:
+            logger.warning("pgvector stats failed: %s", e)
     else:
         active_banks = await _get_active_hindsight_banks()
         for bank_id in active_banks:
@@ -168,6 +181,7 @@ async def list_documents(bank: str = Query("all"), db: Session = Depends(get_db)
             "id": d.doc_id,
             "title": d.title or "unknown",
             "category": d.category or "",
+            "subcategory": d.subcategory or "",
             "filename": d.filename or "",
             "chunks": stats["chunks"],
             "size_chars": stats["size"],
@@ -253,7 +267,7 @@ async def fetch_standard(
 
     # Step 4: Upload vectors
     doc_title = std_no.strip()
-    chunk_size = 1000
+    chunk_size = 1000  # 保持原值（2026-08-13 CC 审查：统一到 500 是行为变更，非纯重构，回退）
     chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
     doc_id = str(uuid.uuid4())
 
@@ -422,7 +436,7 @@ async def refetch_document(
             pass
 
     # Step 5: Re-upload with new text
-    chunk_size = 1000
+    chunk_size = 1000  # 保持原值（2026-08-13 CC 审查：统一到 500 是行为变更，非纯重构，回退）
     chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
 
     success_count = 0
@@ -494,7 +508,7 @@ async def refetch_document(
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/rag-eval")
-async def rag_evaluation():
+async def rag_evaluation(_admin: bool = Depends(require_role("admin"))):
     """RAG quality evaluation — 4 dimensions (RAGAS style) (v1 L4556-L4684)."""
     test_cases = [
         {"q": "The security zone boundary requirements for Level 3 classified protection", "bank": "standards", "expect_doc": "classified protection"},
@@ -539,7 +553,7 @@ async def rag_evaluation():
             answer = await chat([
                 {"role": "system", "content": bank_prompt},
                 {"role": "user", "content": answer_prompt},
-            ])
+            ], max_tokens=8000)
 
             eval_prompt = (
                 f"You are a RAG system evaluation expert. Score the following Q&A pair on 4 dimensions.\n\n"
@@ -561,7 +575,7 @@ async def rag_evaluation():
             eval_result = await chat([
                 {"role": "system", "content": "You are a strict RAG evaluator. Output JSON only."},
                 {"role": "user", "content": eval_prompt},
-            ])
+            ], max_tokens=8000)
 
             json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', eval_result, re.DOTALL)
             scores = {"retrieval": 0, "groundedness": 0, "relevance": 0, "utilization": 0}
@@ -616,114 +630,62 @@ async def rag_evaluation():
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/audit")
-async def audit_knowledge_base(db: Session = Depends(get_db)):
-    """Scan all documents, output quality audit report (v1 L4685-L4813)."""
-    repo = DocumentRepository(db)
-    docs_list = repo.list_all()
-
-    results = []
-    for d in docs_list:
-        doc_id = d.doc_id
-        title = d.title or "unknown"
-        bank = d.bank or "kb"
-
-        bank_cfg = BANKS.get(bank, BANKS["all"])
-        hs_bank = bank_cfg["hindsight"]
-
-        full_text = ""
+async def audit_knowledge_base(_admin: bool = Depends(require_role("admin"))):
+    """Scan all documents in pgvector, output quality audit report.
+    
+    Fixed: was iterating v1 SQLite (179 docs, doc_id mismatch → all score=0).
+    Now aggregates content from vector_chunks directly.
+    """
+    if settings.vector_backend != "pgvector":
+        # Fallback: iterate v1 SQLite docs, fetch content via recall()
+        db = SessionLocal()
         try:
-            if settings.vector_backend == "pgvector":
-                store = get_vector_store()
-                chunks = await store.get_document_detail(doc_id, hs_bank)
-                if not chunks and hs_bank != "kb":
-                    chunks = await store.get_document_detail(doc_id, "kb")
-                full_text = "\n\n".join(c["content"] for c in chunks) if chunks else ""
-            else:
-                hindsight_doc_id = None
-                docs_result = await _hindsight_request(
-                    f"/v1/default/banks/{hs_bank}/documents", timeout=10
-                )
-                doc_list = docs_result.get("items", []) or docs_result.get("documents", [])
-                for item in doc_list:
-                    if f"doc_id:{doc_id}" in item.get("tags", []):
-                        hindsight_doc_id = item.get("id")
-                        break
-
-                if not hindsight_doc_id and hs_bank != "kb":
-                    try:
-                        docs_result = await _hindsight_request(
-                            f"/v1/default/banks/kb/documents", timeout=10
-                        )
-                        doc_list = docs_result.get("items", []) or docs_result.get("documents", [])
-                        for item in doc_list:
-                            if f"doc_id:{doc_id}" in item.get("tags", []):
-                                hindsight_doc_id = item.get("id")
-                                hs_bank = "kb"
-                                break
-                    except Exception:
-                        pass
-
-                if hindsight_doc_id:
-                    doc_detail = await _hindsight_request(
-                        f"/v1/default/banks/{hs_bank}/documents/{hindsight_doc_id}", timeout=10
-                    )
-                    full_text = doc_detail.get("original_text", "") or doc_detail.get("text", "") or ""
-                else:
-                    try:
-                        recall_result = await recall(title, limit=50, bank="kb", max_tokens=32768)
-                        texts = []
-                        for r in recall_result:
-                            t = r.get("text", "") or ""
-                            if t.strip():
-                                texts.append(t.strip())
-                        full_text = "\n\n".join(texts)
-                    except Exception:
-                        pass
-        except Exception as e:
-            logger.warning("audit: failed to get text for %s: %s", doc_id, e)
-
+            repo = DocumentRepository(db)
+            return _audit_v1_fallback(repo)
+        finally:
+            db.close()
+    
+    # ── PgVector path: aggregate content from vector_chunks ──
+    store = get_vector_store()
+    pool = await store._get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT vc.doc_id,
+                   d.bank_id AS bank,
+                   d.file_original_name AS filename,
+                   d.tags,
+                   string_agg(vc.content, E'\\n\\n' ORDER BY vc.chunk_index) AS full_text
+            FROM vector_chunks vc
+            LEFT JOIN documents d ON vc.doc_id = d.id
+            GROUP BY vc.doc_id, d.bank_id, d.file_original_name, d.tags
+            HAVING SUM(LENGTH(vc.content)) > 100
+            ORDER BY SUM(LENGTH(vc.content)) DESC
+            LIMIT 500
+        """)
+    
+    results = []
+    for row in rows:
+        doc_id = row["doc_id"]
+        full_text = row["full_text"] or ""
+        bank = row["bank"] or "kb"
+        tags = row["tags"]
+        
+        # Extract title from tags if available
+        title = ""
+        if tags:
+            for t in tags:
+                if t.startswith("title:"):
+                    title = t[6:]
+                    break
+                if t.startswith("doc:"):
+                    parts = t.split("_", 2)
+                    if len(parts) >= 3:
+                        title = parts[2]
+        if not title:
+            title = row["filename"] or doc_id[:8] + "..."
+        
         quality = assess_quality(full_text)
-
-        filename = d.filename or ""
-        completeness = None
-        if filename:
-            try:
-                upload_path = settings.upload_dir / Path(filename).name
-            except Exception:
-                upload_path = None
-
-            if upload_path and upload_path.exists():
-                try:
-                    with open(upload_path, "rb") as f:
-                        raw = f.read()
-                    orig_chars = 0
-                    ext = os.path.splitext(filename)[1].lower()
-                    if ext == ".pdf":
-                        reader = pypdf.PdfReader(BytesIO(raw))
-                        for page in reader.pages:
-                            t = page.extract_text()
-                            if t:
-                                orig_chars += len(t)
-                    elif ext in (".txt", ".md"):
-                        orig_chars = len(raw.decode("utf-8", errors="ignore"))
-                    elif ext == ".docx":
-                        dx = _docx_lib.Document(BytesIO(raw))
-                        orig_chars = sum(len(p.text) for p in dx.paragraphs)
-
-                    if orig_chars > 0:
-                        coverage = min(100, round(len(full_text) / orig_chars * 100))
-                        completeness = {
-                            "available": True,
-                            "original_chars": orig_chars,
-                            "retrieved_chars": len(full_text),
-                            "coverage_pct": coverage,
-                        }
-                except Exception:
-                    pass
-
-        if not completeness:
-            completeness = {"available": False, "reason": "Original file unavailable (deleted or not retained)"}
-
+        
         results.append({
             "doc_id": doc_id,
             "title": title,
@@ -732,17 +694,42 @@ async def audit_knowledge_base(db: Session = Depends(get_db)):
             "score": quality["score"],
             "issues": quality["issues"],
             "needs_refetch": quality["score"] < 70,
-            "completeness": completeness,
         })
-
+    
     total = len(results)
     low_quality = [r for r in results if r["needs_refetch"]]
     avg_score = sum(r["score"] for r in results) / max(total, 1)
-
+    
+    logger.info("audit: %d docs scanned (pgvector), avg_score=%.1f, low_quality=%d",
+                total, avg_score, len(low_quality))
+    
     return {
         "total_docs": total,
         "avg_score": round(avg_score, 1),
         "low_quality_count": len(low_quality),
+        "documents": sorted(results, key=lambda x: x["score"]),
+    }
+
+
+def _audit_v1_fallback(repo):
+    """Legacy audit path iterating v1 SQLite (kept for backward compat with non-pgvector)."""
+    docs_list = repo.list_all()
+    results = []
+    for d in docs_list:
+        doc_id = d.doc_id
+        title = d.title or "unknown"
+        bank = d.bank or "kb"
+        quality = assess_quality("")  # can't get text from pgvector with mismatched doc_ids
+        results.append({
+            "doc_id": doc_id, "title": title, "bank": bank,
+            "chars": 0, "score": quality["score"],
+            "issues": quality["issues"] + ["[v1 SQLite doc, pgvector content unavailable]"],
+            "needs_refetch": True,
+        })
+    return {
+        "total_docs": len(results),
+        "avg_score": 0,
+        "low_quality_count": len(results),
         "documents": sorted(results, key=lambda x: x["score"]),
     }
 
@@ -759,52 +746,50 @@ async def get_document_content(doc_id: str, db: Session = Depends(get_db)):
     if not meta or not meta.get("title"):
         raise HTTPException(404, "Document not found")
 
-    doc_bank = meta.get("bank", "kb")
-    bank_cfg = get_bank_config(doc_bank)
-    hs_bank = bank_cfg["hindsight"]
+    # Use the document's own hs_bank field — it stores the correct hindsight
+    # bank (kb_standard/kb_xhs/kb_general/etc). Don't look up via get_bank_config
+    # because old document banks (standards/industry_docs/咨询) are not valid BANKS keys.
+    hs_bank = meta.get("hs_bank", "kb")
 
     if settings.vector_backend == "pgvector":
         store = get_vector_store()
-        chunks = await store.get_document_detail(doc_id, hs_bank)
-        if not chunks:
-            # fallback: try recall
-            try:
-                title = meta.get("title", "")
-                if title:
-                    recalled = await recall(title, limit=50, bank="kb", max_tokens=32768)
-                    if recalled:
-                        full_text = "\n\n".join(r.get("text", "") for r in recalled)
-                        if full_text and len(full_text) > 50:
-                            return {
-                                "doc_id": doc_id,
-                                "id": doc_id,
-                                "title": title,
-                                "filename": meta.get("filename", ""),
-                                "bank": meta.get("bank", "kb"),
-                                "chunks": len(recalled),
-                                "searchable": meta.get("searchable", 0),
-                                "created": meta.get("created_at", ""),
-                                "coverage_pct": meta.get("coverage_pct", 0),
-                                "text": full_text,
-                                "source": "recall",
-                            }
-            except Exception:
-                pass
-            raise HTTPException(404, "Document content not found (may not be indexed yet)")
+        chunks = await store.get_document_detail(doc_id, None)
+        if chunks:
+            full_text = "\n\n".join(c["content"] for c in chunks)
+            return {
+                "doc_id": doc_id,
+                "id": doc_id,
+                "title": meta.get("title", "unknown"),
+                "filename": meta.get("filename", ""),
+                "bank": meta.get("bank", "kb"),
+                "chunks": len(chunks),
+                "searchable": meta.get("searchable", 0),
+                "created": meta.get("created_at", ""),
+                "coverage_pct": meta.get("coverage_pct", 0),
+                "text": full_text,
+            }
 
-        full_text = "\n\n".join(c["content"] for c in chunks)
-        return {
-            "doc_id": doc_id,
-            "id": doc_id,
-            "title": meta.get("title", "unknown"),
-            "filename": meta.get("filename", ""),
-            "bank": meta.get("bank", "kb"),
-            "chunks": len(chunks),
-            "searchable": meta.get("searchable", 0),
-            "created": meta.get("created_at", ""),
-            "coverage_pct": meta.get("coverage_pct", 0),
-            "text": full_text,
-        }
+        # pgvector 无结果 → 兜底查 parent_chunks（V2 上传文档的内容）
+        # parent_chunks 是 SQLite 本地表，100% 含 V2 上传文档的全文
+        from app.models.document import ParentChunk
+        pc = db.query(ParentChunk).filter(ParentChunk.doc_id == doc_id).order_by(ParentChunk.parent_idx).all()
+        if pc:
+            full_text = "\n\n".join(p.parent_text for p in pc)
+            return {
+                "doc_id": doc_id,
+                "id": doc_id,
+                "title": meta.get("title", "unknown"),
+                "filename": meta.get("filename", ""),
+                "bank": meta.get("bank", "kb"),
+                "chunks": len(pc),
+                "searchable": meta.get("searchable", 0),
+                "created": meta.get("created_at", ""),
+                "coverage_pct": meta.get("coverage_pct", 0),
+                "text": full_text,
+                "source": "parent_chunks",
+            }
+
+        raise HTTPException(404, "Document content not found (pgvector + parent_chunks both empty)")
 
     docs_result = await _hindsight_request(
         f"/v1/default/banks/{hs_bank}/documents",
@@ -904,17 +889,59 @@ async def patch_document(
     doc_id: str,
     title: Optional[str] = Form(None),
     category: Optional[str] = Form(None),
+    subcategory: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     _admin: bool = Depends(require_role("admin")),
 ):
-    """Edit document title and category (v1 L4062-L4067)."""
-    if not title and not category:
-        raise HTTPException(400, "Must provide at least title or category")
+    """Edit document title, category and subcategory."""
+    if not title and not category and not subcategory:
+        raise HTTPException(400, "Must provide at least title, category or subcategory")
     repo = DocumentRepository(db)
-    updated = repo.update(doc_id, title=title, category=category)
+    updated = repo.update(doc_id, title=title, category=category, subcategory=subcategory)
     if updated is None:
         raise HTTPException(404, f"Document {doc_id} not found")
-    return {"ok": True, "doc_id": doc_id, "title": title, "category": category}
+    # 元数据变更 → BM25索引失效（查该doc的bank以精细失效）
+    _b = repo.get(doc_id)
+    invalidate_bm25_cache(bank=str(_b.bank) if _b else "all")
+    invalidate_bm25_cache(bank="all")
+    return {"ok": True, "doc_id": doc_id, "title": title, "category": category, "subcategory": subcategory}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: POST /batch-patch — batch edit document metadata
+# ═══════════════════════════════════════════════════════════════════
+
+class BatchPatchRequest(BaseModel):
+    doc_ids: list[str]
+    category: Optional[str] = None
+    subcategory: Optional[str] = None
+
+
+@router.post("/batch-patch")
+async def batch_patch_documents(
+    body: BatchPatchRequest,
+    db: Session = Depends(get_db),
+    _admin: bool = Depends(require_role("admin")),
+):
+    """Batch edit category/subcategory for multiple documents at once."""
+    if not body.doc_ids:
+        raise HTTPException(400, "Must provide at least one doc_id")
+    if not body.category and not body.subcategory:
+        raise HTTPException(400, "Must provide category or subcategory")
+    repo = DocumentRepository(db)
+    kwargs = {}
+    if body.category is not None:
+        kwargs["category"] = body.category
+    if body.subcategory is not None:
+        kwargs["subcategory"] = body.subcategory
+    updated = 0
+    for doc_id in body.doc_ids:
+        result = repo.update(doc_id, **kwargs)
+        if result is not None:
+            updated += 1
+    # 批量元数据变更 → BM25索引失效
+    invalidate_bm25_cache()
+    return {"ok": True, "updated": updated, "total": len(body.doc_ids)}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -935,8 +962,12 @@ async def patch_document_bank(
     doc = repo.get(doc_id)
     if doc is None:
         raise HTTPException(404, f"Document {doc_id} not found")
+    old_bank = str(doc.bank)
     doc.bank = bank
     db.commit()
+    # bank变更 → BM25索引失效（只清旧bank，doc已移走）
+    invalidate_bm25_cache(bank=old_bank)
+    invalidate_bm25_cache(bank="all")
     return {"ok": True, "doc_id": doc_id, "bank": bank}
 
 
@@ -1123,6 +1154,7 @@ async def reparse_document(
     profile = profile_document(text)
     doc_type = profile.get("doc_type", "generic")
     pc_chunks = []
+    coverage = 0.0  # 2026-08-13 修复：pc_chunks 为空时 L1267 引用 coverage 导致 NameError
     if doc_type in ("gb_standard", "regulation") and profile.get("confidence", 0) >= 0.3:
         pc_chunks = heading_chunk(text, profile)
 
@@ -1146,7 +1178,7 @@ async def reparse_document(
         pc_chunks = parent_child_chunk(
             text,
             child_size=settings.default_chunk_size,
-            parent_size=settings.default_chunk_size * 4,
+            parent_size=settings.default_parent_size,
             overlap=settings.chunk_overlap,
             doc_title=doc_title,
         )
@@ -1263,6 +1295,10 @@ async def reparse_document(
     db.commit()
 
     asyncio.create_task(_verify_searchable(new_doc_id, doc_title, len(text), hs_bank)).add_done_callback(_log_task_exception)
+
+    # 重解析 → BM25索引失效（内容已变，清旧bank+全量）
+    invalidate_bm25_cache(bank=old_bank)
+    invalidate_bm25_cache(bank="all")
 
     return {
         "ok": True,

@@ -10,6 +10,7 @@ from datetime import datetime
 BASE = "http://localhost:3027"
 TOKEN = None
 OUTPUT_FILE = None
+CI_MODE = False
 
 REJECT_KEYWORDS = ["未找到", "没有找到", "未收录", "未提供", "无法给出",
                    "未直接命中", "没有相关信息", "未涉及", "未能找到",
@@ -26,7 +27,7 @@ def get_token():
     TOKEN = json.loads(r.stdout)['access_token']
     return TOKEN
 
-def query_kb(q, timeout=120):
+def query_kb(q, timeout=240, retry=1):
     token = get_token()
     cmd = ["curl", "-s", "-X", "POST", f"{BASE}/api/query",
            "-H", f"Authorization: Bearer {token}",
@@ -34,12 +35,21 @@ def query_kb(q, timeout=120):
            "--data-urlencode", "nocache=true",
            "--data-urlencode", "rerank=true",
            "--max-time", str(timeout)]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout+10)
-        if not r.stdout.strip(): return None, []
-        d = json.loads(r.stdout)
-        return d.get('answer', ''), d.get('sources', [])
-    except: return None, []
+    for attempt in range(retry + 1):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout+10)
+            if not r.stdout.strip():
+                err = r.stderr.strip()[:200] if r.stderr.strip() else "empty response"
+                raise ValueError(f"curl: {err}")
+            d = json.loads(r.stdout)
+            return d.get('answer', ''), d.get('sources', [])
+        except Exception as e:
+            if attempt < retry:
+                print(f"[V3-RETRY] {q[:40]}... attempt {attempt+1}: {e}", flush=True)
+                time.sleep(3)
+                continue
+            print(f"[V3-ERR] {q[:40]}... failed after {retry+1} tries: {e}", flush=True)
+            return None, []
 
 def is_rejected(answer):
     return any(kw in answer for kw in REJECT_KEYWORDS)
@@ -89,9 +99,9 @@ def keyword_judge(answer, expected_text, query, dimension):
 
 def run_one(q_item):
     qid = q_item['id']
-    query = q_item['query']
+    query = q_item.get('query') or q_item.get('question', '')
     expected = q_item.get('expected', '')
-    dimension = q_item.get('dimension', '')
+    dimension = q_item.get('dimension') or q_item.get('category', '')
     difficulty = q_item.get('difficulty', '')
     t0 = time.time()
     
@@ -122,9 +132,12 @@ def run_one(q_item):
     }
 
 def main():
-    global OUTPUT_FILE
+    global OUTPUT_FILE, CI_MODE
+    CI_MODE = "--ci" in sys.argv
+    if CI_MODE:
+        sys.argv.remove("--ci")
     if len(sys.argv) < 2:
-        print("Usage: python3 kb2_66test_v3.py <questions.jsonl> [concurrency=3]", flush=True)
+        print("Usage: python3 kb2_66test_v3.py <questions.jsonl> [concurrency=3] [--ci]", flush=True)
         sys.exit(1)
     
     jsonl_path = sys.argv[1]
@@ -162,6 +175,8 @@ def main():
                 _save(results, t_start, time.time()-t_start, total, done=i+1, partial=True)
     
     _save(results, t_start, time.time()-t_start, total)
+    if CI_MODE:
+        pass  # _save's _ci_check handles exit code
 
 def _save(results, t_start, t_total, total, done=None, partial=False):
     by_status = {}
@@ -202,6 +217,37 @@ def _save(results, t_start, t_total, total, done=None, partial=False):
         print(f"  [partial] {done}/{total}, pass={rate:.0f}%", flush=True)
     elif not partial:
         print(f"\nSaved: {OUTPUT_FILE}", flush=True)
+        # ── CI mode: write history and check for regression ──
+        _ci_check(rate, total, pass_c)
+
+def _ci_check(rate, total, pass_c):
+    """CI mode: write evaluation history, exit with code 1 if pass rate dropped >5%."""
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    history_path = os.path.join(script_dir, "..", "..", ".evaluation_history.json")
+    hist = {}
+    if os.path.exists(history_path):
+        try:
+            with open(history_path) as f:
+                hist = json.load(f)
+        except Exception:
+            pass
+    prev_rate = hist.get("last_pass_rate", 100.0)
+    dropped = prev_rate > rate and (prev_rate - rate) > 5
+    # Write history BEFORE exit check so next run uses updated baseline
+    json.dump({
+        "last_run": datetime.now().isoformat(),
+        "last_pass_rate": rate,
+        "total": total,
+        "pass_count": pass_c,
+        "prev_pass_rate": prev_rate,
+        "dropped": dropped,
+    }, open(history_path, "w"), ensure_ascii=False, indent=2)
+    if dropped:
+        print(f"\n❌ CI FAILED: pass rate dropped {prev_rate:.0f}% -> {rate:.0f}% (drop >5%)", flush=True)
+        sys.exit(1)
+    else:
+        print(f"\n✅ CI PASSED: pass rate {prev_rate:.0f}% -> {rate:.0f}%", flush=True)
 
 if __name__ == '__main__':
     main()

@@ -160,6 +160,15 @@ async def admin_health():
         health_status["vector_store"] = "unreachable"
         health_status["status"] = "degraded"
 
+    # MinerU 解析器健康
+    try:
+        ms = get_mineru_stats()
+        health_status["mineru"] = ms
+        if ms["fail"] > 5 and ms["success"] == 0:
+            health_status["status"] = "degraded"
+    except Exception:
+        health_status["mineru"] = "unavailable"
+
     return health_status
 
 
@@ -167,7 +176,10 @@ async def admin_health():
 # P1-3: Quality Gates endpoints
 # ═══════════════════════════════════════════════════════
 
+from app.services.parsing import get_mineru_stats
 from app.services.quality_gates import check_document, check_all_documents
+
+@router.post("/quality/check")
 
 
 @router.post("/quality/check")
@@ -491,9 +503,87 @@ async def get_audit_logs(
 
 @router.get("/categories")
 async def get_categories():
-    """Return available categories with labels."""
-    from app.services.category_rules import CATEGORIES
-    return [
-        {"key": k, "label": v, "isolated": k in ("daily", "news")}
-        for k, v in CATEGORIES.items()
-    ]
+    """Return hierarchical category tree: super_category → categories → subcategories."""
+    from app.services.category_rules import CATEGORIES, SUPER_CATEGORY_MAP, SUPER_CATEGORY_ORDER
+    
+    # Group categories by super_category
+    groups = {}
+    for ck, cl in CATEGORIES.items():
+        sc = SUPER_CATEGORY_MAP.get(ck, "其他")
+        if sc not in groups:
+            groups[sc] = {"name": sc, "categories": []}
+        groups[sc]["categories"].append({
+            "key": ck, "label": cl, "isolated": ck in ("daily", "news"),
+        })
+    
+    # Return in defined order
+    result = []
+    for sc in SUPER_CATEGORY_ORDER:
+        if sc in groups:
+            result.append(groups.pop(sc))
+    # Any remaining
+    result.extend(groups.values())
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: GET /queries — recent query log
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/queries")
+async def get_queries(
+    limit: int = Query(100, ge=1, le=1000),
+    rejected: bool = None,
+    bank: str = None,
+    since: str = None,
+):
+    """Return recent query log entries."""
+    from app.services.query_logger import get_recent_queries
+    return get_recent_queries(limit=limit, rejected=rejected, bank=bank, since=since)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: GET /query-stats — query statistics
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/query-stats")
+async def get_query_stats():
+    """Return today's query statistics (total, rejection rate, latency)."""
+    from app.services.query_logger import get_query_stats
+    return get_query_stats()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: GET /checkpoints — list all checkpoints
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/checkpoints")
+async def list_checkpoints():
+    """Return all ingestion checkpoints."""
+    from app.services.job_checkpoint import checkpoint_manager
+    return {"checkpoints": checkpoint_manager.list_all()}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: GET /checkpoints/stuck — list stuck jobs
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/checkpoints/stuck")
+async def list_stuck_checkpoints(timeout: int = Query(30, ge=5, le=120)):
+    """Return checkpoints that haven't been updated in N minutes (likely crashed)."""
+    from app.services.job_checkpoint import checkpoint_manager
+    return {"stuck": checkpoint_manager.list_stuck_jobs(timeout_minutes=timeout)}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Route: POST /checkpoints/{job_id}/retry — retry a failed checkpoint
+# ═══════════════════════════════════════════════════════════════════
+
+@router.post("/checkpoints/{job_id}/retry")
+async def retry_checkpoint(job_id: str):
+    """Mark a failed checkpoint as ready for retry."""
+    from app.services.job_checkpoint import checkpoint_manager
+    ok = checkpoint_manager.reset_for_retry(job_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Checkpoint {job_id} not found")
+    return {"ok": True, "job_id": job_id}

@@ -65,9 +65,11 @@
       </div>
     </div>
     <div v-if="sources.length" class="result-sources">
-      <h4 class="sources-title">来源</h4>
+      <h4 class="sources-title">来源 ({{ dedupedSources.length }})</h4>
       <div class="source-list">
         <div v-for="(src, i) in dedupedSources" :key="i" class="source-item">
+          <span class="source-index">{{ i + 1 }}</span>
+          <div class="source-content">
           <div class="source-header">
             <router-link
               v-if="src.doc_id"
@@ -85,6 +87,7 @@
           </div>
           <div v-if="src.text" class="source-text" v-html="highlightKeywords(cleanSourceText(src.text))"></div>
           <span v-else-if="src.chunk" class="source-chunk-info">{{ src.chunk }}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -156,7 +159,11 @@ const stdTexts = ref<Record<string, string>>({})
 const renderedHtml = computed(() => {
   if (!props.content) return ''
   try {
-    return DOMPurify.sanitize(marked.parse(props.content) as string)
+    const cleaned = props.content
+      .replace(/~~([^~]+)~~/g, '$1')
+      .replace(/(?<!\$)\$([^$\n]+?)\$(?!\$)/g, '$1')
+      .replace(/\$\$([\s\S]*?)\$\$/g, '$1')
+    return DOMPurify.sanitize(marked.parse(cleaned) as string)
   } catch {
     return DOMPurify.sanitize(props.content)
   }
@@ -181,7 +188,7 @@ const dedupedSources = computed(() => {
   })
 })
 
-/** 清洗来源文本：剥离 [文档:xxx][章节:xxx] 前缀和 HTML 实体 */
+/** 清洗来源文本：剥离 [文档:xxx][章节:xxx] 前缀、HTML 实体、strikethrough 和 LaTeX */
 function cleanSourceText(raw: string): string {
   return raw
     .replace(/^\[文档:[^\]]+\](?:\[章节:[^\]]+\])?\s*/g, '')
@@ -189,8 +196,12 @@ function cleanSourceText(raw: string): string {
     .replace(/&lt;/g, '<')
     .replace(/&amp;/g, '&')
     .replace(/<[^>]*>/g, '')
+    .replace(/~~([^~]+)~~/g, '$1')   /* MinerU strikethrough → plain text */
+    .replace(/(?<!\$)\$([^$\n]+?)\$(?!\$)/g, '$1')  /* inline $...$ → plain */
+    .replace(/\$\$([\s\S]*?)\$\$/g, '$1')             /* display $$...$$ → plain */
+    .replace(/~([^~]+)~/g, '$1')        /* single tilde strikethrough variant */
     .trim()
-    .substring(0, 300)
+    .substring(0, 500)
 }
 
 /** 高亮来源文本中的关键词 — SourceCard 证据级可解释性 */
@@ -312,14 +323,15 @@ function renderStdText(text: string): string {
 .result-body :deep(code) {
   font-family: var(--font-mono);
   font-size: 0.85em;
-  background: var(--bg-alt);
+  background: var(--code-bg);
   padding: 0.1em 0.3em;
-  border: 1px solid var(--border);
+  border: 1px solid var(--code-border);
+  border-radius: 3px;
 }
 
 .result-body :deep(pre) {
-  background: var(--bg-alt);
-  border: 1px solid var(--border);
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
   padding: 0.75rem;
   overflow-x: auto;
   margin-bottom: 0.75rem;
@@ -341,7 +353,8 @@ function renderStdText(text: string): string {
   display: block;
   overflow-x: auto;
   max-width: 100%;
-  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  /* 移除 table 级 nowrap：长单元格内容自动换行，避免宽表在微信端被截断 */
 }
 
 .result-body :deep(th),
@@ -361,6 +374,9 @@ function renderStdText(text: string): string {
 
 .result-body :deep(td) {
   color: var(--fg-secondary);
+  /* 数据单元格内容过长时允许换行（长费率表数字/描述不截断） */
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .result-body :deep(tbody tr:hover) {
@@ -408,8 +424,9 @@ function renderStdText(text: string): string {
 
 .source-item {
   display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.5rem;
   font-size: 0.75rem;
   padding: 0.4rem 0.6rem;
   border: 1px solid var(--border);
@@ -417,6 +434,28 @@ function renderStdText(text: string): string {
   border-radius: var(--radius);
   min-width: 0;
   flex: 1 1 240px;
+}
+
+/* 来源编号圆形徽章 */
+.source-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: var(--accent);
+  color: var(--fg-on-accent);
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* 来源内容容器（编号右侧） */
+.source-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .source-header {

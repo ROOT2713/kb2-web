@@ -73,8 +73,25 @@ def clean_page_artifacts(text: str) -> str:
     return text.strip()
 
 
+def _html_table_to_pipe(text: str) -> str:
+    """Convert HTML <table> elements to pipe-delimited markdown format."""
+    def _table_replacer(m):
+        table_html = m.group(0)
+        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, re.DOTALL | re.IGNORECASE)
+        lines = []
+        for row in rows:
+            cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, re.DOTALL | re.IGNORECASE)
+            if cells:
+                cell_texts = [re.sub(r'<[^>]+>', '', c).strip() for c in cells]
+                lines.append("| " + " | ".join(cell_texts) + " |")
+        return "\n".join(lines)
+    return re.sub(r'<table[^>]*>.*?</table>', _table_replacer, text, flags=re.DOTALL | re.IGNORECASE)
+
+
 def clean_html_residuals(text: str) -> str:
-    """去除HTML标签残留和HTML实体"""
+    """去除HTML标签残留和HTML实体。
+    对 MinerU 输出的 HTML 表格先转为管道格式保留单元格关系。"""
+    text = _html_table_to_pipe(text)
     text = _html_mod.unescape(text)
     text = re.sub(r'<br\s*/?>', '\n', text)
     text = re.sub(r'</?(div|span|p|table|tr|td|th|img|a)[^>]*>', '', text, flags=re.IGNORECASE)
@@ -164,6 +181,16 @@ def deai_postprocess(text: str) -> str:
 
     # 3. 修复标点后的多余空格
     result = re.sub(r'([。，；：！？])\s+', r'\1', result)
+
+    # 4. 修复表格换行被吞：检测 |行| 紧接 |---| 分隔线后跟 |行| 却没有换行的情况
+    #    模式: |内容1|内容2|（无换行）|---|（无换行）|内容3| → 每段后补\n
+    result = re.sub(
+        r'(\|[^\n]+\|)\s*\n?\s*(\|[\s\-:]+\|)\s*\n?\s*(\|[^\n]+\|)',
+        r'\1\n\2\n\3',
+        result
+    )
+    # 再补一层：如果表头和分隔线在同一行连续出现
+    result = re.sub(r'(\|[\s\-:]+\|)(?!\n)(\||\s*\n)', r'\1\n\2', result)
 
     return result
 

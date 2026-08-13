@@ -72,6 +72,12 @@
         </select>
       </div>
 
+      <div class="form-row" v-if="category">
+        <label class="form-label">细分类</label>
+        <input v-model="subcategory" type="text" placeholder="留空则自动推断" class="subcat-input" />
+        <span class="hint">上传时根据标题自动推断</span>
+      </div>
+
       <div class="form-row">
         <label class="form-label">知识库</label>
         <select v-model="uploadBank">
@@ -166,6 +172,7 @@ const folderInput = ref<HTMLInputElement | null>(null)
 const selectedFiles = ref<File[]>([])
 const title = ref('')
 const category = ref('')
+const subcategory = ref('')
 const uploadBank = ref('general')
 const uploading = ref(false)
 const uploadProgress = ref('')
@@ -476,6 +483,7 @@ async function handleUpload() {
         if (title.value) formData.append('title', title.value)
       }
       if (category.value) formData.append('category', category.value)
+      if (subcategory.value) formData.append('subcategory', subcategory.value)
       formData.append('bank', uploadBank.value)
 
       if (batches.length > 1) {
@@ -609,6 +617,7 @@ function resetForm() {
   selectedFiles.value = []
   title.value = ''
   category.value = ''
+  subcategory.value = ''
   uploadResult.value = null
   if (fileInput.value) fileInput.value.value = ''
 }

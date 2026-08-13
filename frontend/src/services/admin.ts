@@ -87,7 +87,19 @@ export interface CategoryItem {
   isolated: boolean
 }
 
+export interface CategoryTreeNode {
+  name: string
+  categories: CategoryItem[]
+}
+
 export async function getCategories(): Promise<CategoryItem[]> {
-  const { data } = await api.get<CategoryItem[]>('/admin/categories')
-  return data
+  const { data } = await api.get<CategoryTreeNode[]>('/admin/categories')
+  // Flatten hierarchical structure → flat list (backward compat)
+  const flat: CategoryItem[] = []
+  for (const group of data) {
+    for (const cat of group.categories) {
+      flat.push(cat)
+    }
+  }
+  return flat
 }

@@ -16,6 +16,7 @@ class Document(Base):
     doc_id = Column(String, primary_key=True)
     title = Column(String, nullable=False, default="")
     category = Column(String, default="")
+    subcategory = Column(String, default="", index=True)  # P1 2026-07-20: 细分类如"信息化管理办法"
     filename = Column(String, default="")
     content_hash = Column(String, default="")
     doc_type = Column(String, default="generic")
@@ -57,6 +58,7 @@ class Document(Base):
             "doc_id": self.doc_id,
             "title": self.title,
             "category": self.category,
+            "subcategory": self.subcategory,
             "filename": self.filename,
             "content_hash": self.content_hash,
             "doc_type": self.doc_type,

@@ -10,6 +10,7 @@ Hindsight API endpoints:
 """
 
 import logging
+import json
 from typing import List, Dict, Optional, Protocol
 
 import asyncpg
@@ -238,6 +239,14 @@ class PgVectorStore:
             from pgvector.asyncpg import register_vector
             async def _init(conn):
                 await register_vector(conn)
+                # Re-register JSON/JSONB codec that register_vector corrupts
+                try:
+                    await conn.set_type_codec(
+                        'jsonb', encoder=json.dumps, decoder=json.loads,
+                        schema='pg_catalog', format='text'
+                    )
+                except Exception:
+                    pass  # may already be registered
             self._pool = await asyncpg.create_pool(
                 self.database_url, min_size=2, max_size=10, init=_init
             )
@@ -260,7 +269,8 @@ class PgVectorStore:
         return meta
 
     async def _chunks_to_rows(
-        self, doc_id: str, chunks: List[Dict], bank: str, embeddings: List[np.ndarray]
+        self, doc_id: str, chunks: List[Dict], bank: str, embeddings: List[np.ndarray],
+        offset: int = 0,
     ) -> List[tuple]:
         """Convert chunks + embeddings to rows for bulk INSERT."""
         rows = []
@@ -270,7 +280,7 @@ class PgVectorStore:
             meta = await self._tags_to_metadata(tags)
             rows.append((
                 doc_id,
-                i,
+                offset + i,  # global chunk_index
                 bank,
                 text,
                 meta,
@@ -288,8 +298,8 @@ class PgVectorStore:
         return results
 
     # ── upsert ─────────────────────────────────────────────────
-    async def upsert(self, doc_id: str, chunks: List[Dict], bank: str) -> int:
-        """批量 INSERT vector_chunks (先删后插)."""
+    async def upsert(self, doc_id: str, chunks: List[Dict], bank: str, append: bool = False, offset: int = 0) -> int:
+        """批量 INSERT vector_chunks (首次自动删旧，append=True 跳过删除)."""
         pool = await self._get_pool()
 
         # Get embeddings for all chunks
@@ -299,14 +309,15 @@ class PgVectorStore:
         ]
         embeddings = await self.get_embedding_batch(texts)
 
-        rows = await self._chunks_to_rows(doc_id, chunks, bank, embeddings)
+        rows = await self._chunks_to_rows(doc_id, chunks, bank, embeddings, offset=offset)
 
         async with pool.acquire() as conn:
-            # Delete existing chunks for this doc+bank
-            await conn.execute(
-                "DELETE FROM vector_chunks WHERE doc_id = $1 AND bank = $2",
-                doc_id, bank,
-            )
+            if not append:
+                # 只在首次调用时删除旧chunks
+                await conn.execute(
+                    "DELETE FROM vector_chunks WHERE doc_id = $1 AND bank = $2",
+                    doc_id, bank,
+                )
             # Bulk insert
             await conn.executemany(
                 "INSERT INTO vector_chunks (doc_id, chunk_index, bank, content, metadata, embedding) "
@@ -448,19 +459,36 @@ class PgVectorStore:
             return False
 
     # ── get_document_detail ─────────────────────────────────────
-    async def get_document_detail(self, doc_id: str, bank: str) -> List[Dict]:
-        """按 doc_id + bank 取所有 chunks，按 chunk_index 排序。"""
+    async def get_document_detail(self, doc_id: str, bank: Optional[str] = None) -> List[Dict]:
+        """按 doc_id 取所有 chunks，按 chunk_index 排序。
+        
+        In pgvector mode, bank filter is optional — all chunks share the same table
+        and doc_id is already unique. We skip the bank WHERE clause when bank is None
+        so that documents whose bank doesn't match the BANKS config (e.g. old bank
+        values like kb_xhs, kb_general) are still findable.
+        """
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT chunk_index, content, metadata, created_at
-                FROM vector_chunks
-                WHERE doc_id = $1 AND bank = $2
-                ORDER BY chunk_index
-                """,
-                doc_id, bank,
-            )
+            if bank:
+                rows = await conn.fetch(
+                    """
+                    SELECT chunk_index, content, metadata, created_at
+                    FROM vector_chunks
+                    WHERE doc_id = $1 AND bank = $2
+                    ORDER BY chunk_index
+                    """,
+                    doc_id, bank,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT chunk_index, content, metadata, created_at
+                    FROM vector_chunks
+                    WHERE doc_id = $1
+                    ORDER BY chunk_index
+                    """,
+                    doc_id,
+                )
         return [
             {
                 "chunk_index": r["chunk_index"],

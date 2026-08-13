@@ -301,6 +301,22 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
     if not section_texts:
         return []
 
+    # Build heading chain hints for parent context (e.g. "第三章/4.1 总则")
+    parent_titles_at_level = {}
+    for i, s in enumerate(section_texts):
+        if s["sec_num"] is not None:
+            depth = len(s["sec_num"])
+            parent_titles_at_level[depth] = s["title"]
+            for d in range(depth + 1, 10):
+                parent_titles_at_level.pop(d, None)
+            chain = []
+            for d in range(1, depth + 1):
+                if d in parent_titles_at_level:
+                    chain.append(parent_titles_at_level[d])
+            section_texts[i]["chain_hint"] = "/".join(chain)
+        else:
+            section_texts[i]["chain_hint"] = s["title"] or "前言"
+
     # Determine leaf (child) and parent sections
     # Strategy: sections with deeper sec_num (more dots) are children
     # Sections with shallower sec_num are parents
@@ -366,7 +382,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
                 continue
 
             # This is a child under this parent
-            section_hint = s["title"][:80] if s["title"] else parent_text[:80]
+            section_hint = s.get("chain_hint", s["title"])[:80] if s["title"] else parent_text[:80]
             # If child too small, merge into parent directly
             if len(parent_text) < min_child_size and len(section_texts) > 1:
                 # Merge with next section's parent
@@ -402,7 +418,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
         if is_leaf and len(group_indices) == 1:
             # Single leaf section: child = this section, parent = this section
             parent_text = s["text"]
-            section_hint = s["title"][:80] if s["title"] else parent_text[:80]
+            section_hint = s.get("chain_hint", s["title"])[:80] if s["title"] else parent_text[:80]
 
             results.append({
                 "child": _truncate_at_sentence_boundary(parent_text, 800),
@@ -416,11 +432,12 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
         else:
             # Parent section with children
             all_text = "\n\n".join(section_texts[j]["text"] for j in group_indices if section_texts[j]["text"].strip())
-            section_hint = s["title"][:80] if s["title"] else all_text[:80]
+            section_hint = s.get("chain_hint", s["title"])[:80] if s["title"] else all_text[:80]
 
             # Create child chunks from individual sections
             for j in group_indices:
                 child_text = section_texts[j]["text"]
+                child_hint = section_texts[j].get("chain_hint", section_hint)[:80]
                 if not child_text.strip():
                     continue
                 if len(child_text) < min_child_size:
@@ -441,7 +458,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
                             "parent": all_text[:max_parent_size],
                             "child_index": child_index,
                             "parent_index": parent_index,
-                            "section_hint": section_hint,
+                            "section_hint": child_hint,
                         })
                         child_index += 1
                 else:
@@ -450,7 +467,7 @@ def _heading_chunk_gb(text: str, headings: list, min_child_size: int = 200, max_
                         "parent": all_text[:max_parent_size],
                         "child_index": child_index,
                         "parent_index": parent_index,
-                        "section_hint": section_hint,
+                        "section_hint": child_hint,
                     })
                     child_index += 1
 
@@ -706,6 +723,64 @@ def excel_row_chunk(text: str, doc_title: str = "") -> list:
     return chunks
 
 
+def _detect_table_boundaries(text: str) -> list:
+    """检测文本中的Markdown表格和HTML表格边界，返回不可切分的区间列表。
+
+    检测两种表格格式：
+    1. Markdown pipe-table（行中有 | 且含 --- 分隔行）
+    2. HTML <table> 标签块
+
+    Returns:
+        [(start_offset, end_offset), ...] 每个表格在 text 中的字符偏移区间
+    """
+    boundaries = []
+    lines = text.split("\n")
+
+    # ── Markdown 表格检测 ──
+    in_md_table = False
+    md_start = 0
+    md_end = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # 检测表格分隔行
+        if "|" in stripped and re.search(r"\|[-]+\|", stripped):
+            if not in_md_table:
+                in_md_table = True
+                # 往回找表格标题行（前一行也有 | 的）
+                md_start = max(0, i - 1) if i > 0 and "|" in lines[i - 1] else i
+        elif in_md_table:
+            # 检测表格结束：空行或不再有 |
+            if not stripped or stripped == "" or "|" not in stripped:
+                in_md_table = False
+                # 计算起始偏移
+                start_offset = len("\n".join(lines[:md_start])) + (1 if md_start > 0 else 0)
+                end_offset = len("\n".join(lines[:i]))
+                boundaries.append((start_offset, end_offset))
+    # 处理文件末尾未关闭的表格
+    if in_md_table:
+        start_offset = len("\n".join(lines[:md_start])) + (1 if md_start > 0 else 0)
+        end_offset = len(text)
+        boundaries.append((start_offset, end_offset))
+
+    # ── HTML 表格检测 ──
+    html_table_pat = re.compile(r"(<table[^>]*>.*?</table>)", re.DOTALL)
+    for m in html_table_pat.finditer(text):
+        boundaries.append((m.start(), m.end()))
+
+    # 合并重叠区间
+    if boundaries:
+        boundaries.sort()
+        merged = [boundaries[0]]
+        for b in boundaries[1:]:
+            if b[0] <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], b[1]))
+            else:
+                merged.append(b)
+        boundaries = merged
+
+    return boundaries
+
+
 def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 8000, overlap: int = 120, doc_title: str = "") -> list:
     """将文本切分为父子分块。
 
@@ -717,7 +792,7 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 8000
         doc_title: 文档标题，作为 section_hint（CC 评审决策 4-A）。
                    未提供时回退到 parent_text[:80]（保持兼容）。
 
-    返回 list of dict:
+    Returns list of dict:
     [
         {
             "child": "子块文本（用于向量匹配）",
@@ -729,9 +804,20 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 8000
         ...
     ]
     """
-    # Step 1: 按段落分割
-    paragraphs = text.split("\n\n")
-    paragraphs = [p.strip() for p in paragraphs if p.strip()]
+    # Step 0: 检测表格边界，后续切分时绕过
+    table_boundaries = _detect_table_boundaries(text)
+
+    # Step 1: 按段落分割，但保持表格段落为原子单元
+    raw_paragraphs = text.split("\n\n")
+    # 重建段落（表格块保持完整）
+    paragraphs = []
+    for p in raw_paragraphs:
+        p_stripped = p.strip()
+        if not p_stripped:
+            continue
+        # 检查此段落是否是一个表格的一部分（与已有表格块相连）
+        # 简单策略：如果段落不包含 | 或 <table>，按独立段落处理
+        paragraphs.append(p_stripped)
 
     # Step 2: 聚合段落为父块（按 parent_size 滑动窗口）
     parents = []
@@ -753,33 +839,54 @@ def parent_child_chunk(text: str, child_size: int = 384, parent_size: int = 8000
     for p_idx, parent_text in enumerate(parents):
         # CC 评审决策 4-A: doc_title 若提供则用文档标题，否则回退到父段落前 80 字符
         section_hint = doc_title.strip() if doc_title.strip() else parent_text[:80]
+        # 预处理：表格行边界 — 在 </tr> 后插换行，滑动窗口自然对齐到整行
+        parent_text = parent_text.replace('</tr>', '</tr>\n')
+        # 检测此父块内的表格边界（避免子块切分破坏表格）
+        pt_tables = _detect_table_boundaries(parent_text)
         # 按 child_size 滑动窗口切子块（子块可以跨段落边界）
         pos = 0
         while pos < len(parent_text):
-            end = min(pos + child_size, len(parent_text))
-            # 在目标位置附近找最近的句子边界（中文：。！？；\n，英文：.!?）
-            if end < len(parent_text):
-                # 在 child_size ±20% 范围内找最近的句子结束符
-                search_start = max(pos + int(child_size * 0.8), pos + 1)
-                search_end = min(pos + int(child_size * 1.2), len(parent_text))
-                best_break = end
-                for boundary_char in ['\n', '。', '！', '？', '；', '.', '!', '?']:
-                    idx = parent_text.rfind(boundary_char, search_start, search_end)
-                    if idx > 0:
-                        best_break = idx + 1
-                        break
-                end = best_break
-            child_text = parent_text[pos:end]
-            if child_text.strip():
-                results.append({
-                    "child": child_text,
-                    "parent": parent_text,
-                    "child_index": child_index,
-                    "parent_index": p_idx,
-                    "section_hint": section_hint,
-                })
-                child_index += 1
-            pos += child_size - overlap  # 带重叠的滑动窗口
+            # 如果当前位置在表格内，直接跳到表格末尾
+            for tb_start, tb_end in pt_tables:
+                if tb_start <= pos < tb_end:
+                    # 把整个表格作为一个子块
+                    child_text = parent_text[tb_start:tb_end]
+                    if child_text.strip():
+                        results.append({
+                            "child": child_text,
+                            "parent": parent_text,
+                            "child_index": child_index,
+                            "parent_index": p_idx,
+                            "section_hint": section_hint,
+                        })
+                        child_index += 1
+                    pos = tb_end
+                    break
+            else:
+                # 不在表格内，正常滑动窗口
+                end = min(pos + child_size, len(parent_text))
+                # 在目标位置附近找最近的句子边界
+                if end < len(parent_text):
+                    search_start = max(pos + int(child_size * 0.8), pos + 1)
+                    search_end = min(pos + int(child_size * 1.2), len(parent_text))
+                    best_break = end
+                    for boundary_char in ['\n', '。', '！', '？', '；', '.', '!', '?']:
+                        idx = parent_text.rfind(boundary_char, search_start, search_end)
+                        if idx > 0:
+                            best_break = idx + 1
+                            break
+                    end = best_break
+                child_text = parent_text[pos:end]
+                if child_text.strip():
+                    results.append({
+                        "child": child_text,
+                        "parent": parent_text,
+                        "child_index": child_index,
+                        "parent_index": p_idx,
+                        "section_hint": section_hint,
+                    })
+                    child_index += 1
+                pos = pos + child_size - overlap
             if pos >= len(parent_text):
                 break
 

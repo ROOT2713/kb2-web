@@ -5,6 +5,7 @@ import {
   deleteDocument as apiDeleteDocument,
   reparseDocument as apiReparseDocument,
   patchDocument as apiPatchDocument,
+  batchPatchDocuments as apiBatchPatchDocuments,
   type DocumentItem,
 } from '@/services/documents'
 import { getCategories as apiGetCategories, type CategoryItem } from '@/services/admin'
@@ -55,20 +56,26 @@ export const useDocumentsStore = defineStore('documents', () => {
     }
   }
 
-  async function patchDocumentAction(docId: string, payload: { title?: string; category?: string }) {
+  async function patchDocumentAction(docId: string, payload: { title?: string; category?: string; subcategory?: string }) {
     const result = await apiPatchDocument(docId, payload)
     // Update local state
     const idx = documents.value.findIndex((d) => d.id === docId)
     if (idx !== -1) {
       if (payload.title !== undefined) documents.value[idx].title = payload.title
       if (payload.category !== undefined) documents.value[idx].category = payload.category
+      if (payload.subcategory !== undefined) documents.value[idx].subcategory = payload.subcategory
     }
     return result
+  }
+
+  async function batchPatch(payload: { doc_ids: string[]; category?: string; subcategory?: string }) {
+    return await apiBatchPatchDocuments(payload.doc_ids, { category: payload.category, subcategory: payload.subcategory })
   }
 
   return {
     documents, loading, error, categories,
     fetchDocuments, fetchCategories, removeDocument, reparse,
     patchDocument: patchDocumentAction,
+    batchPatch,
   }
 })

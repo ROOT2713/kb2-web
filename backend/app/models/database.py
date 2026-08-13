@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 from app.config import settings
 
-engine = create_engine(settings.db_url, echo=settings.debug)
+engine = create_engine(settings.db_url, echo=settings.debug, connect_args={"timeout": 30})
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
@@ -36,3 +36,62 @@ def init_db():
     import app.models.audit        # noqa: F401 — AuditLog
 
     Base.metadata.create_all(bind=engine)
+
+    # ── Query log table (raw SQL, not ORM) ──
+    from sqlalchemy import text as sa_text
+    with engine.connect() as conn:
+        conn.execute(sa_text(
+            "CREATE TABLE IF NOT EXISTS query_log ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  query_text TEXT,"
+            "  bank TEXT DEFAULT '',"
+            "  timestamp TEXT,"
+            "  answer_length INTEGER DEFAULT 0,"
+            "  source_count INTEGER DEFAULT 0,"
+            "  rejected INTEGER DEFAULT 0,"
+            "  rejection_reason TEXT DEFAULT '',"
+            "  latency_ms INTEGER DEFAULT 0,"
+            "  cache_hit INTEGER DEFAULT 0,"
+            "  concept_used INTEGER DEFAULT 0"
+            ")"
+        ))
+        conn.commit()
+
+    # ── Wiki tables ──
+    with engine.connect() as conn:
+        conn.execute(sa_text(
+            "CREATE TABLE IF NOT EXISTS wiki_entries ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  title TEXT NOT NULL,"
+            "  standard_no TEXT DEFAULT '',"
+            "  category TEXT DEFAULT '',"
+            "  subcategory TEXT DEFAULT '',"
+            "  tags TEXT DEFAULT '[]',"
+            "  summary TEXT DEFAULT '',"
+            "  content TEXT DEFAULT '{}',"
+            "  source_doc_id TEXT DEFAULT '',"
+            "  importance INTEGER DEFAULT 0,"
+            "  status TEXT DEFAULT 'draft',"
+            "  created_at TEXT NOT NULL,"
+            "  updated_at TEXT NOT NULL"
+            ")"
+        ))
+        conn.execute(sa_text(
+            "CREATE TABLE IF NOT EXISTS wiki_relations ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  source_entry_id INTEGER NOT NULL,"
+            "  target_entry_id INTEGER NOT NULL,"
+            "  relation_type TEXT NOT NULL,"
+            "  description TEXT DEFAULT ''"
+            ")"
+        ))
+        conn.execute(sa_text(
+            "CREATE INDEX IF NOT EXISTS idx_wiki_entries_std ON wiki_entries(standard_no)"
+        ))
+        conn.execute(sa_text(
+            "CREATE INDEX IF NOT EXISTS idx_wiki_entries_cat ON wiki_entries(category)"
+        ))
+        conn.execute(sa_text(
+            "CREATE INDEX IF NOT EXISTS idx_wiki_relations_src ON wiki_relations(source_entry_id)"
+        ))
+        conn.commit()

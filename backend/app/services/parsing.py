@@ -23,6 +23,29 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# ── MinerU 健康计数器 ──
+mineru_stats = {"success": 0, "fail": 0, "last_error": None}
+mineru_stats_lock = asyncio.Lock()
+
+
+async def inc_mineru_success():
+    async with mineru_stats_lock:
+        mineru_stats["success"] += 1
+        # 成功后重置失败计数，避免累计失败数导致永久degraded
+        mineru_stats["fail"] = 0
+        mineru_stats["last_error"] = None
+
+
+async def inc_mineru_fail(err: str):
+    async with mineru_stats_lock:
+        mineru_stats["fail"] += 1
+        mineru_stats["last_error"] = err[:200] if err else None
+
+
+def get_mineru_stats() -> dict:
+    """Thread-safe read of MinerU health stats. 用于 admin health endpoint."""
+    return dict(mineru_stats)
+
 
 def ocr_pdf(pdf_bytes: bytes) -> str:
     """用 pdftoppm + tesseract 对扫描件 PDF 做 OCR，返回纯文本"""
@@ -185,7 +208,7 @@ async def mineru_parse_pdf(filename: str, content: bytes) -> str:
 
                 # Step 3: 轮询结果
                 poll_url = f"{mineru_base}/extract-results/batch/{batch_id}"
-                max_wait = 90
+                max_wait = 900
 
                 for _ in range(max_wait // 3):
                     await asyncio.sleep(3)
@@ -279,10 +302,53 @@ async def docx_to_pdf_via_libreoffice(filename: str, content: bytes) -> bytes:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def _odl_available() -> bool:
+    try:
+        import shutil
+        return shutil.which("opendataloader-pdf") is not None
+    except Exception:
+        return False
+
+
+async def opendataloader_parse_pdf(content: bytes, filename: str = "doc.pdf") -> str:
+    """Use OpenDataLoader to parse PDF → structured Markdown. Requires Java 11+."""
+    tmpdir = tempfile.mkdtemp(prefix="odl_")
+    try:
+        pdf_path = os.path.join(tmpdir, filename)
+        with open(pdf_path, "wb") as f:
+            f.write(content)
+        out_dir = os.path.join(tmpdir, "out")
+        os.makedirs(out_dir, exist_ok=True)
+        logger.info("OpenDataLoader parsing: %s", filename)
+        proc = await asyncio.create_subprocess_exec(
+            "opendataloader-pdf", "-o", out_dir, "-f", "markdown", pdf_path,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise RuntimeError("OpenDataLoader timed out (120s)")
+        if proc.returncode != 0:
+            err_msg = stderr.decode("utf-8", errors="replace")[:300]
+            raise RuntimeError(f"OpenDataLoader exit {proc.returncode}: {err_msg}")
+        md_files = sorted(Path(out_dir).glob("*.md"))
+        if not md_files:
+            raise RuntimeError("OpenDataLoader produced no Markdown output")
+        text = md_files[0].read_text(encoding="utf-8")
+        if not text.strip():
+            raise RuntimeError("OpenDataLoader returned empty text")
+        logger.info("OpenDataLoader done: %d chars", len(text))
+        return text
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 async def parse_document(filename: str, content: bytes) -> str:
     """解析 PDF/Word/Markdown/TXT → 纯文本
 
     PDF 优先使用 MinerU API（高精度表格识别），失败时回退到 tesseract OCR。
+    OpenDataLoader 作为 MinerU 后的第二 fallback（比 pypdf 保留更多表格/标题结构）。
     """
     ext = Path(filename).suffix.lower()
     if ext == ".pdf":
@@ -302,11 +368,22 @@ async def parse_document(filename: str, content: bytes) -> str:
                 text = await mineru_parse_pdf(filename, content)
                 if text and text.strip():
                     logger.info("MinerU 完成，提取 %d 字符", len(text))
+                    await inc_mineru_success()
                     return text
                 logger.info("MinerU 返回空结果，回退 pypdf")
             except Exception as e:
                 logger.warning("MinerU 失败，回退 pypdf: %s", e)
                 logger.error("", exc_info=True)
+                await inc_mineru_fail(str(e))
+
+        # ── Fallback: OpenDataLoader（数字PDF结构保留，比pypdf表格/标题完整）──
+        if _odl_available():
+            try:
+                text = await opendataloader_parse_pdf(content, filename)
+                if text and text.strip():
+                    return text
+            except Exception as e:
+                logger.warning("OpenDataLoader 失败，回退 pypdf: %s", e)
 
         # ── 兜底: pypdf 提取文字层 ──
         text = "\n\n".join(p.extract_text() or "" for p in reader.pages)
@@ -347,7 +424,16 @@ async def parse_document(filename: str, content: bytes) -> str:
                             return text
                     except Exception as e:
                         logger.warning("MinerU 解析失败，回退 pypdf: %s", e)
-                # MinerU 不可用或失败 → pypdf 提取文字层
+                # MinerU 不可用或失败 → OpenDataLoader（结构保留好）
+                if _odl_available() and pdf_bytes:
+                    try:
+                        text = await opendataloader_parse_pdf(pdf_bytes, pdf_name)
+                        if text.strip():
+                            logger.info("DOCX→PDF→OpenDataLoader 完成: %d 字符", len(text))
+                            return text
+                    except Exception as e:
+                        logger.warning("OpenDataLoader 失败，回退 pypdf: %s", e)
+                # → pypdf 提取文字层
                 try:
                     reader = pypdf.PdfReader(BytesIO(pdf_bytes))
                     text = "\n\n".join(p.extract_text() or "" for p in reader.pages)

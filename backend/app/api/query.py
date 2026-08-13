@@ -89,10 +89,6 @@ from app.utils.tokenizer import expand_keywords, extract_keyword_snippet
 
 from app.config import settings
 
-from app.services.fee_utils import (
-    find_fee_relevant_chunks,
-)
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 if not logger.handlers:
@@ -107,17 +103,23 @@ router = APIRouter()
 async def query(
     request: Request,
     q: str = Form(...),
+    nocache: str = Form(""),
     bank: str = Form("all"),
     history: str = Form(""),
     rerank: str = Form("false"),
     rerank_mode: str = Form("default"),
-    nocache: str = Form(""),
     session_id: str = Form(""),
     categories: str = Form(""),
 ):
     """搜索知识库 → 召回 → DeepSeek 合成答案（支持多 bank）"""
     if not q.strip():
-        raise HTTPException(400, "问题不能为空")
+        raise HTTPException(400, "query q is required")
+    if len(q) > 500:
+        raise HTTPException(400, "查询过长（最多 500 字）")
+
+    # ── nocache 参数解析（兼容 "false"/"0" 为空）──
+    _skip_cache = nocache and nocache.lower() not in ("false", "0", "")
+    _use_rerank = rerank and rerank.lower() not in ("false", "0", "")
 
     # bank 白名单校验
     if bank not in BANKS:
@@ -156,7 +158,7 @@ async def query(
     q = normalize_standard_numbers(q)
 
     # ── 缓存命中检查（L1精确 + L2语义）──
-    if not nocache:
+    if not _skip_cache:
         try:
             cached = cache_get_exact(q, bank)
             if cached:
@@ -171,7 +173,7 @@ async def query(
                     "session_id": session_id,
                     "suggestions": _build_persistent_suggestions(q, cached["sources"]),
                 }
-            cached = await cache_get_semantic(q, bank)
+            cached = await cache_get_semantic(q, bank, threshold=settings.cache_l2_threshold)
             if cached:
                 # 写入审计日志（缓存命中路径）
                 _write_audit_log(request, q, cached["answer"], cached.get("sources", []), cache_hit=1)
@@ -189,7 +191,13 @@ async def query(
 
     bank_cfg = get_bank_config(bank)
     bank_prompt = bank_cfg["prompt"]
-    hs_bank = bank_cfg.get("hindsight") or "kb"
+    # support hindsight_banks (list) for consolidated banks
+    hindsight_banks = bank_cfg.get("hindsight_banks")
+    hs_bank: str = "kb"  # default: search all banks
+    if hindsight_banks:
+        hs_bank = ",".join(hindsight_banks)  # pass as comma-separated to _build_search_context
+    elif bank_cfg.get("hindsight"):
+        hs_bank = bank_cfg["hindsight"]
 
     # ── 查询扩展 ──
     q_recalled = expand_query_synonyms(q)
@@ -354,6 +362,107 @@ async def query(
         except Exception as e:
             logger.warning("KG traversal failed: %s", e)
 
+    # ── Wiki 结构化知识检索（补充 RAG，在置信度评估前注入）──
+    _wiki_injected = []
+    try:
+        from app.services.wiki_service import retrieve_for_query as _wiki_retrieve
+        _wiki_injected = _wiki_retrieve(q, bank=bank)
+    except Exception as e:
+        logger.warning("[Wiki] retrieve failed: %s", e)
+    if _wiki_injected:
+        logger.info("[Wiki] Retrieved %d relevant entries for: %s", len(_wiki_injected), q[:40])
+        _wiki_parts = []
+        for _we in _wiki_injected:
+            _content_text = _we.get("summary", "") or ""
+            _content_obj = _we.get("content", {})
+            if isinstance(_content_obj, str):
+                try:
+                    _content_obj = json.loads(_content_obj)
+                except (json.JSONDecodeError, TypeError):
+                    _content_obj = {}
+            _sc = _content_obj if isinstance(_content_obj, dict) else {}
+            _entry_parts = [f"【标准条目】{_we['title']}（{_we['standard_no']}）"]
+            if _content_text:
+                _entry_parts.append(f"摘要：{_content_text}")
+            if _sc.get("scope"):
+                _entry_parts.append(f"适用范围：{_sc['scope']}")
+            if _sc.get("key_clauses"):
+                _entry_parts.append(f"核心条款：{_sc['key_clauses']}")
+            _wiki_parts.append("\n".join(_entry_parts))
+            logger.info("[Wiki] Injected entry %d: %s (%d chars total)",
+                        _we['id'], _we['title'], sum(len(p) for p in _entry_parts))
+
+        # Inject as a structured knowledge block in the prompt context
+        # Use a dedicated key that the prompt template picks up
+        _wiki_block = (
+            "【结构化知识 — 以下条目来自Wiki知识库，属于高信源结构化条目，与RAG来源文档同等重要】\n"
+            + "\n\n".join(_wiki_parts)
+        )
+        ctx["wiki_context"] = _wiki_block
+        ctx["has_wiki"] = True
+
+        # Also inject into doc_facts for source attribution (single string per entry)
+        for _we in _wiki_injected:
+            _wid = f"__wiki_{_we['id']}"
+            _content_text = _we.get("summary", "") or ""
+            _content_obj = _we.get("content", {})
+            if isinstance(_content_obj, str):
+                try:
+                    _content_obj = json.loads(_content_obj)
+                except (json.JSONDecodeError, TypeError):
+                    _content_obj = {}
+            _sc = _content_obj if isinstance(_content_obj, dict) else {}
+            _structured = (
+                f"【标准条目】{_we['title']}（{_we['standard_no']}）\n"
+                f"摘要：{_content_text}\n"
+            )
+            if _sc.get("scope"):
+                _structured += f"适用范围：{_sc['scope']}\n"
+            if _sc.get("key_clauses"):
+                _structured += f"核心条款：{_sc['key_clauses']}\n"
+            _entry_name = _we['title']
+            if _we.get("standard_no"):
+                _entry_name += f"（{_we['standard_no']}）"
+            ctx["doc_facts"][_wid] = [(_structured, _entry_name, _structured[:3000], None)]
+
+    # ── Comparison Query Detection ──
+    _comparison_patterns = [
+        (r"([\u4e00-\u9fff\w]+)(?:和|与|跟|同|及)([\u4e00-\u9fff\w]+)(?:有(?:什么)?(?:区别|差异|不同)|[的]?区别[是]?|[的]?差异[是]?|[的]?不同[是]?|对比|进行比较)", "diff"),
+        (r"对比(?:一下|分析|研究)?([\u4e00-\u9fff\w\s\/\-\d]+)(?:和|与|跟|同)([\u4e00-\u9fff\w\s\/\-\d]+)", "compare"),
+        (r"([\u4e00-\u9fff\w]+)(?:和|与|跟|同)([\u4e00-\u9fff\w]+)(?:对比)", "compare"),
+        # Fallback: standard numbers with hyphens (e.g. "GB 50174-2017和GB 50311-2016有何不同")
+        (r"([\w\s\/\-]{3,30})(?:和|与|跟|同)([\w\s\/\-]{3,30})(?:有(?:什么)?(?:区别|差异|不同))", "std_compare"),
+    ]
+    _cmp_match = None
+    _cmp_entity_a = ""
+    _cmp_entity_b = ""
+    for _pattern, _type in _comparison_patterns:
+        _m = re.search(_pattern, q)
+        if _m:
+            _cmp_entity_a = _m.group(1).strip()
+            _cmp_entity_b = _m.group(2).strip()
+            _cmp_match = _type
+            break
+    if _cmp_match and len(_cmp_entity_a) >= 2 and len(_cmp_entity_b) >= 2:
+        ctx["is_comparison"] = True
+        ctx["comparison_entities"] = [_cmp_entity_a, _cmp_entity_b]
+        logger.info("[COMPARE] Detected: %s vs %s (type=%s)", _cmp_entity_a, _cmp_entity_b, _cmp_match)
+        ctx["comparison_hint"] = (
+            f"\n【对比查询指令】\n"
+            f"用户问题要求对比「{_cmp_entity_a}」和「{_cmp_entity_b}」。\n"
+            f"请严格按照以下结构回答：\n"
+            f"1. **必须用表格对比**：第一行=项目/指标，第二列={_cmp_entity_a}，第三列={_cmp_entity_b}\n"
+            f"2. 如果涉及标准号（如GB/T编号），**必须在表格中明确列出标准号**\n"
+            f"3. 表格后附简要文字说明关键差异\n"
+            f"4. 如果某个实体无对应KB内容，标注「知识库未覆盖」\n"
+            f"\n"
+            f"表格模板示例：\n"
+            f"| 对比项 | {_cmp_entity_a} | {_cmp_entity_b} |\n"
+            f"|---|---|---|\n"
+            f"| 核心要求 | XXX | YYY |\n"
+            f"| 标准依据 | GB/T XXXX | GB/T YYYY |\n"
+        )
+
     # ── Confidence Gate (L1+L2): 召回置信度评估 — 三级门控 ──
     reject = _assess_recall_confidence(ctx, q, query_keywords, session_doc_ids, _is_multi_turn)
     if reject:
@@ -379,6 +488,7 @@ async def query(
         _tier_extra=ctx["_tier_extra"],
         title_map=ctx["title_map"],
         kg_context_text=kg_context_text,
+        ctx=ctx,
     )
 
     answer = gen["answer"]
@@ -403,7 +513,7 @@ async def query(
 
     # ── 缓存写入 ──
     # 有文档事实的查询可缓存；空结果不缓存；缓存命中时动态重建 suggestions
-    if not nocache and ctx["doc_facts"]:
+    if not _skip_cache and ctx["doc_facts"]:
         try:
             doc_ids = set(ctx["doc_facts"].keys()) if ctx["doc_facts"] else set()
             await cache_set(q, bank, answer, sources, doc_ids)
@@ -428,6 +538,22 @@ async def query(
 
     # ── 审计日志（使用共用工具函数）──
     _write_audit_log(request, q, answer, sources, cache_hit=1 if cache_hit else 0, reject=reject["reject_type"] if reject else None)
+
+    # ── Query 日志（fire-and-forget，非侵入）──
+    try:
+        from app.services.query_logger import log_query
+        reject_type = (reject or {}).get("reject_type", "") if reject else ""
+        is_rejected = bool(reject_type)
+        log_query(
+            query_text=q, bank=bank,
+            answer_length=len(answer or ""),
+            source_count=len(sources) if isinstance(sources, list) else 0,
+            rejected=is_rejected,
+            rejection_reason=reject_type,
+            cache_hit=bool(cache_hit),
+        )
+    except Exception:
+        pass  # query logging must never break the query
 
     return result
 
@@ -503,7 +629,7 @@ async def _web_search(query: str, max_results: int = 3) -> tuple:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=90)
         if proc.returncode == 0 and stdout:
             result = stdout.decode("utf-8", errors="replace").strip()
             # 检测 AnySearch 错误（配额耗尽等）
@@ -575,7 +701,7 @@ async def web_search_api(
         answer = await chat([
             {"role": "system", "content": bank_prompt},
             {"role": "user", "content": prompt},
-        ])
+        ], max_tokens=8000)
     except Exception as e:
         answer = f"回答失败: {e}"
 

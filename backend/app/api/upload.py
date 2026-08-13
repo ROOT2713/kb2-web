@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import traceback
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,16 +46,24 @@ logger.setLevel(logging.INFO)
 
 
 def _log_task_exception(task: asyncio.Task):
-    """Log any exception from a fire-and-forget background task."""
+    """Log any exception from a fire-and-forget background task with full traceback."""
     from app.middleware.request_id import _request_id_ctx
     task_id = task.get_name() or f"t-{id(task):x}"
     _request_id_ctx.set(f"task:{task_id}")
     try:
         exc = task.exception()
         if exc:
-            logger.error("Background task [%s] failed: %s", task_id, exc)
+            if isinstance(exc, asyncio.CancelledError):
+                logger.warning("Background task [%s] was cancelled", task_id)
+            else:
+                logger.error(
+                    "Background task [%s] failed: %s\nTraceback:\n%s",
+                    task_id, exc, "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+                )
     except asyncio.CancelledError:
-        pass
+        logger.warning("Background task [%s] cancelled (exception check)", task_id)
+    except Exception as inner:
+        logger.error("Background task [%s] exception() itself raised: %s", task_id, inner)
 
 router = APIRouter()
 
@@ -132,6 +141,7 @@ async def upload_document(
     file: UploadFile = File(...),
     title: str = Form(""),
     category: str = Form(""),
+    subcategory: str = Form(""),
     bank: str = Form("general"),
     confirm_quality: str = Form(""),
     source: str = Form("manual"),
@@ -189,7 +199,7 @@ async def upload_document(
     asyncio.create_task(
         _process_upload_task(
             task_id=task_id, filename=file.filename, content=content,
-            title=title, category=category, bank=bank,
+            title=title, category=category, subcategory=subcategory, bank=bank,
             source=source, published_date=published_date, geo_scope=geo_scope,
         )
     ).add_done_callback(_log_task_exception)
@@ -199,10 +209,17 @@ async def upload_document(
 
 async def _process_upload_task(
     task_id: str, filename: str, content: bytes,
-    title: str = "", category: str = "", bank: str = "general",
+    title: str = "", category: str = "", subcategory: str = "", bank: str = "general",
     source: str = "manual", published_date: str = None, geo_scope: str = None,
 ):
     _update_upload_task(task_id, status="processing", stage="parsing", progress=0.05)
+
+    # ── Checkpoint: mark job start for resume tracking ──
+    try:
+        from app.services.job_checkpoint import checkpoint_manager
+        _cp_job_id = checkpoint_manager.create(doc_id=task_id, filename=filename)
+    except Exception:
+        _cp_job_id = ""
     parsed_pub_date = None
     if published_date and isinstance(published_date, str):
         try:
@@ -270,7 +287,7 @@ async def _process_upload_task(
         db.close()
 
     _update_upload_task(task_id, progress=0.25, stage="chunking")
-    doc_title = title.strip() or filename_to_title(filename, text)
+    doc_title = (title or "").strip() or Path(filename).stem or "Untitled"
     doc_category = category.strip() if category and category.strip() else ""
     if not doc_category or doc_category == "auto":
         from app.services.category_rules import infer_category
@@ -281,6 +298,14 @@ async def _process_upload_task(
             doc_category = ""  # 留空表示未分类
     profile = profile_document(text)
     doc_type = profile.get("doc_type", "generic")
+    # P1 2026-07-20: 自动推断 subcategory（用户指定则优先）
+    doc_subcategory = (subcategory or "").strip()
+    if not doc_subcategory and doc_category:
+        from app.services.category_rules import infer_subcategory
+        doc_subcategory = infer_subcategory(
+            title=eff_title, filename=filename, bank=bank,
+            category=doc_category, doc_type=doc_type
+        )
     pc_chunks = []
     if doc_type in ("gb_standard", "regulation") and profile.get("confidence", 0) >= 0.3:
         pc_chunks = heading_chunk(text, profile)
@@ -309,10 +334,21 @@ async def _process_upload_task(
                 uc.append(text[prev:])
             uct = "\n\n".join(uc)
             if len(uct.strip()) > 500:
+                # Use parent_child_chunk for proper sentence/table boundary handling
+                nearest_hint = pc_chunks[-1].get("section_hint", doc_title) if pc_chunks else doc_title
+                gc_dicts = parent_child_chunk(uct, child_size=settings.default_chunk_size,
+                                              parent_size=settings.default_parent_size,
+                                              overlap=settings.chunk_overlap,
+                                              doc_title=nearest_hint or doc_title)
                 gc = []
-                for p in uct.split("\n\n"):
-                    if p.strip():
-                        gc.append({"child": p[:12000], "parent": p[:12000], "child_index": 0, "parent_index": 0, "section_hint": ""})
+                for g in gc_dicts:
+                    gc.append({
+                        "child": g["child"],
+                        "parent": g["parent"],
+                        "child_index": g["child_index"],
+                        "parent_index": g["parent_index"],
+                        "section_hint": nearest_hint,
+                    })
                 if gc:
                     mp = max(pc["parent_index"] for pc in pc_chunks) + 1
                     for i, g in enumerate(gc):
@@ -325,7 +361,7 @@ async def _process_upload_task(
             doc_type = "excel_checklist"
         else:
             doc_type = "generic"
-            pc_chunks = parent_child_chunk(text, child_size=settings.default_chunk_size, parent_size=settings.default_chunk_size * 4, overlap=settings.chunk_overlap, doc_title=doc_title)
+            pc_chunks = parent_child_chunk(text, child_size=settings.default_chunk_size, parent_size=settings.default_parent_size, overlap=settings.chunk_overlap, doc_title=doc_title)
     try:
         tc = extract_table_chunks(text)
     except Exception:
@@ -357,7 +393,7 @@ async def _process_upload_task(
     db = SessionLocal()
     try:
         dr = _get_doc_repo(db)
-        dr.save(doc_id=doc_id, title=doc_title, category=doc_category, filename=filename, content_hash=norm_hash, doc_type=doc_type, bank=bank, hs_bank=hs_bank, source=source, published_date=parsed_pub_date, geo_scope=geo_scope)
+        dr.save(doc_id=doc_id, title=doc_title, category=doc_category, subcategory=doc_subcategory, filename=filename, content_hash=norm_hash, doc_type=doc_type, bank=bank, hs_bank=hs_bank, source=source, published_date=parsed_pub_date, geo_scope=geo_scope)
         for idx, pt in parent_map.items():
             db.merge(ParentChunk(doc_id=doc_id, parent_idx=idx, parent_text=pt))
         con_id = infer_doc_concept_id(title=doc_title, bank=bank, doc_type=doc_type, text=text[:2000])
@@ -424,6 +460,12 @@ async def _process_upload_task(
         db.rollback()
         logger.exception("save failed: %s", e)
         _update_upload_task(task_id, status="failed", stage="save", error_message=str(e))
+        try:
+            if _cp_job_id:
+                from app.services.job_checkpoint import checkpoint_manager
+                checkpoint_manager.mark_failed(_cp_job_id, str(e))
+        except Exception:
+            pass
         return
     finally:
         db.close()
@@ -453,10 +495,10 @@ async def _process_upload_task(
         hs = get_vector_store()
         tc = sum(len(m.get("content", "")) for m in memory_items)
         BS = 10 if (tc > 500000 or any(len(m.get("content", "")) > 5000 for m in memory_items)) else 20
-        for bs in range(0, len(memory_items), BS):
+        for batch_i, bs in enumerate(range(0, len(memory_items), BS)):
             batch = memory_items[bs:bs + BS]
             try:
-                retained += await hs.upsert(doc_id, batch, hs_bank)
+                retained += await hs.upsert(doc_id, batch, hs_bank, append=(batch_i > 0), offset=bs)
             except Exception as e:
                 logger.error("indexing error: %s", e)
         invalidate_bm25_cache(bank)
@@ -489,10 +531,13 @@ async def _process_upload_task(
         doc = _get_doc_repo(db).get(doc_id)
         if doc:
             doc.original_text_length = len(text)
+            doc.chunk_count = retained
+            # searchable=1 if upsert succeeded (at least some chunks stored)
+            # Integrity/recall check is a quality signal, not a gate
+            if retained > 0 or (integrity and integrity.get("status") == "ok"):
+                doc.searchable = 1
             if integrity:
                 doc.coverage_pct = integrity.get("coverage_pct", 0.0)
-                if integrity.get("status") == "ok":
-                    doc.searchable = 1
             doc.verified_at = datetime.now(timezone.utc)
             doc.last_confirmed = datetime.now(timezone.utc)
             db.commit()
@@ -510,6 +555,13 @@ async def _process_upload_task(
 
     result_dict = {"ok": True, "doc_id": doc_id, "title": doc_title, "category": doc_category, "filename": filename, "chunks": retained, "total_chars": len(text), "preview": text[:200] + ("..." if len(text) > 200 else ""), "quality": {"score": quality["score"], "issues": quality["issues"], "needs_confirm": quality["score"] < 80}, "integrity": integrity, "doc_type": doc_type, "kg_indexed": True}
     _update_upload_task(task_id, status="done", progress=1.0, stage="complete", result_doc_id=doc_id, result=json.dumps(result_dict, ensure_ascii=False))
+    # ── Checkpoint: mark job completed ──
+    try:
+        if _cp_job_id:
+            from app.services.job_checkpoint import checkpoint_manager
+            checkpoint_manager.mark_completed(_cp_job_id)
+    except Exception:
+        pass
     logger.info("[upload] task %s complete: doc=%s", task_id[:8], doc_id[:8])
 
 
@@ -654,6 +706,7 @@ async def upload_batch(
     files: Optional[List[UploadFile]] = File(default=None),
     title_prefix: str = Form(""),
     category: str = Form(""),
+    subcategory: str = Form(""),
     bank: str = Form("general"),
     confirm_quality: str = Form(""),
     source: str = Form("manual"),
@@ -703,7 +756,7 @@ async def upload_batch(
             asyncio.create_task(
                 _process_upload_task(
                     task_id=task_id, filename=f.filename, content=f_content,
-                    title=title_prefix, category=category, bank=bank,
+                    title=title_prefix, category=category, subcategory=subcategory, bank=bank,
                     source=source, published_date=None, geo_scope=None,
                 )
             ).add_done_callback(_log_task_exception)

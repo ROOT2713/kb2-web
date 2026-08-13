@@ -36,6 +36,7 @@ class DocumentRepository:
         doc_id: str,
         title: str,
         category: str = "",
+        subcategory: str = "",
         filename: str = "",
         content_hash: str = "",
         doc_type: str = "generic",
@@ -54,6 +55,7 @@ class DocumentRepository:
             # Update existing
             doc.title = title
             doc.category = category
+            doc.subcategory = subcategory
             doc.filename = filename
             doc.content_hash = content_hash
             doc.doc_type = doc_type
@@ -74,6 +76,7 @@ class DocumentRepository:
                 doc_id=doc_id,
                 title=title,
                 category=category,
+                subcategory=subcategory,
                 filename=filename,
                 content_hash=content_hash,
                 doc_type=doc_type,
@@ -155,6 +158,12 @@ class DocumentRepository:
         stmt = stmt.order_by(Document.created_at.desc())
         return list(self.db.execute(stmt).scalars().all())
 
+    def list_by_banks(self, banks: List[str]) -> List[Document]:
+        """List documents matching any of the given bank values."""
+        stmt = select(Document).where(Document.bank.in_(banks))
+        stmt = stmt.order_by(Document.created_at.desc())
+        return list(self.db.execute(stmt).scalars().all())
+
     def get_all_meta(self) -> Dict[str, dict]:
         """Return {doc_id: {...}} metadata dict (matches v1 get_all_meta)."""
         docs = self.list_all()
@@ -169,7 +178,8 @@ class DocumentRepository:
         return result
 
     # ── update ──────────────────────────────────────────────────
-    def update(self, doc_id: str, title: Optional[str] = None, category: Optional[str] = None) -> Optional[Document]:
+    def update(self, doc_id: str, title: Optional[str] = None, category: Optional[str] = None,
+                subcategory: Optional[str] = None) -> Optional[Document]:
         """Update document title and/or category (matches v1 update_meta).
 
         Only updates fields that are explicitly provided (not None).
@@ -186,12 +196,15 @@ class DocumentRepository:
         if category is not None:
             doc.category = category
             updated = True
+        if subcategory is not None:
+            doc.subcategory = subcategory
+            updated = True
 
         if updated:
             doc.updated_at = datetime.now(timezone.utc)
             self.db.commit()
             self.db.refresh(doc)
-            logger.info("Document updated: doc_id=%s title=%s category=%s", doc_id, title, category)
+            logger.info("Document updated: doc_id=%s title=%s category=%s subcategory=%s", doc_id, title, category, subcategory)
 
         return doc
 

@@ -70,12 +70,13 @@ class Settings(BaseSettings):
 
     # ── Cache ──
     cache_l1_max: int = 2000
-    cache_l2_threshold: float = 0.82
+    cache_l2_threshold: float = 0.88
     cache_ttl_seconds: int = 86400
 
     # ── Chunking ──
-    default_chunk_size: int = 800
-    chunk_overlap: int = 120
+    default_chunk_size: int = 500
+    default_parent_size: int = 6000
+    chunk_overlap: int = 75
 
     # ── Retrieval ──
     top_k: int = 20

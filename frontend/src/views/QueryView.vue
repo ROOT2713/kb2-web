@@ -136,6 +136,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useQueryStore } from '@/stores/query'
 import { useBanksStore } from '@/stores/banks'
 import api from '@/services/api'
+import { getCategories } from '@/services/admin'
 import ResultCard from '@/components/ResultCard.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import Toast from '@/components/Toast.vue'
@@ -144,7 +145,11 @@ const queryStore = useQueryStore()
 const banksStore = useBanksStore()
 
 const queryText = ref('')
-const selectedBank = ref('all')
+// Use banksStore.selectedBank as single source of truth (syncs with sidebar)
+const selectedBank = computed({
+  get: () => banksStore.selectedBank,
+  set: (val: string) => banksStore.selectBank(val),
+})
 const categoryFilter = ref('')
 const categories = ref<{key: string, label: string, isolated: boolean}[]>([])
 
@@ -179,10 +184,16 @@ watch(() => queryStore.loading, (loading) => {
   if (!loading) stopQueryTimer()
 })
 
+// Watch sidebar bank selection: when user clicks sidebar, auto-execute query
+watch(() => banksStore.selectedBank, (newBank) => {
+  if (queryText.value.trim()) {
+    handleQuery()
+  }
+})
+
 async function loadCategories() {
   try {
-    const { data } = await api.get('/admin/categories')
-    categories.value = data
+    categories.value = await getCategories()
   } catch { /* ignore */ }
 }
 
@@ -276,7 +287,7 @@ function rerunHistory(item: { q: string; bank: string }) {
 
 <style scoped>
 .query-page {
-  max-width: 800px;
+  max-width: min(1120px, 92vw);
 }
 
 .page-title {
