@@ -114,6 +114,8 @@ async def query(
     """搜索知识库 → 召回 → DeepSeek 合成答案（支持多 bank）"""
     if not q.strip():
         raise HTTPException(400, "query q is required")
+    if len(q) > 500:
+        raise HTTPException(400, "查询过长（最多 500 字）")
 
     # ── nocache 参数解析（兼容 "false"/"0" 为空）──
     _skip_cache = nocache and nocache.lower() not in ("false", "0", "")

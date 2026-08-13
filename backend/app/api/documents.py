@@ -138,10 +138,20 @@ async def list_documents(bank: str = Query("all"), db: Session = Depends(get_db)
     # Supplement chunk/size data
     hs_stats = {}
     if settings.vector_backend == "pgvector":
-        store = get_vector_store()
-        store_docs = await store.list_documents(bank if bank != "all" else "kb")
-        for item in store_docs:
-            hs_stats[item["doc_id"]] = {"chunks": 0, "size": 0}
+        # 2026-08-13 修复：之前硬编码 chunks=0/size=0（PG 路径 list_documents 无计数）
+        # 改为直接查 pgvector 聚合（COUNT + SUM(content length)），显示真实 chunk 数
+        try:
+            # 2026-08-13 CC 审查修复：复用 vector_repo 连接池（避免每次新开 TCP + 泄漏）
+            store = get_vector_store()
+            pool = await store._get_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT doc_id, COUNT(*) AS n, COALESCE(SUM(LENGTH(content)),0) AS sz "
+                    "FROM vector_chunks GROUP BY doc_id")
+            for row in rows:
+                hs_stats[row["doc_id"]] = {"chunks": row["n"], "size": row["sz"]}
+        except Exception as e:
+            logger.warning("pgvector stats failed: %s", e)
     else:
         active_banks = await _get_active_hindsight_banks()
         for bank_id in active_banks:
@@ -257,7 +267,7 @@ async def fetch_standard(
 
     # Step 4: Upload vectors
     doc_title = std_no.strip()
-    chunk_size = 1000
+    chunk_size = 1000  # 保持原值（2026-08-13 CC 审查：统一到 500 是行为变更，非纯重构，回退）
     chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
     doc_id = str(uuid.uuid4())
 
@@ -426,7 +436,7 @@ async def refetch_document(
             pass
 
     # Step 5: Re-upload with new text
-    chunk_size = 1000
+    chunk_size = 1000  # 保持原值（2026-08-13 CC 审查：统一到 500 是行为变更，非纯重构，回退）
     chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
 
     success_count = 0
@@ -498,7 +508,7 @@ async def refetch_document(
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/rag-eval")
-async def rag_evaluation():
+async def rag_evaluation(_admin: bool = Depends(require_role("admin"))):
     """RAG quality evaluation — 4 dimensions (RAGAS style) (v1 L4556-L4684)."""
     test_cases = [
         {"q": "The security zone boundary requirements for Level 3 classified protection", "bank": "standards", "expect_doc": "classified protection"},
@@ -620,7 +630,7 @@ async def rag_evaluation():
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/audit")
-async def audit_knowledge_base():
+async def audit_knowledge_base(_admin: bool = Depends(require_role("admin"))):
     """Scan all documents in pgvector, output quality audit report.
     
     Fixed: was iterating v1 SQLite (179 docs, doc_id mismatch → all score=0).
@@ -1144,6 +1154,7 @@ async def reparse_document(
     profile = profile_document(text)
     doc_type = profile.get("doc_type", "generic")
     pc_chunks = []
+    coverage = 0.0  # 2026-08-13 修复：pc_chunks 为空时 L1267 引用 coverage 导致 NameError
     if doc_type in ("gb_standard", "regulation") and profile.get("confidence", 0) >= 0.3:
         pc_chunks = heading_chunk(text, profile)
 

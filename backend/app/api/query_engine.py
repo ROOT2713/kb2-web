@@ -354,12 +354,12 @@ async def _build_search_context(
         import jieba as _jieba_mod
         title_keywords = [w for w in _jieba_mod.cut(q_recalled) if len(w.strip()) >= 2]
         if title_keywords:
+            tdb = None
             try:
                 tdb = SessionLocal()
                 all_docs = tdb.execute(
                     sa_text("SELECT doc_id, title FROM documents WHERE searchable=1")
                 ).fetchall()
-                tdb.close()
                 best_doc = None
                 best_score = 0
                 for row in all_docs:
@@ -381,6 +381,10 @@ async def _build_search_context(
                                 exact_results.append(tr)
             except Exception as e:
                 logger.warning("title fuzzy match: %s", e)
+            finally:
+                if tdb is not None:
+                    try: tdb.close()
+                    except Exception: pass
 
     # ── Hybrid Search: Dense + BM25 RRF 融合 ──
     all_recall_results = []
@@ -654,6 +658,7 @@ async def _build_search_context(
 
     # ── 短摘要扩展：从 parent_chunks 取回全文（在 rerank 之后，D2-B 之前）──
     # [T0-1] 从 raw_results[:30] 移到此处，确保 rerank 后的全量结果都被覆盖
+    _pdb = None
     try:
         _pdb = SessionLocal()
         for _ri, _r in enumerate(all_results):
@@ -687,8 +692,13 @@ async def _build_search_context(
                 if len(_full_text) > len(_text) * 2:
                     all_results[_ri] = {**_r, "text": _full_text}
         _pdb.close()
+        _pdb = None
     except Exception as e:
         logger.warning("short summary enrichment (post-rerank) failed: %s", e)
+    finally:
+        if _pdb is not None:
+            try: _pdb.close()
+            except Exception: pass
 
     # ── 费用类查询增强召回（D2-B 精简版，2026-07-30）──
     # 当查询含费用关键词时，对费表文档做定向 Hindsight recall，
@@ -1445,6 +1455,7 @@ async def _generate_answer(
                 parent_keys_to_fetch.add((doc_id, pidx))
 
     if parent_keys_to_fetch:
+        pdb = None
         try:
             pdb = SessionLocal()
             for did, pidx in parent_keys_to_fetch:
@@ -1455,8 +1466,13 @@ async def _generate_answer(
                 if row:
                     parent_text_cache[(did, pidx)] = row[0]
             pdb.close()
+            pdb = None
         except Exception as e:
             logger.warning("parent_chunks query failed: %s", e)
+        finally:
+            if pdb is not None:
+                try: pdb.close()
+                except Exception: pass
 
     # ── 按文档合并：每个文档取 top-2 fact，拼接 ──
     context_parts = []
@@ -1588,6 +1604,7 @@ async def _generate_answer(
         # 直接查 parent_chunks 全表，精确找含"表N"+"费率/收费/基价"的表格块
         # （不依赖 doc_facts 顺序——doc_facts 前几条可能是封面/前言，费率表在深处）
         try:
+            _quick_db = None
             _quick_db = SessionLocal()
             _fee_doc_ids = list(doc_facts.keys())
             _placeholders = ",".join(f":d{i}" for i in range(len(_fee_doc_ids)))
@@ -1618,8 +1635,13 @@ async def _generate_answer(
                     if _added >= 10:
                         break
             _quick_db.close()
+            _quick_db = None
         except Exception as _qe:
             logger.warning("[FEE-QUICK] direct query failed: %s", _qe)
+        finally:
+            if _quick_db is not None:
+                try: _quick_db.close()
+                except Exception: pass
         if _added:
             context = "\n".join(_fee_quick_lines) + "\n\n---\n\n" + context
             logger.info("[FEE-QUICK] Injected %d fee table quick blocks (direct query)", _added)

@@ -54,6 +54,9 @@ app = FastAPI(
     description="知识库 Web 服务 — Hindsight + LLM 驱动的智能文档检索与问答",
     lifespan=lifespan,
     redirect_slashes=False,  # 禁止尾斜杠重定向，避免 catch-all 拦截 API POST
+    docs_url=None,           # 生产关闭 Swagger/OpenAPI 暴露（2026-08-13 安全加固）
+    redoc_url=None,
+    openapi_url=None,
 )
 
 app.add_exception_handler(Exception, global_exception_handler)

@@ -6,8 +6,10 @@ Supports two user sources:
 """
 
 import secrets
+import time
+from collections import defaultdict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -17,6 +19,26 @@ from app.models.database import get_db
 from app.models.user import User
 
 router = APIRouter()
+
+# ── 登录限速（2026-08-13 安全加固）：每 IP 5 次/分钟 ──
+_login_attempts: dict = defaultdict(list)
+_MAX_LOGIN_ATTEMPTS = 5
+_LOGIN_WINDOW_SECONDS = 60
+
+
+def _check_rate_limit(ip: str) -> None:
+    now = time.time()
+    attempts = [t for t in _login_attempts[ip] if now - t < _LOGIN_WINDOW_SECONDS]
+    _login_attempts[ip] = attempts
+    if len(attempts) >= _MAX_LOGIN_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="登录尝试过于频繁，请 1 分钟后再试",
+        )
+
+
+def _record_attempt(ip: str) -> None:
+    _login_attempts[ip].append(time.time())
 
 
 class LoginRequest(BaseModel):
@@ -32,14 +54,21 @@ class TokenResponse(BaseModel):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, db: Session = Depends(get_db)):
+async def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
     """Authenticate with username/password, returns JWT token.
 
     Checks in order:
     1. Admin config credentials (if matched → admin role)
     2. User table (viewer or admin role)
+
+    2026-08-13: 登录限速（每 IP 5 次/分钟）+ 旧 SHA-256 哈希首次登录自动升级 bcrypt。
     """
+    # 获取客户端 IP（FastAPI 无内置，从 request 提取）
+    ip = request.client.host if request else "unknown"
+    _check_rate_limit(ip)
+
     if not settings.admin_password:
+        _record_attempt(ip)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="管理员密码未配置，无法登录",
@@ -51,6 +80,7 @@ async def login(body: LoginRequest, db: Session = Depends(get_db)):
         and secrets.compare_digest(body.password, settings.admin_password)
     )
     if admin_match:
+        _login_attempts[ip].clear()  # 2026-08-13 CC 建议：成功登录重置限速计数
         token = create_access_token(body.username)
         return TokenResponse(
             access_token=token,
@@ -61,6 +91,11 @@ async def login(body: LoginRequest, db: Session = Depends(get_db)):
     # Try user table
     user = db.query(User).filter(User.username == body.username).first()
     if user and user.check_password(body.password):
+        # 旧 SHA-256 哈希 → 自动升级 bcrypt（2026-08-13）
+        if user.needs_upgrade():
+            user.upgrade_to_bcrypt(body.password)
+            db.commit()
+        _login_attempts[ip].clear()  # 2026-08-13 CC 建议：成功登录重置限速计数
         token = create_access_token(body.username)
         return TokenResponse(
             access_token=token,
@@ -68,6 +103,8 @@ async def login(body: LoginRequest, db: Session = Depends(get_db)):
             role=user.role,
         )
 
+    # 登录失败统一计数（admin 路径失败 + User 表失败）
+    _record_attempt(ip)
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="用户名或密码错误",
