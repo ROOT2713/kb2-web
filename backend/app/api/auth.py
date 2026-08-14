@@ -63,13 +63,15 @@ async def login(body: LoginRequest, request: Request, db: Session = Depends(get_
 
     2026-08-13: 登录限速（每 IP 5 次/分钟）+ 旧 SHA-256 哈希首次登录自动升级 bcrypt。
     """
-    # 获取客户端 IP（优先 X-Forwarded-For，反代场景 client.host 是代理 IP）
+    # 获取客户端 IP：仅 trust_proxy=True（有受信反代）时信任 X-Forwarded-For
+    # 否则直接取 client.host——避免伪造 XFF 绕过限速（2026-08-14 CC 评审 P1）
     ip = "unknown"
     if request:
-        xff = request.headers.get("x-forwarded-for", "")
-        if xff:
-            ip = xff.split(",")[0].strip()
-        else:
+        if settings.trust_proxy:
+            xff = request.headers.get("x-forwarded-for", "")
+            if xff:
+                ip = xff.split(",")[0].strip()
+        if ip == "unknown":
             ip = request.client.host if request.client else "unknown"
     _check_rate_limit(ip)
 

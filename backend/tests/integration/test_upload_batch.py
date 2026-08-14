@@ -71,7 +71,7 @@ class TestUploadBatch:
             async def upsert(self, doc_id, items, bank):
                 return len(items)
 
-        monkeypatch.setattr(upload_mod, "HindsightStore", lambda: FakeHindsightStore())
+        monkeypatch.setattr(upload_mod, "get_vector_store", lambda: FakeHindsightStore())
 
         async def fake_recall(query, limit=50, bank="kb", max_tokens=32768):
             return [{"text": "fake recalled text " * 50, "tags": [], "score": 0.9}]
@@ -122,7 +122,7 @@ class TestUploadBatch:
             async def upsert(self, doc_id, items, bank):
                 return len(items)
 
-        monkeypatch.setattr(upload_mod, "HindsightStore", lambda: FakeHindsightStore())
+        monkeypatch.setattr(upload_mod, "get_vector_store", lambda: FakeHindsightStore())
 
         async def fake_recall(query, limit=50, bank="kb", max_tokens=32768):
             return [{"text": "fake recalled text " * 50, "tags": [], "score": 0.9}]

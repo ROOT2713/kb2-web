@@ -270,7 +270,7 @@ class TestExpandAmountTiers:
 
     def test_large_amount_500万(self):
         result = expand_amount_tiers("500万元系统集成")
-        assert "300万以上" in result
+        assert "300万元以上" in result
 
     def test_very_large_amount_2000万(self):
         result = expand_amount_tiers("2000万项目")

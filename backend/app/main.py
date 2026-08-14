@@ -172,6 +172,9 @@ if FRONTEND_DIR.is_dir():
         if full_path.startswith("api/"):
             from fastapi import HTTPException as _HE
             raise _HE(status_code=404)
+        # ── 2026-08-14 安全加固：OpenAPI/Swagger 显式 404，防 catch-all 吞掉返回 200 ──
+        if full_path in ("openapi.json", "docs", "redoc"):
+            raise HTTPException(status_code=404)
         # ── Path traversal protection (C1 fix) ──
         if ".." in full_path.split("/"):
             raise HTTPException(status_code=404)

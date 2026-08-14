@@ -11,7 +11,8 @@ import sys
 
 # ── Force test-friendly env BEFORE any app import ──
 os.environ.setdefault("DATABASE_URL", "sqlite://")  # unused but safe
-os.environ.setdefault("ADMIN_PASSWORD", "")          # disable auth in dev
+os.environ.setdefault("ADMIN_USERNAME", "test_admin")  # role-check bypass in tests
+os.environ.setdefault("ADMIN_PASSWORD", "")            # disable auth in dev
 os.environ.setdefault("LLM_BASE_URL", "")
 os.environ.setdefault("LLM_API_KEY", "")
 os.environ.setdefault("HINDSIGHT_URL", "http://fake-hindsight:9999")
@@ -69,6 +70,14 @@ def _create_tables():
     import app.models.cache      # noqa
     import app.models.synonym    # noqa
     Base.metadata.create_all(bind=_engine)
+    # Raw-SQL table: concept_contradictions (crystallization checks, 2026-08-14)
+    from app.services.crystallization_light import CREATE_TABLE_SQL, INDEX_SQL
+    with _engine.begin() as conn:
+        conn.execute(sa_text(CREATE_TABLE_SQL))
+        for stmt in INDEX_SQL.split(";"):  # SQLite 一次只能执行一条语句
+            stmt = stmt.strip()
+            if stmt:
+                conn.execute(sa_text(stmt))
     yield
     Base.metadata.drop_all(bind=_engine)
 
@@ -104,9 +113,11 @@ def client(db_session):
 
     # Override JWT auth to skip token validation in tests
     from app.middleware.jwt_auth import get_current_user
+    from app.config import settings as _settings
 
     async def _no_jwt():
-        return "test_user"
+        # admin config user always passes require_role checks
+        return _settings.admin_username
 
     app.dependency_overrides[get_current_user] = _no_jwt
 

@@ -161,7 +161,7 @@ def _insert_test_data(db_session):
     doc = Document(
         doc_id=CHECKLIST_DOC_ID,
         title=CHECKLIST_DOC_TITLE,
-        bank="checklist",
+        bank="industry",
         hs_bank="kb_checklist",
         doc_type="excel_checklist",
         searchable=1,
@@ -282,7 +282,7 @@ class TestChecklistQueryRegression:
         """
         resp = client.post("/api/query", data={
             "q": query_text,
-            "bank": "checklist",
+            "bank": "industry",
             "nocache": "true",
         })
 

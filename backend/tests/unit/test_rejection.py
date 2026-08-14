@@ -83,7 +83,11 @@ class TestHardCheckG1:
 
 
 class TestDuplicateContentRejection:
-    """Pre-flight duplicate content rejection 集成测试。"""
+    """Pre-flight duplicate content rejection 集成测试（异步上传契约 2026-08-14）。
+
+    上传接口已异步化：POST /api/upload 返回 {task_id, status: "pending"}，
+    重复/G1 检查在后台任务中执行，终态经 GET /api/upload/tasks/{task_id} 查询。
+    """
 
     def _upload_text(self, client, text, title="测试文档"):
         """Helper: upload text content via the /api/upload endpoint."""
@@ -96,40 +100,68 @@ class TestDuplicateContentRejection:
             data={"title": title, "bank": "general", "confirm_quality": "true"},
         )
 
-    def test_duplicate_content_returns_422(self, client, db_session):
-        """第二次上传相同内容返回 422 DUPLICATE_CONTENT。"""
+    def _wait_task(self, client, task_id, timeout=15):
+        """Poll upload task until terminal status (done/failed)."""
+        import time
+        deadline = time.time() + timeout
+        last = None
+        while time.time() < deadline:
+            resp = client.get(f"/api/upload/tasks/{task_id}")
+            assert resp.status_code == 200, f"task query failed: {resp.status_code}"
+            last = resp.json()
+            if last["status"] in ("done", "failed"):
+                return last
+            time.sleep(0.2)
+        raise AssertionError(f"task {task_id} 超时未完成: {last}")
+
+    def test_duplicate_content_rejected(self, client, db_session):
+        """重复内容第二次上传：后台任务终态 failed + duplicate_check。"""
         text = "这是用于测试重复检测的文档内容。" * 20
         title = "重复检测测试文档"
 
-        # First upload should succeed
+        # First upload accepted asynchronously → done
         resp1 = self._upload_text(client, text, title)
         assert resp1.status_code == 200
         data1 = resp1.json()
-        assert data1.get("ok") is True
+        assert data1["status"] == "pending"
+        assert "task_id" in data1
+        task1 = self._wait_task(client, data1["task_id"])
+        assert task1["status"] == "done", f"首份文档应入库成功: {task1}"
 
-        # Second upload of same content should fail with 422
+        # Second upload of same content → async duplicate rejection
         resp2 = self._upload_text(client, text, title)
-        assert resp2.status_code == 422
-        detail = resp2.json().get("detail", {})
-        assert detail.get("code") == "DUPLICATE_CONTENT"
+        assert resp2.status_code == 200
+        task2 = self._wait_task(client, resp2.json()["task_id"])
+        assert task2["status"] == "failed", f"重复内容应被拒绝: {task2}"
+        assert task2.get("stage") == "duplicate_check", (
+            f"应为 duplicate_check 阶段失败: {task2}"
+        )
+        assert "dup" in (task2.get("error_message") or "").lower()
 
     def test_different_content_passes(self, client, db_session):
-        """不同内容正常通过。"""
+        """不同内容正常通过（两个任务终态均 done）。"""
         text1 = "第一份完全不同的文档内容。" * 20
         text2 = "第二份完全不同的文档内容。" * 20
 
         resp1 = self._upload_text(client, text1, "文档A")
         assert resp1.status_code == 200
+        task1 = self._wait_task(client, resp1.json()["task_id"])
+        assert task1["status"] == "done", f"文档A 应成功: {task1}"
 
         resp2 = self._upload_text(client, text2, "文档B")
         assert resp2.status_code == 200
+        task2 = self._wait_task(client, resp2.json()["task_id"])
+        assert task2["status"] == "done", f"文档B 应成功: {task2}"
 
-    def test_g1_fail_returns_422(self, client, db_session):
-        """G1 硬检查不通过返回 422。"""
+    def test_g1_fail_rejected(self, client, db_session):
+        """G1 硬检查不通过：后台任务终态 failed + quality_gate。"""
         text = "短"  # Too short
         title = ""
 
         resp = self._upload_text(client, text, title)
-        assert resp.status_code == 422
-        detail = resp.json().get("detail", {})
-        assert detail.get("code") == "QUALITY_GATE_G1_FAIL"
+        assert resp.status_code == 200
+        task = self._wait_task(client, resp.json()["task_id"])
+        assert task["status"] == "failed", f"G1 不过应失败: {task}"
+        assert task.get("stage") == "quality_gate", (
+            f"应为 quality_gate 阶段失败: {task}"
+        )

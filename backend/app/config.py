@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     # ── Auth ──
     admin_username: str = "admin"
     admin_password: str = ""
+    trust_proxy: bool = False  # 反代部署时置 True 才信任 X-Forwarded-For（2026-08-14 CC P1）
 
     # ── JWT ──
     jwt_secret: str = "CHANGE_ME_IN_PRODUCTION"

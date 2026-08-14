@@ -52,13 +52,13 @@ class TestBanksEndpoints:
             assert "name" in bank
             assert "count" in bank
 
-    def test_list_banks_has_project_docs(self, client, mock_hindsight, mock_get_active_banks):
+    def test_list_banks_has_all_four(self, client, mock_hindsight, mock_get_active_banks):
+        """2026-07-21 bank 收敛为 4 类：all/industry/personal/project"""
         resp = client.get("/api/banks")
         banks = resp.json()["banks"]
         keys = [b["key"] for b in banks]
-        assert "project_docs" in keys
-        assert "standards" in keys
-        assert "general" in keys
+        for expected in ("all", "industry", "personal", "project"):
+            assert expected in keys
 
     def test_wiki_tree(self, client, mock_hindsight, mock_get_active_banks):
         resp = client.get("/api/banks/wiki")
@@ -71,14 +71,15 @@ class TestBanksEndpoints:
         resp = client.get("/api/banks/categories")
         assert resp.status_code == 200
         data = resp.json()
-        assert "categories" in data
-        assert isinstance(data["categories"], list)
+        assert "super_categories" in data
+        assert isinstance(data["super_categories"], list)
 
-    def test_list_banks_has_checklist(self, client, mock_hindsight, mock_get_active_banks):
+    def test_list_banks_has_industry(self, client, mock_hindsight, mock_get_active_banks):
+        """checklist 已并入 industry（2026-07-21 bank 收敛）"""
         resp = client.get("/api/banks")
         assert resp.status_code == 200
         keys = [b["key"] for b in resp.json()["banks"]]
-        assert "checklist" in keys
+        assert "industry" in keys
 
     def test_create_bank_does_not_call_hindsight_create(self, client, monkeypatch, tmp_path):
         import app.api.banks as banks_api
@@ -255,14 +256,12 @@ class TestAPIRouter:
         resp = client.get("/api/banks")
         assert resp.status_code == 200
 
-    def test_openapi_docs(self, client, mock_hindsight, mock_get_active_banks):
-        """FastAPI auto-generates OpenAPI schema."""
+    def test_openapi_docs_closed(self, client, mock_hindsight, mock_get_active_banks):
+        """2026-08-13 安全加固：生产关闭 OpenAPI/Swagger 暴露"""
         resp = client.get("/openapi.json")
-        assert resp.status_code == 200
-        schema = resp.json()
-        assert "paths" in schema
-        # Should have our endpoints
-        assert "/api/banks" in schema["paths"] or "/api/banks/" in schema["paths"]
+        assert resp.status_code == 404
+        resp2 = client.get("/docs")
+        assert resp2.status_code == 404
 
 
 # ═══════════════════════════════════════════════════════
