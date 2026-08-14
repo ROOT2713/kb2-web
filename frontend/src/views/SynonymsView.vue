@@ -10,7 +10,7 @@
         placeholder="搜索同义词..."
       />
       <button @click="loadSynonyms">刷新</button>
-      <button class="primary" @click="openAdd">添加</button>
+      <button v-if="authStore.isAdmin" class="primary" @click="openAdd">添加</button>
     </div>
 
     <LoadingSpinner v-if="loading" label="加载中..." />
@@ -29,8 +29,8 @@
           <span class="badge">{{ syn.category || '-' }}</span>
         </span>
         <span class="col-actions">
-          <button class="btn-sm" @click="openEdit(syn)">编辑</button>
-          <button class="btn-sm danger" @click="handleDelete(syn.id)">删除</button>
+          <button v-if="authStore.isAdmin" class="btn-sm" @click="openEdit(syn)">编辑</button>
+          <button v-if="authStore.isAdmin" class="btn-sm danger" @click="handleDelete(syn.id)">删除</button>
         </span>
       </div>
     </div>
@@ -74,6 +74,7 @@
 import { ref, computed, onMounted } from 'vue'
 import Toast from '@/components/Toast.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import { useAuthStore } from '@/stores/auth'
 import {
   listSynonyms,
   addSynonym,
@@ -81,6 +82,8 @@ import {
   deleteSynonym,
   type SynonymItem,
 } from '@/services/synonyms'
+
+const authStore = useAuthStore()
 
 const synonyms = ref<SynonymItem[]>([])
 const loading = ref(false)

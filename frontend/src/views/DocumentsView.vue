@@ -23,12 +23,12 @@
     <!-- Batch actions toolbar (visible when items selected) -->
     <div v-if="selectedIds.size > 0" class="batch-bar card">
       <span class="batch-info">已选 {{ selectedIds.size }} 篇</span>
-      <button class="primary" @click="showBatchSubcat = true">批量设置细分类</button>
+      <button v-if="authStore.isAdmin" class="primary" @click="showBatchSubcat = true">批量设置细分类</button>
       <button class="secondary" @click="clearSelection">取消选择</button>
     </div>
 
     <!-- Batch subcategory modal -->
-    <div v-if="showBatchSubcat" class="modal-overlay" @click.self="showBatchSubcat = false">
+    <div v-if="showBatchSubcat && authStore.isAdmin" class="modal-overlay" @click.self="showBatchSubcat = false">
       <div class="modal card">
         <h3>批量设置（{{ selectedIds.size }} 篇）</h3>
         <label class="field-label">分类</label>
@@ -48,7 +48,7 @@
     <div v-if="filteredDocs.length" class="doc-table card">
       <div class="table-header">
         <span class="col-check">
-          <input type="checkbox" :checked="allSelected" :indeterminate="someSelected" @change="toggleAll" />
+          <input v-if="authStore.isAdmin" type="checkbox" :checked="allSelected" :indeterminate="someSelected" @change="toggleAll" />
         </span>
         <span class="col-title">标题</span>
         <span class="col-bank">知识库</span>
@@ -61,7 +61,7 @@
       </div>
       <div v-for="doc in filteredDocs" :key="doc.id" class="table-row" :class="{ selected: selectedIds.has(doc.id) }">
         <span class="col-check">
-          <input type="checkbox" :checked="selectedIds.has(doc.id)" @change="toggleDoc(doc.id)" />
+          <input v-if="authStore.isAdmin" type="checkbox" :checked="selectedIds.has(doc.id)" @change="toggleDoc(doc.id)" />
         </span>
         <span class="col-title" :title="doc.filename"><router-link :to="'/documents/' + doc.id" class="doc-title-link">{{ doc.title }}</router-link></span>
         <span class="col-bank">
@@ -74,13 +74,13 @@
               <option v-for="c in docsStore.categories" :key="c.key" :value="c.key">{{ c.label }}</option>
             </select>
           </template>
-          <span v-else class="badge cat-badge" @click="startEditCat(doc)">{{ getCatLabel(doc.category) }}</span>
+          <span v-else class="badge cat-badge" @click="authStore.isAdmin && startEditCat(doc)">{{ getCatLabel(doc.category) }}</span>
         </span>
         <span class="col-subcat">
           <template v-if="editingSubcat === doc.id">
             <input v-model="editSubcatValue" class="subcat-input" placeholder="细分类" @blur="saveSubcategory(doc.id)" @keyup.enter="saveSubcategory(doc.id)" />
           </template>
-          <span v-else class="badge subcat-badge" @click="startEditSubcat(doc)">{{ doc.subcategory || '—' }}</span>
+          <span v-else class="badge subcat-badge" @click="authStore.isAdmin && startEditSubcat(doc)">{{ doc.subcategory || '—' }}</span>
         </span>
         <span class="col-chunks">{{ doc.chunks }}</span>
         <span class="col-status">

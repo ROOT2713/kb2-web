@@ -15,13 +15,13 @@
             {{ bank.searchable }} 可搜索
           </span>
         </div>
-        <div v-if="bank.key !== 'all'" class="bank-card-actions">
+        <div v-if="bank.key !== 'all' && authStore.isAdmin" class="bank-card-actions">
           <button class="btn-sm danger" @click="handleDelete(bank.key)">删除</button>
         </div>
       </div>
     </div>
 
-    <div class="create-section card">
+    <div v-if="authStore.isAdmin" class="create-section card">
       <h2 class="section-title">新建知识库</h2>
       <form class="create-form" @submit.prevent="handleCreate">
         <div class="form-row">
@@ -55,9 +55,11 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useBanksStore } from '@/stores/banks'
+import { useAuthStore } from '@/stores/auth'
 import Toast from '@/components/Toast.vue'
 
 const banksStore = useBanksStore()
+const authStore = useAuthStore()
 
 const newKey = ref('')
 const newLabel = ref('')
