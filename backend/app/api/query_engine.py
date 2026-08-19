@@ -2209,13 +2209,33 @@ def _assess_recall_confidence(
 
         if _has_citation_pattern and not _has_substantive_content:
             # 精确匹配 bypass：如果查询的标准号直接在文档标题中 → 文档确在KB内，跳过 L1.5
+            # 2026-08-19 修复：复合标准号查询（"GB A 和 GB B 对比"）无法整串匹配单个文档名
+            # → 放宽为标准号级匹配：q 中任一标准号命中 doc_name 即算匹配（C1-StdBoost 已注入标准文档）
             q_lower = q.lower()
             _has_exact_doc_match = False
+            # 标准号正则：GB/T 50174-2017、YD 5214-2015、JGJ/T 454-2019、T/CECS 488-2017 等
+            _std_numbers = re.findall(
+                r"\b(?:gb|gb/t|gbz|gbj|gbt|yd|yd/t|jgj|jgj/t|jg|jg/t|"
+                r"db|db/t|cjj|tc/cecs|t/cecs|dl|dl/t|hj|hj/t|cj/t)\s*[0-9]{3,5}"
+                r"(?:\s*[—–-]\s*[0-9]{2,4})?",
+                q_lower,
+            )
             for doc_fact_list in doc_facts.values():
                 for fact in doc_fact_list:
                     doc_name = fact[1] if isinstance(fact, (list, tuple)) and len(fact) > 1 else ""
-                    if doc_name and (q_lower in doc_name.lower() or doc_name.lower() in q_lower):
+                    if not doc_name:
+                        continue
+                    dn = doc_name.lower()
+                    if q_lower in dn or dn in q_lower:
                         _has_exact_doc_match = True
+                        break
+                    if _std_numbers:
+                        _dn_norm = re.sub(r"\s+|-", "", dn)
+                        for _sn in _std_numbers:
+                            if re.sub(r"\s+|-", "", _sn) in _dn_norm:
+                                _has_exact_doc_match = True
+                                break
+                    if _has_exact_doc_match:
                         break
                 if _has_exact_doc_match:
                     break
