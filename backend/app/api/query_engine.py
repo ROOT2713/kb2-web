@@ -2189,8 +2189,9 @@ def _assess_recall_confidence(
                 if text:
                     _all_chunk_texts.append(text)
 
-        # 取前5个chunk的文本做检测（匹配度最高的chunk）
-        _combined_chunks = " ".join(_all_chunk_texts[:5]).lower()
+        # 取前20个chunk的文本做检测（2026-08-19：从[:5]扩大到[:20]，温度/条款常在 top-5 之外，
+        # 如 GB 50174 附录A 温度条款——小窗口导致"纯引用无内容"误判，F01 实证被误杀）
+        _combined_chunks = " ".join(_all_chunk_texts[:20]).lower()
 
         # 检测是否是纯引用模式：包含"按XX标准"句式但无具体条款内容
         # 标准引用句式信号
