@@ -808,6 +808,9 @@ async def _build_search_context(
         if not doc_id:
             doc_id = r.get("document_id")
         if not doc_id:
+            # BM25 分支（retrieval.py build_bm25_index）把 doc_id 放 item 顶层，tags 仅 title:
+            doc_id = r.get("doc_id")
+        if not doc_id:
             doc_id = f"_notag_{id(r)}"
 
         logger.warning("[P0.5-DEBUG] processing doc_id=%s bank=%s title_map_has=%s", doc_id[:20], bank, doc_id in title_map)
