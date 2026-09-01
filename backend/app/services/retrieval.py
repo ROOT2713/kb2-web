@@ -583,19 +583,22 @@ async def build_bm25_index(bank: str = "all") -> tuple:
     tokenized = [tokenize(d["text"]) for d in docs]
     bm25 = BM25Okapi(tokenized)
 
-    # 获取最后更新时间用于增量检测
+    # 获取最后更新时间 + documents 行数（增量检测口径，与 build 开头检测查询一致）
     _ts_db = None
+    _doc_count = 0
     try:
         _ts_db = SessionLocal()
         if bank == "all":
-            _max_ts = _ts_db.execute(text("SELECT MAX(updated_at) FROM documents WHERE searchable=1 AND status='active'")).fetchone()[0]
+            _ts_row = _ts_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND status='active'")).fetchone()
         else:
-            _max_ts = _ts_db.execute(text("SELECT MAX(updated_at) FROM documents WHERE searchable=1 AND status='active' AND bank=:bank"), {"bank": bank}).fetchone()[0]
+            _ts_row = _ts_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND status='active' AND bank=:bank"), {"bank": bank}).fetchone()
         _ts_db.close()
         _ts_db = None
-        _max_ts_str = str(_max_ts) if _max_ts else ""
+        _max_ts_str = str(_ts_row[0]) if _ts_row and _ts_row[0] else ""
+        _doc_count = _ts_row[1] if _ts_row else 0
     except Exception:
         _max_ts_str = ""
+        _doc_count = 0
     finally:
         if _ts_db is not None:
             try:
@@ -603,7 +606,7 @@ async def build_bm25_index(bank: str = "all") -> tuple:
             except Exception:
                 pass
 
-    _bm25_caches[bank] = {"index": bm25, "docs": docs, "ts": now, "doc_count": len(docs), "updated_at": _max_ts_str}
+    _bm25_caches[bank] = {"index": bm25, "docs": docs, "ts": now, "doc_count": _doc_count, "updated_at": _max_ts_str}
     logger.info("BM25 index built: %d chunks for bank=%s (from %d queries + meta.db)", len(docs), bank, len(recall_queries))
     return bm25, docs
 
