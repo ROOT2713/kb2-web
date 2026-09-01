@@ -1,0 +1,106 @@
+id,category,bank_hint,hit@5,hit@10,top1_hit,top1_score,n_docs,question,hit_keywords
+F04,fact,standards,True,True,True,1.6843637259570263,3,信息安全技术网络安全等级保护测评要求的国家标准编号是什么？,GB/T 28448-2019
+F01,fact,standards,False,False,False,1.5625977690725699,1,数据中心机房的温度要求范围是多少？,
+F09,fact,standards,False,False,False,1.6166852846456579,3,低压配电设计规范的国家标准编号是什么？,
+F08,fact,standards,False,False,False,1.6438324492276866,1,声环境功能区中1类区昼间和夜间环境噪声限值分别是多少？,
+F17,fact,standards,True,True,True,1.5705489901154,4,建筑照明设计标准对应的国家标准编号是什么？,GB 50034
+F03,fact,standards,True,True,True,1.3324144622649867,4,网络安全等级保护基本要求对应的国家标准编号是什么？,GB/T 22239-2019
+F12,fact,standards,False,False,False,1.6281108470123336,1,电影院观众厅的混响时间宜为多少？,
+F02,fact,standards,False,False,False,0.0,0,数据中心设计规范的国家标准编号是什么？,
+F11,fact,industry_docs,True,True,False,0.0,0,东莞市政府投资信息化项目造价指南的修编年份是哪一年？,修编版
+NB24,fact,industry,True,True,False,0.0,0,广东省省级政务信息化项目管理办法的发布文号是什么？,粤府办
+F13,fact,standards,False,False,False,1.6339932652011318,2,等保第三级及以上系统需要至少多久进行一次等级测评？,
+F07,fact,standards,False,False,False,1.6491195800018648,1,声环境功能区中2类区昼间和夜间环境噪声限值分别是多少？,
+NB26,fact,general,True,True,True,1.6739322682695814,1,信息安全技术信息系统密码应用基本要求的国家标准编号是什么？,GB/T
+F16,fact,standards,True,True,False,0.0,0,等保2.0相比1.0，测评合格分数从多少提升到多少？,60分提升至70分
+F14,fact,standards,True,True,False,1.644307930647497,1,供配电系统中，当负荷线路电流大于多少时应采用三相四线制供电？,60A
+F10,fact,standards,False,False,False,1.5876866766700446,1,剧场(歌剧/话剧)观众厅的混响时间中频(500Hz)满场推荐值分别是多少？,
+F05,fact,standards,True,True,True,1.614408442250196,1,声环境质量标准的国家标准编号是什么？,GB 3096-2008
+F15,fact,standards,True,True,False,1.6567845379863861,4,建筑弱电工程中，火灾自动报警系统的设计规范标准编号是什么？,GB 50116
+F06,fact,standards,False,True,False,1.637754113939942,3,供配电系统设计规范的国家标准编号是什么？,GB 50052-2009
+NS29,fact,standards,False,False,False,1.3242262601852888,1,数据中心的环境温度要求是GB/T 2887哪个章节规定的,
+fee_v7_009,fee,industry,False,False,False,0.0,0,500万项目做全流程评测和只做验收评测，省指导书费率一样吗？,
+fee_v7_008,fee,industry,True,True,False,0.0,0,验收测评费怎么计算？请列出省指导书表5-49的完整费率档位。,V=D×g×(1-Z)
+fee_v7_004,fee,mixed,True,True,False,0.0,0,500万软件项目验收测评费，省指导书、佛山和东莞分别应怎么说？,V=D×g×(1-Z)
+fee_v7_002,fee,industry,False,True,False,0.0,1,3000万政务信息化项目按省指导书表5-49计算验收评测费，费率和金额分别是多少？,表5-49/V=D×g×(1-Z)
+NF04,fee,industry,True,True,True,0.0,0,验收测评费按什么标准计算？,验收测评
+fee_v7_003,fee,industry,False,True,False,0.0,1,省电子政务工程造价指导书中，8000万项目验收测评费按表5-49估算是多少？,表5-49/V=D×g×(1-Z)
+NF05,fee,industry,False,False,False,0.0,0,按照东莞市政府投资信息化项目造价指南，设计费占项目总投资的比例范围是多少？,
+NF03,fee,industry,False,False,False,0.0,0,佛山市市级政务信息化项目概算中，软件开发的取费比例是多少？,
+NF01,fee,industry,False,False,False,1.5976051422191369,2,三级等保测评收费标准是多少？,
+fee_v7_005,fee,mixed,False,False,False,0.0,0,佛山、东莞和省指导书对验收测评费的口径有什么差异？请按层级说明。,
+NF02,fee,industry,False,False,False,0.0,0,弱电设计费取费标准按什么文件执行？,
+fee_v7_001,fee,industry,True,True,False,0.0,0,按省电子政务工程造价指导书表5-49，500万项目的验收测评费大约是多少？,V=D×g×(1-Z)
+C09,cross,general,False,False,False,1.4984926699621413,2,WiFi 2.4GHz与5GHz频段在规划和部署上的主要差异,
+C05,cross,standards,True,True,False,0.0,0,信息安全等级保护中安全计算环境的要求与操作系统安全加固的关系,访问控制/安全审计/入侵防范
+C07,cross,standards,True,True,False,1.616602751567725,1,等保2.0中安全管理中心的要求与安全通信网络的关系,安全区域边界/集中管控
+C11,cross,standards,True,True,True,0.0,0,数据中心消防(GB50116)与供配电切非(GB50052)之间的联动协调要求有哪些？,气体灭火
+C02,cross,standards,False,False,False,0.0,0,信息安全等级保护要求与数据中心设计规范之间的关联是什么？,
+NC13,cross,standards,False,False,False,1.6750172004192332,2,建筑弱电工程中，综合布线系统和火灾报警系统有哪些接口要求？,
+NS28,cross,standards,False,False,False,0.5460089335420291,1,它跟二级的主要区别是什么,
+NC12,cross,standards,False,False,False,1.6723084264537822,3,综合布线系统验收需要满足GB/T 50312和GB/T 21671哪些要求？,
+C06,cross,standards,False,False,False,0.0,0,从GB50174标准出发，A级和B级数据中心在供配电冗余配置上的差异,
+NS27,cross,standards,False,False,False,1.6064494039815913,2,等保三级有哪些主要安全要求？,
+fee_v7_006,cross,industry,False,False,False,0.0,0,三级等保测评收费标准是不是按验收测评费表5-49来算？,
+C01,cross,standards,True,True,True,1.6511231284309371,1,建筑弱电工程中的火灾报警系统与供配电系统的联动要求有哪些？,消防联动
+C10,cross,standards,False,True,False,1.5410072502548982,2,当信息安全事件发生时，等保标准与网络安全法在应急处置上的衔接,等级响应/通报预警
+C04,cross,standards,True,True,False,1.0155336508052772,1,不同声学功能区（剧场/电影院/厅堂）的声学设计规范差异有哪些？,混响时间/噪声限值
+fee_v7_007,cross,industry,False,False,False,0.0,0,项目监理费和弱电设计费是不是同一个取费标准？如果不是分别按什么口径回答？,
+C08,cross,industry_docs,True,True,True,0.0,0,信息化测评中，功能点估算方法与造价指南中的费率表如何配合使用？,功能点计数
+NC10,cross,standards,False,False,False,1.7310854036263064,1,GB 50174-2017和GB 50311-2016对数据中心机房温度要求有何不同？,
+NC11,cross,standards,False,False,False,1.5942890231855826,2,等保三级和等保四级在测评要求上的主要差异有哪些？,
+C03,cross,industry_docs,False,False,False,0.0,0,东莞市政府投资信息化项目的造价编制依据引用了哪些国家或行业标准？,
+O12,open,standards,False,False,False,1.6002440947140797,1,影剧院建筑声学设计中如何处理观众厅的体型设计？,
+O07,open,standards,True,True,False,1.6120104725716153,2,供配电系统中治理谐波的主要措施有哪些？,滤波器
+O03,open,standards,True,True,True,1.6182927323446683,3,声学设计中影响观众厅音质的主要参数有哪些？,混响时间/体型设计/噪声控制
+O01,open,standards,True,True,True,0.0,0,数据中心运维需要满足哪些基本要求？,供配电
+O11,open,industry_docs,True,True,True,0.0,0,政府投资信息化项目的验收流程包括哪些关键环节？,安全测评
+O04,open,standards,True,True,True,1.4299785043149704,2,建筑弱电工程主要包括哪些子系统？,火灾自动报警/安全防范/综合布线
+O05,open,standards,True,True,False,0.0,0,信息安全等级保护中不同等级的安全保护能力差异体现在哪些方面？,侵害客体
+O02,open,standards,False,False,False,1.6578649345409375,1,信息安全等级保护的主要流程有哪些环节？,
+O13,open,general,False,False,False,1.5131072290087657,1,WiFi网络规划中信道选择的主要考虑因素有哪些？,
+O14,open,business,True,True,False,1.591343879699712,2,信息化测评室内部工作流程中原始记录有哪些填写要求？,问题描述
+NB23,open,industry,False,False,False,0.0,0,政务信息化项目验收管理的主要流程和关键节点有哪些？,
+NB22,open,industry,False,False,False,1.6117102564818155,1,从行业资料角度说明数据中心PUE的含义、影响因素和常见优化方向，不要引用标准条文。,
+O10,open,standards,False,False,False,1.590916734087738,2,网络安全法中对不履行网络安全保护义务的单位和个人有哪些处罚措施？,
+O08,open,standards,True,True,True,1.619842360583243,2,信息安全等级保护2.0相比1.0有哪些主要变化？,可信计算
+O09,open,standards,True,True,False,1.5438733713098154,2,企业通过信息安全等级保护三级测评需要做哪些准备工作？,管理制度/安全整改
+O06,open,industry_docs,True,True,False,0.0,0,信息化项目的造价由哪些主要费用项构成？,服务费/运维费
+NB25,open,咨询,False,False,False,1.715715933020848,1,咨询资料中对数据中心项目规划阶段有哪些重点关注事项？,
+O15,open,general,False,False,False,0.0,0,从成本、性能和便利性三方面比较几种常见的网络操作系统,
+NE20,edge,standards,False,False,False,0.0,0,DJJBQ等保,
+NE21,edge,standards,False,False,False,1.5992147208357548,4,弱电设计,
+NE18,edge,all,False,False,False,,0,,
+NE19,edge,all,False,False,False,0.0,1,???###@@@???,
+R17,rejection,standards,False,False,False,0.0,0,标准化机房内咖啡机是否可以接入UPS供电？,
+R06,rejection,all,False,False,False,0.0,0,《红楼梦》中贾宝玉和林黛玉的关系如何解读,
+R15,rejection,standards,False,False,False,0.0,0,机房柴油发电机排烟管道防火包覆厚度如何确定？,
+R13,rejection,industry_docs,False,False,False,0.0,0,政府办公楼电梯维保费用应按哪个造价定额计取？,
+R09,rejection,all,False,False,False,0.0,0,NBA历史上迈克尔·乔丹为什么被称为篮球之神,
+R24,rejection,standards,False,False,False,0.6286454628358107,1,数据中心PUE达到1.25能申请多少财政补贴？,
+R26,rejection,standards,False,False,False,0.8992451647832397,1,GB50174-2025版相比2017版温度条款有哪些变化？,
+R19,rejection,standards,False,False,False,1.5972183450374449,1,等保二级和三级测评的官方收费标准分别是多少？,
+R08,rejection,all,False,False,False,0.0,0,如何在家制作提拉米苏甜点,
+R25,rejection,industry_docs,False,False,False,1.4922421109533182,2,学校礼堂混响时间不达标的整改施工预算每平方米多少钱？,
+R11,rejection,standards,False,False,False,1.607185747122345,2,请给出消防泵房气体灭火系统的设计参数和喷头布置要求,
+R02,rejection,all,False,False,False,0.0,0,感冒发烧应该吃什么药比较好,
+NR06,rejection,standards,False,False,False,0.0,0,如何用Python实现神经网络？,
+NR09,rejection,standards,False,False,False,0.0,0,帮我写一封商务邮件模板,
+NR08,rejection,standards,False,False,False,0.44110166062996337,1,高血压患者日常饮食有什么注意事项,
+NR15,rejection,standards,False,False,False,0.8675295600078852,2,医院手术室的气体灭火系统应该如何配置？,
+NR14,rejection,standards,False,False,False,1.6775072994501194,1,普通办公楼机房的防火分区应该怎么设计？,
+R20,rejection,standards,False,False,False,1.70090314189829,1,政务云数据中心机柜租赁每U每月多少钱？,
+R04,rejection,all,False,False,False,0.0,0,世界杯足球赛历史上夺冠次数最多的是哪个国家,
+R10,rejection,all,False,False,False,0.0,0,电影《泰坦尼克号》的结局为什么让人感动,
+R12,rejection,standards,False,False,False,0.0,0,等保三级项目中食堂消费系统是否必须纳入测评范围？,
+NR17,rejection,standards,False,False,False,0.6472680116821743,2,所有工业厂房的消防报警系统都应该如何设置？,
+R14,rejection,standards,False,False,False,1.6150641813141395,1,请说明政务大厅玻璃幕墙的隔声降噪设计应满足哪些声学指标,
+R21,rejection,industry_docs,False,False,False,0.0,0,政府投资项目概算审核的咨询费按项目金额分档比例是多少？,
+R07,rejection,all,False,False,False,0.436899110531598,1,高血压患者日常饮食需要注意哪些事项,
+NR07,rejection,standards,False,False,False,0.0,0,2025年A股市场走势预测,
+R18,rejection,standards,False,False,False,1.6474482695925723,4,请给出政务服务中心背景音乐系统的扬声器功率和验收方法,
+NR16,rejection,standards,False,False,False,1.705722672088431,1,如果一个数据中心没有严格按标准建设，能否通过增加灭火器来满足消防要求？,
+R03,rejection,all,False,False,False,0.0,8,红烧肉怎么做才好吃,
+R01,rejection,all,False,False,False,0.0,0,莎士比亚的《哈姆雷特》主要讲了什么故事,
+fee_v7_010,rejection,out_of_scope,False,False,False,0.0,1,餐饮行业软件验收测评费按省电子政务工程造价指导书表5-49应该收多少？,
+R05,rejection,all,False,False,False,0.0,0,周杰伦的《七里香》歌词表达了什么情感,

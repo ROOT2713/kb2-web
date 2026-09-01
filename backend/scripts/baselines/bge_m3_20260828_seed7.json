@@ -1,0 +1,644 @@
+{
+  "engine": "bge-m3@pgvector",
+  "date": "2026-08-28",
+  "sample": 30,
+  "seed": 7,
+  "questions_file": "105_questions_v7.jsonl",
+  "metrics": {
+    "overall": {
+      "n": 27,
+      "hit5": 0.2962962962962963,
+      "hit10": 0.3333333333333333,
+      "top1_hit": 0.14814814814814814,
+      "avg_top1_score": 0.47288187363773404
+    },
+    "by_category": {
+      "cross": {
+        "n": 6,
+        "hit10": 0.16666666666666666,
+        "top1_hit": 0.0
+      },
+      "edge": {
+        "n": 1,
+        "hit10": 0.0,
+        "top1_hit": 0.0
+      },
+      "fact": {
+        "n": 8,
+        "hit10": 0.5,
+        "top1_hit": 0.0
+      },
+      "fee": {
+        "n": 6,
+        "hit10": 0.5,
+        "top1_hit": 0.5
+      },
+      "open": {
+        "n": 6,
+        "hit10": 0.16666666666666666,
+        "top1_hit": 0.16666666666666666
+      }
+    }
+  },
+  "results": [
+    {
+      "id": "F11",
+      "category": "fact",
+      "bank_hint": "industry_docs",
+      "question": "东莞市政府投资信息化项目造价指南的修编年份是哪一年？",
+      "expected": "must include: 2021, 修编版",
+      "keywords": [
+        "2021",
+        "修编版"
+      ],
+      "n_chunks": 253,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "F05",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "声环境质量标准的国家标准编号是什么？",
+      "expected": "must include: GB 3096-2008",
+      "keywords": [
+        "GB 3096-2008"
+      ],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 0.6217426577346409,
+      "hit5": false,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "GB 3096-2008"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "F13",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "等保第三级及以上系统需要至少多久进行一次等级测评？",
+      "expected": "must include: 每年至少一次",
+      "keywords": [
+        "每年至少一次"
+      ],
+      "n_chunks": 253,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "F02",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "数据中心设计规范的国家标准编号是什么？",
+      "expected": "must include: GB 50174-2017",
+      "keywords": [
+        "GB 50174-2017"
+      ],
+      "n_chunks": 20,
+      "n_docs": 5,
+      "top1_score": 0.6101852473561524,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "F03",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "网络安全等级保护基本要求对应的国家标准编号是什么？",
+      "expected": "must include: GB/T 22239-2019",
+      "keywords": [
+        "GB/T 22239-2019"
+      ],
+      "n_chunks": 20,
+      "n_docs": 8,
+      "top1_score": 1.6364784747491719,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "GB/T 22239-2019"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "F14",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "供配电系统中，当负荷线路电流大于多少时应采用三相四线制供电？",
+      "expected": "must include: 60A",
+      "keywords": [
+        "60A"
+      ],
+      "n_chunks": 20,
+      "n_docs": 2,
+      "top1_score": 0.5546608877355588,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "60A"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "F09",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "低压配电设计规范的国家标准编号是什么？",
+      "expected": "must include: GB 50054-2011",
+      "keywords": [
+        "GB 50054-2011"
+      ],
+      "n_chunks": 20,
+      "n_docs": 0,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "F17",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "建筑照明设计标准对应的国家标准编号是什么？",
+      "expected": "must include: GB 50034",
+      "keywords": [
+        "GB 50034"
+      ],
+      "n_chunks": 20,
+      "n_docs": 0,
+      "top1_score": 0.0,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "GB 50034"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "fee_v7_001",
+      "category": "fee",
+      "bank_hint": "industry",
+      "question": "按省电子政务工程造价指导书表5-49，500万项目的验收测评费大约是多少？",
+      "expected": "must include: 省指导书表5-49, V=D×g×(1-Z), D=500, D≤500档含500整, g≥3.0%, Z=0时约15万; may include: 多地市并列佛山2.0%约10万、东莞1.6%约9.6万",
+      "keywords": [
+        "省指导书表5-49",
+        "V=D×g×(1-Z)",
+        "D=500",
+        "D≤500档含500整",
+        "g≥3.0%",
+        "Z=0时约15万",
+        "may include: 多地市并列佛山2.0%约10万",
+        "东莞1.6%约9.6万"
+      ],
+      "n_chunks": 253,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": true,
+      "hit_keywords": [
+        "V=D×g×(1-Z)"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "fee_v7_005",
+      "category": "fee",
+      "bank_hint": "mixed",
+      "question": "佛山、东莞和省指导书对验收测评费的口径有什么差异？请按层级说明。",
+      "expected": "must include: 省级框架优先, 省指导书表5-49分档费率和V=D×g×(1-Z), 佛山2.0%口径, 东莞表9独立口径(1.6%+速算8); may include: 不同地区标准并存时不能只给单一地市答案",
+      "keywords": [
+        "省级框架优先",
+        "省指导书表5-49分档费率和V=D×g×(1-Z)",
+        "佛山2.0%口径",
+        "东莞表9独立口径(1.6%+速算8)",
+        "may include: 不同地区标准并存时不能只给单一地市答案"
+      ],
+      "n_chunks": 253,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "NF01",
+      "category": "fee",
+      "bank_hint": "industry",
+      "question": "三级等保测评收费标准是多少？",
+      "expected": "must include: 费用标准/取费, may include: 万元",
+      "keywords": [
+        "费用标准/取费",
+        "may include: 万元"
+      ],
+      "n_chunks": 253,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "fee_v7_004",
+      "category": "fee",
+      "bank_hint": "mixed",
+      "question": "500万软件项目验收测评费，省指导书、佛山和东莞分别应怎么说？",
+      "expected": "must include: 先给省指导书框架, V=D×g×(1-Z), 省表5-49 D=500 g≥3.0%约15万, 再逐地市独立计算佛山2.0%约10万, 东莞表9 400＜N≤1000档1.6%约9.6万; may include: 禁止参照替代，各地市用自己的费率表",
+      "keywords": [
+        "先给省指导书框架",
+        "V=D×g×(1-Z)",
+        "省表5-49 D=500 g≥3.0%约15万",
+        "再逐地市独立计算佛山2.0%约10万",
+        "东莞表9 400＜N≤1000档1.6%约9.6万",
+        "may include: 禁止参照替代",
+        "各地市用自己的费率表"
+      ],
+      "n_chunks": 252,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": true,
+      "hit_keywords": [
+        "V=D×g×(1-Z)"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "NF04",
+      "category": "fee",
+      "bank_hint": "industry",
+      "question": "验收测评费按什么标准计算？",
+      "expected": "must include: 验收测评, may include: 取费/费率/万元",
+      "keywords": [
+        "验收测评",
+        "may include: 取费/费率/万元"
+      ],
+      "n_chunks": 253,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "fee_v7_008",
+      "category": "fee",
+      "bank_hint": "industry",
+      "question": "验收测评费怎么计算？请列出省指导书表5-49的完整费率档位。",
+      "expected": "must include: D≤500 g≥3.0% Z≤0, 500<D≤1000 g≥2.8% Z≤5, 1000<D≤3000 g≥2.6% Z≤10, 3000<D≤5000 g≥2.4% Z≤15, 5000<D≤8000 g≥2.2% Z≤20, 8000<D≤15000 g≥2.0% Z≤25, D>15000 g≥1.8% Z≤30, V=D×g×(1-Z); may include: 按实际工作量取费公式V=B+[D×(FP×0.3×R)×L×F×Y×(1-Z)]+C",
+      "keywords": [
+        "D≤500 g≥3.0% Z≤0",
+        "500<D≤1000 g≥2.8% Z≤5",
+        "1000<D≤3000 g≥2.6% Z≤10",
+        "3000<D≤5000 g≥2.4% Z≤15",
+        "5000<D≤8000 g≥2.2% Z≤20",
+        "8000<D≤15000 g≥2.0% Z≤25",
+        "D>15000 g≥1.8% Z≤30",
+        "V=D×g×(1-Z)",
+        "may include: 按实际工作量取费公式V=B+[D×(FP×0.3×R)×L×F×Y×(1-Z)]+C"
+      ],
+      "n_chunks": 253,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": true,
+      "hit_keywords": [
+        "V=D×g×(1-Z)"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "C03",
+      "category": "cross",
+      "bank_hint": "industry_docs",
+      "question": "东莞市政府投资信息化项目的造价编制依据引用了哪些国家或行业标准？",
+      "expected": "must include: 功能点方法, 计价依据",
+      "keywords": [
+        "功能点方法",
+        "计价依据"
+      ],
+      "n_chunks": 253,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "NC12",
+      "category": "cross",
+      "bank_hint": "standards",
+      "question": "综合布线系统验收需要满足GB/T 50312和GB/T 21671哪些要求？",
+      "expected": "must include: 综合布线/验收, may include: 50312/21671",
+      "keywords": [
+        "综合布线/验收",
+        "may include: 50312/21671"
+      ],
+      "n_chunks": 20,
+      "n_docs": 3,
+      "top1_score": 0.6904374057255402,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "fee_v7_006",
+      "category": "cross",
+      "bank_hint": "industry",
+      "question": "三级等保测评收费标准是不是按验收测评费表5-49来算？",
+      "expected": "must include: 不能混用, 三级等保测评费应按等保测评相关收费标准或依据说明, 验收测评费表5-49不适用于等保测评费; may include: 可提示两者属于不同费用类型",
+      "keywords": [
+        "不能混用",
+        "三级等保测评费应按等保测评相关收费标准或依据说明",
+        "验收测评费表5-49不适用于等保测评费",
+        "may include: 可提示两者属于不同费用类型"
+      ],
+      "n_chunks": 253,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "fee_v7_007",
+      "category": "cross",
+      "bank_hint": "industry",
+      "question": "项目监理费和弱电设计费是不是同一个取费标准？如果不是分别按什么口径回答？",
+      "expected": "must include: 监理费和设计费不能混用, 监理费按信息化项目监理相关取费依据或费率口径, 弱电设计费按工程设计收费标准或弱电设计相关文件口径; may include: 若库内没有具体费率应说明依据不足而不是套用另一类费用",
+      "keywords": [
+        "监理费和设计费不能混用",
+        "监理费按信息化项目监理相关取费依据或费率口径",
+        "弱电设计费按工程设计收费标准或弱电设计相关文件口径",
+        "may include: 若库内没有具体费率应说明依据不足而不是套用另一类费用"
+      ],
+      "n_chunks": 253,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "C04",
+      "category": "cross",
+      "bank_hint": "standards",
+      "question": "不同声学功能区（剧场/电影院/厅堂）的声学设计规范差异有哪些？",
+      "expected": "must include: 混响时间, 噪声限值, 体型",
+      "keywords": [
+        "混响时间",
+        "噪声限值"
+      ],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 0.5460199405249786,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "混响时间",
+        "噪声限值"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "C02",
+      "category": "cross",
+      "bank_hint": "standards",
+      "question": "信息安全等级保护要求与数据中心设计规范之间的关联是什么？",
+      "expected": "must include: 安全物理环境, GB50174",
+      "keywords": [
+        "安全物理环境",
+        "GB50174"
+      ],
+      "n_chunks": 20,
+      "n_docs": 6,
+      "top1_score": 1.6193010910544992,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "NB25",
+      "category": "open",
+      "bank_hint": "咨询",
+      "question": "咨询资料中对数据中心项目规划阶段有哪些重点关注事项？",
+      "expected": "must include: 规划/咨询, may include: 关注事项",
+      "keywords": [
+        "规划/咨询",
+        "may include: 关注事项"
+      ],
+      "n_chunks": 20,
+      "n_docs": 7,
+      "top1_score": 0.8873097554338032,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "O14",
+      "category": "open",
+      "bank_hint": "business",
+      "question": "信息化测评室内部工作流程中原始记录有哪些填写要求？",
+      "expected": "must include: 问题描述, 截图, 输入输出",
+      "keywords": [
+        "问题描述",
+        "输入输出"
+      ],
+      "n_chunks": 20,
+      "n_docs": 4,
+      "top1_score": 0.8708599060592929,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": true,
+      "hit_keywords": [
+        "问题描述"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "O02",
+      "category": "open",
+      "bank_hint": "standards",
+      "question": "信息安全等级保护的主要流程有哪些环节？",
+      "expected": "must include: 定级, 备案, 建设整改, 测评",
+      "keywords": [
+        "建设整改"
+      ],
+      "n_chunks": 20,
+      "n_docs": 3,
+      "top1_score": 1.674325031568395,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "NB23",
+      "category": "open",
+      "bank_hint": "industry",
+      "question": "政务信息化项目验收管理的主要流程和关键节点有哪些？",
+      "expected": "must include: 验收/管理流程, may include: 广州验收管理细则",
+      "keywords": [
+        "验收/管理流程",
+        "may include: 广州验收管理细则"
+      ],
+      "n_chunks": 20,
+      "n_docs": 7,
+      "top1_score": 1.773716412921586,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "O10",
+      "category": "open",
+      "bank_hint": "standards",
+      "question": "网络安全法中对不履行网络安全保护义务的单位和个人有哪些处罚措施？",
+      "expected": "must include: 罚款, 责令改正, 暂停活动",
+      "keywords": [
+        "责令改正",
+        "暂停活动"
+      ],
+      "n_chunks": 20,
+      "n_docs": 2,
+      "top1_score": 1.590916734087738,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "NB22",
+      "category": "open",
+      "bank_hint": "industry",
+      "question": "从行业资料角度说明数据中心PUE的含义、影响因素和常见优化方向，不要引用标准条文。",
+      "expected": "must include: PUE/能效, should NOT be purely standard-based",
+      "keywords": [
+        "PUE/能效",
+        "should NOT be purely standard-based"
+      ],
+      "n_chunks": 20,
+      "n_docs": 2,
+      "top1_score": 0.5942214209234234,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "NE19",
+      "category": "edge",
+      "bank_hint": "all",
+      "question": "???###@@@???",
+      "expected": "reject or clarify: 纯符号不应召回内容",
+      "keywords": [],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 0.5162812432572409,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": false
+    },
+    {
+      "id": "NE20",
+      "category": "edge",
+      "bank_hint": "standards",
+      "question": "DJJBQ等保",
+      "expected": "must include: 等保/等级保护, may include: 22239/28448",
+      "keywords": [
+        "等保/等级保护",
+        "may include: 22239/28448"
+      ],
+      "n_chunks": 253,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "R04",
+      "category": "rejection",
+      "bank_hint": "all",
+      "question": "世界杯足球赛历史上夺冠次数最多的是哪个国家",
+      "expected": "must include: [数据缺口] 知识库未收录",
+      "keywords": [
+        "[数据缺口] 知识库未收录"
+      ],
+      "n_chunks": 20,
+      "n_docs": 0,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": false
+    },
+    {
+      "id": "NR08",
+      "category": "rejection",
+      "bank_hint": "standards",
+      "question": "高血压患者日常饮食有什么注意事项",
+      "expected": "reject: must say 无法回答/超出范围",
+      "keywords": [],
+      "n_chunks": 20,
+      "n_docs": 0,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": false
+    }
+  ]
+}

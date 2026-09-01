@@ -1,0 +1,655 @@
+{
+  "engine": "bge-m3@pgvector",
+  "date": "2026-08-28",
+  "sample": 30,
+  "seed": 2024,
+  "questions_file": "105_questions_v7.jsonl",
+  "metrics": {
+    "overall": {
+      "n": 26,
+      "hit5": 0.46153846153846156,
+      "hit10": 0.5769230769230769,
+      "top1_hit": 0.11538461538461539,
+      "avg_top1_score": 0.8642106530030118
+    },
+    "by_category": {
+      "cross": {
+        "n": 6,
+        "hit10": 0.5,
+        "top1_hit": 0.16666666666666666
+      },
+      "fact": {
+        "n": 8,
+        "hit10": 0.5,
+        "top1_hit": 0.0
+      },
+      "fee": {
+        "n": 6,
+        "hit10": 0.6666666666666666,
+        "top1_hit": 0.16666666666666666
+      },
+      "open": {
+        "n": 6,
+        "hit10": 0.6666666666666666,
+        "top1_hit": 0.16666666666666666
+      }
+    }
+  },
+  "results": [
+    {
+      "id": "F16",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "等保2.0相比1.0，测评合格分数从多少提升到多少？",
+      "expected": "must include: 60分提升至70分",
+      "keywords": [
+        "60分提升至70分"
+      ],
+      "n_chunks": 20,
+      "n_docs": 0,
+      "top1_score": 0.0,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "60分提升至70分"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "F06",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "供配电系统设计规范的国家标准编号是什么？",
+      "expected": "must include: GB 50052-2009",
+      "keywords": [
+        "GB 50052-2009"
+      ],
+      "n_chunks": 20,
+      "n_docs": 3,
+      "top1_score": 1.637754113939942,
+      "hit5": false,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "GB 50052-2009"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "F10",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "剧场(歌剧/话剧)观众厅的混响时间中频(500Hz)满场推荐值分别是多少？",
+      "expected": "must include: 歌剧1.2-1.4s, 话剧0.8-1.0s",
+      "keywords": [
+        "歌剧1.2-1.4s",
+        "话剧0.8-1.0s"
+      ],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 1.5876866766700446,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "F07",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "声环境功能区中2类区昼间和夜间环境噪声限值分别是多少？",
+      "expected": "must include: 昼间60dB, 夜间50dB",
+      "keywords": [
+        "昼间60dB",
+        "夜间50dB"
+      ],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 1.6489306510769373,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "F14",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "供配电系统中，当负荷线路电流大于多少时应采用三相四线制供电？",
+      "expected": "must include: 60A",
+      "keywords": [
+        "60A"
+      ],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 1.644307930647497,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "60A"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "F13",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "等保第三级及以上系统需要至少多久进行一次等级测评？",
+      "expected": "must include: 每年至少一次",
+      "keywords": [
+        "每年至少一次"
+      ],
+      "n_chunks": 20,
+      "n_docs": 2,
+      "top1_score": 1.6339932652011318,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "F12",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "电影院观众厅的混响时间宜为多少？",
+      "expected": "must include: 0.5-0.7s",
+      "keywords": [
+        "0.5-0.7s"
+      ],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 1.6281108470123336,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "F15",
+      "category": "fact",
+      "bank_hint": "standards",
+      "question": "建筑弱电工程中，火灾自动报警系统的设计规范标准编号是什么？",
+      "expected": "must include: GB 50116",
+      "keywords": [
+        "GB 50116"
+      ],
+      "n_chunks": 20,
+      "n_docs": 4,
+      "top1_score": 1.6567845379863861,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "GB 50116"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "NF05",
+      "category": "fee",
+      "bank_hint": "industry",
+      "question": "按照东莞市政府投资信息化项目造价指南，设计费占项目总投资的比例范围是多少？",
+      "expected": "must include: 东莞造价指南, may include: 设计费/比例",
+      "keywords": [
+        "东莞造价指南",
+        "may include: 设计费/比例"
+      ],
+      "n_chunks": 20,
+      "n_docs": 0,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "fee_v7_004",
+      "category": "fee",
+      "bank_hint": "mixed",
+      "question": "500万软件项目验收测评费，省指导书、佛山和东莞分别应怎么说？",
+      "expected": "must include: 先给省指导书框架, V=D×g×(1-Z), 省表5-49 D=500 g≥3.0%约15万, 再逐地市独立计算佛山2.0%约10万, 东莞表9 400＜N≤1000档1.6%约9.6万; may include: 禁止参照替代，各地市用自己的费率表",
+      "keywords": [
+        "先给省指导书框架",
+        "V=D×g×(1-Z)",
+        "省表5-49 D=500 g≥3.0%约15万",
+        "再逐地市独立计算佛山2.0%约10万",
+        "东莞表9 400＜N≤1000档1.6%约9.6万",
+        "may include: 禁止参照替代",
+        "各地市用自己的费率表"
+      ],
+      "n_chunks": 20,
+      "n_docs": 0,
+      "top1_score": 0.0,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "V=D×g×(1-Z)"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "NF04",
+      "category": "fee",
+      "bank_hint": "industry",
+      "question": "验收测评费按什么标准计算？",
+      "expected": "must include: 验收测评, may include: 取费/费率/万元",
+      "keywords": [
+        "验收测评",
+        "may include: 取费/费率/万元"
+      ],
+      "n_chunks": 20,
+      "n_docs": 0,
+      "top1_score": 0.0,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": true,
+      "hit_keywords": [
+        "验收测评"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "fee_v7_003",
+      "category": "fee",
+      "bank_hint": "industry",
+      "question": "省电子政务工程造价指导书中，8000万项目验收测评费按表5-49估算是多少？",
+      "expected": "must include: 表5-49, 5000<D≤8000档, g≥2.2%, V=D×g×(1-Z), Z=0时8000×2.2%=176万; may include: Z≤20或折扣率说明",
+      "keywords": [
+        "表5-49",
+        "5000<D≤8000档",
+        "g≥2.2%",
+        "V=D×g×(1-Z)",
+        "Z=0时8000×2.2%=176万",
+        "may include: Z≤20或折扣率说明"
+      ],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "表5-49",
+        "V=D×g×(1-Z)"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "fee_v7_001",
+      "category": "fee",
+      "bank_hint": "industry",
+      "question": "按省电子政务工程造价指导书表5-49，500万项目的验收测评费大约是多少？",
+      "expected": "must include: 省指导书表5-49, V=D×g×(1-Z), D=500, D≤500档含500整, g≥3.0%, Z=0时约15万; may include: 多地市并列佛山2.0%约10万、东莞1.6%约9.6万",
+      "keywords": [
+        "省指导书表5-49",
+        "V=D×g×(1-Z)",
+        "D=500",
+        "D≤500档含500整",
+        "g≥3.0%",
+        "Z=0时约15万",
+        "may include: 多地市并列佛山2.0%约10万",
+        "东莞1.6%约9.6万"
+      ],
+      "n_chunks": 20,
+      "n_docs": 0,
+      "top1_score": 0.0,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "V=D×g×(1-Z)"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "fee_v7_005",
+      "category": "fee",
+      "bank_hint": "mixed",
+      "question": "佛山、东莞和省指导书对验收测评费的口径有什么差异？请按层级说明。",
+      "expected": "must include: 省级框架优先, 省指导书表5-49分档费率和V=D×g×(1-Z), 佛山2.0%口径, 东莞表9独立口径(1.6%+速算8); may include: 不同地区标准并存时不能只给单一地市答案",
+      "keywords": [
+        "省级框架优先",
+        "省指导书表5-49分档费率和V=D×g×(1-Z)",
+        "佛山2.0%口径",
+        "东莞表9独立口径(1.6%+速算8)",
+        "may include: 不同地区标准并存时不能只给单一地市答案"
+      ],
+      "n_chunks": 20,
+      "n_docs": 0,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "NS28",
+      "category": "cross",
+      "bank_hint": "standards",
+      "question": "它跟二级的主要区别是什么",
+      "expected": "must include: 三级/二级/区别, should reference 三级要求 from previous turn",
+      "keywords": [
+        "三级/二级/区别",
+        "should reference 三级要求 from previous turn"
+      ],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 0.5460089335420291,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "C07",
+      "category": "cross",
+      "bank_hint": "standards",
+      "question": "等保2.0中安全管理中心的要求与安全通信网络的关系",
+      "expected": "must include: 集中管控, 安全区域边界",
+      "keywords": [
+        "集中管控",
+        "安全区域边界"
+      ],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 1.616602751567725,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "安全区域边界",
+        "集中管控"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "C10",
+      "category": "cross",
+      "bank_hint": "standards",
+      "question": "当信息安全事件发生时，等保标准与网络安全法在应急处置上的衔接",
+      "expected": "must include: 等级响应, 通报预警, 事后整改",
+      "keywords": [
+        "等级响应",
+        "通报预警",
+        "事后整改"
+      ],
+      "n_chunks": 20,
+      "n_docs": 2,
+      "top1_score": 1.5410072502548982,
+      "hit5": false,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "等级响应",
+        "通报预警"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "C11",
+      "category": "cross",
+      "bank_hint": "standards",
+      "question": "数据中心消防(GB50116)与供配电切非(GB50052)之间的联动协调要求有哪些？",
+      "expected": "must include: 气体灭火, 切非消防电源, 联动控制",
+      "keywords": [
+        "气体灭火",
+        "切非消防电源",
+        "联动控制"
+      ],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": true,
+      "hit_keywords": [
+        "气体灭火"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "C09",
+      "category": "cross",
+      "bank_hint": "general",
+      "question": "WiFi 2.4GHz与5GHz频段在规划和部署上的主要差异",
+      "expected": "must include: 覆盖范围, 穿墙能力, 信道数量",
+      "keywords": [
+        "覆盖范围",
+        "穿墙能力",
+        "信道数量"
+      ],
+      "n_chunks": 20,
+      "n_docs": 2,
+      "top1_score": 1.4984926699621413,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "C02",
+      "category": "cross",
+      "bank_hint": "standards",
+      "question": "信息安全等级保护要求与数据中心设计规范之间的关联是什么？",
+      "expected": "must include: 安全物理环境, GB50174",
+      "keywords": [
+        "安全物理环境",
+        "GB50174"
+      ],
+      "n_chunks": 20,
+      "n_docs": 0,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "O07",
+      "category": "open",
+      "bank_hint": "standards",
+      "question": "供配电系统中治理谐波的主要措施有哪些？",
+      "expected": "must include: 整流器多脉冲, 滤波器, 提高短路容量",
+      "keywords": [
+        "整流器多脉冲",
+        "滤波器",
+        "提高短路容量"
+      ],
+      "n_chunks": 20,
+      "n_docs": 2,
+      "top1_score": 1.6120104725716153,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "滤波器"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "O15",
+      "category": "open",
+      "bank_hint": "general",
+      "question": "从成本、性能和便利性三方面比较几种常见的网络操作系统",
+      "expected": "must include: Windows NT, UNIX/Linux, NetWare",
+      "keywords": [
+        "Windows NT",
+        "UNIX/Linux",
+        "NetWare"
+      ],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 1.2793390089236065,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "O05",
+      "category": "open",
+      "bank_hint": "standards",
+      "question": "信息安全等级保护中不同等级的安全保护能力差异体现在哪些方面？",
+      "expected": "must include: 侵害客体, 损害程度, 监管方式",
+      "keywords": [
+        "侵害客体",
+        "损害程度",
+        "监管方式"
+      ],
+      "n_chunks": 20,
+      "n_docs": 0,
+      "top1_score": 0.0,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "侵害客体"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "O09",
+      "category": "open",
+      "bank_hint": "standards",
+      "question": "企业通过信息安全等级保护三级测评需要做哪些准备工作？",
+      "expected": "must include: 定级备案, 差距评估, 安全整改, 管理制度",
+      "keywords": [
+        "定级备案",
+        "差距评估",
+        "安全整改",
+        "管理制度"
+      ],
+      "n_chunks": 20,
+      "n_docs": 2,
+      "top1_score": 1.5438733713098154,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": false,
+      "hit_keywords": [
+        "管理制度",
+        "安全整改"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "O04",
+      "category": "open",
+      "bank_hint": "standards",
+      "question": "建筑弱电工程主要包括哪些子系统？",
+      "expected": "must include: 火灾自动报警, 安全防范, 综合布线",
+      "keywords": [
+        "火灾自动报警",
+        "安全防范",
+        "综合布线"
+      ],
+      "n_chunks": 20,
+      "n_docs": 2,
+      "top1_score": 1.4299785043149704,
+      "hit5": true,
+      "hit10": true,
+      "top1_hit": true,
+      "hit_keywords": [
+        "火灾自动报警",
+        "安全防范",
+        "综合布线"
+      ],
+      "hit_valid": true
+    },
+    {
+      "id": "NB25",
+      "category": "open",
+      "bank_hint": "咨询",
+      "question": "咨询资料中对数据中心项目规划阶段有哪些重点关注事项？",
+      "expected": "must include: 规划/咨询, may include: 关注事项",
+      "keywords": [
+        "规划/咨询",
+        "may include: 关注事项"
+      ],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 1.715715933020848,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": true
+    },
+    {
+      "id": "NE18",
+      "category": "edge",
+      "bank_hint": "all",
+      "question": "",
+      "expected": "reject: empty input, must not answer",
+      "keywords": [],
+      "n_chunks": 0,
+      "n_docs": 0,
+      "top1_score": null,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": false
+    },
+    {
+      "id": "NE19",
+      "category": "edge",
+      "bank_hint": "all",
+      "question": "???###@@@???",
+      "expected": "reject or clarify: 纯符号不应召回内容",
+      "keywords": [],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": false
+    },
+    {
+      "id": "NR09",
+      "category": "rejection",
+      "bank_hint": "standards",
+      "question": "帮我写一封商务邮件模板",
+      "expected": "reject: must say 无法回答/超出范围",
+      "keywords": [],
+      "n_chunks": 20,
+      "n_docs": 0,
+      "top1_score": 0.0,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": false
+    },
+    {
+      "id": "NR16",
+      "category": "rejection",
+      "bank_hint": "standards",
+      "question": "如果一个数据中心没有严格按标准建设，能否通过增加灭火器来满足消防要求？",
+      "expected": "reject: must say 无法给替代性合规结论/需专业评估",
+      "keywords": [],
+      "n_chunks": 20,
+      "n_docs": 1,
+      "top1_score": 1.705722672088431,
+      "hit5": false,
+      "hit10": false,
+      "top1_hit": false,
+      "hit_keywords": [],
+      "hit_valid": false
+    }
+  ]
+}

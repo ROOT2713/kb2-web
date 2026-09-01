@@ -1,0 +1,31 @@
+id,category,bank_hint,hit@5,hit@10,top1_hit,top1_score,n_docs,question,hit_keywords
+F16,fact,standards,True,True,False,0.0,0,等保2.0相比1.0，测评合格分数从多少提升到多少？,60分提升至70分
+F06,fact,standards,False,True,False,1.637754113939942,3,供配电系统设计规范的国家标准编号是什么？,GB 50052-2009
+F10,fact,standards,False,False,False,1.5876866766700446,1,剧场(歌剧/话剧)观众厅的混响时间中频(500Hz)满场推荐值分别是多少？,
+F07,fact,standards,False,False,False,1.6489306510769373,1,声环境功能区中2类区昼间和夜间环境噪声限值分别是多少？,
+F14,fact,standards,True,True,False,1.644307930647497,1,供配电系统中，当负荷线路电流大于多少时应采用三相四线制供电？,60A
+F13,fact,standards,False,False,False,1.6339932652011318,2,等保第三级及以上系统需要至少多久进行一次等级测评？,
+F12,fact,standards,False,False,False,1.6281108470123336,1,电影院观众厅的混响时间宜为多少？,
+F15,fact,standards,True,True,False,1.6567845379863861,4,建筑弱电工程中，火灾自动报警系统的设计规范标准编号是什么？,GB 50116
+NF05,fee,industry,False,False,False,0.0,0,按照东莞市政府投资信息化项目造价指南，设计费占项目总投资的比例范围是多少？,
+fee_v7_004,fee,mixed,True,True,False,0.0,0,500万软件项目验收测评费，省指导书、佛山和东莞分别应怎么说？,V=D×g×(1-Z)
+NF04,fee,industry,True,True,True,0.0,0,验收测评费按什么标准计算？,验收测评
+fee_v7_003,fee,industry,False,True,False,0.0,1,省电子政务工程造价指导书中，8000万项目验收测评费按表5-49估算是多少？,表5-49/V=D×g×(1-Z)
+fee_v7_001,fee,industry,True,True,False,0.0,0,按省电子政务工程造价指导书表5-49，500万项目的验收测评费大约是多少？,V=D×g×(1-Z)
+fee_v7_005,fee,mixed,False,False,False,0.0,0,佛山、东莞和省指导书对验收测评费的口径有什么差异？请按层级说明。,
+NS28,cross,standards,False,False,False,0.5460089335420291,1,它跟二级的主要区别是什么,
+C07,cross,standards,True,True,False,1.616602751567725,1,等保2.0中安全管理中心的要求与安全通信网络的关系,安全区域边界/集中管控
+C10,cross,standards,False,True,False,1.5410072502548982,2,当信息安全事件发生时，等保标准与网络安全法在应急处置上的衔接,等级响应/通报预警
+C11,cross,standards,True,True,True,0.0,1,数据中心消防(GB50116)与供配电切非(GB50052)之间的联动协调要求有哪些？,气体灭火
+C09,cross,general,False,False,False,1.4984926699621413,2,WiFi 2.4GHz与5GHz频段在规划和部署上的主要差异,
+C02,cross,standards,False,False,False,0.0,0,信息安全等级保护要求与数据中心设计规范之间的关联是什么？,
+O07,open,standards,True,True,False,1.6120104725716153,2,供配电系统中治理谐波的主要措施有哪些？,滤波器
+O15,open,general,False,False,False,1.2793390089236065,1,从成本、性能和便利性三方面比较几种常见的网络操作系统,
+O05,open,standards,True,True,False,0.0,0,信息安全等级保护中不同等级的安全保护能力差异体现在哪些方面？,侵害客体
+O09,open,standards,True,True,False,1.5438733713098154,2,企业通过信息安全等级保护三级测评需要做哪些准备工作？,管理制度/安全整改
+O04,open,standards,True,True,True,1.4299785043149704,2,建筑弱电工程主要包括哪些子系统？,火灾自动报警/安全防范/综合布线
+NB25,open,咨询,False,False,False,1.715715933020848,1,咨询资料中对数据中心项目规划阶段有哪些重点关注事项？,
+NE18,edge,all,False,False,False,,0,,
+NE19,edge,all,False,False,False,0.0,1,???###@@@???,
+NR09,rejection,standards,False,False,False,0.0,0,帮我写一封商务邮件模板,
+NR16,rejection,standards,False,False,False,1.705722672088431,1,如果一个数据中心没有严格按标准建设，能否通过增加灭火器来满足消防要求？,

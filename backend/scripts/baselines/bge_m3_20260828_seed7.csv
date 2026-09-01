@@ -1,0 +1,31 @@
+id,category,bank_hint,hit@5,hit@10,top1_hit,top1_score,n_docs,question,hit_keywords
+F11,fact,industry_docs,False,False,False,0.0,1,东莞市政府投资信息化项目造价指南的修编年份是哪一年？,
+F05,fact,standards,False,True,False,0.6217426577346409,1,声环境质量标准的国家标准编号是什么？,GB 3096-2008
+F13,fact,standards,False,False,False,0.0,1,等保第三级及以上系统需要至少多久进行一次等级测评？,
+F02,fact,standards,False,False,False,0.6101852473561524,5,数据中心设计规范的国家标准编号是什么？,
+F03,fact,standards,True,True,False,1.6364784747491719,8,网络安全等级保护基本要求对应的国家标准编号是什么？,GB/T 22239-2019
+F14,fact,standards,True,True,False,0.5546608877355588,2,供配电系统中，当负荷线路电流大于多少时应采用三相四线制供电？,60A
+F09,fact,standards,False,False,False,0.0,0,低压配电设计规范的国家标准编号是什么？,
+F17,fact,standards,True,True,False,0.0,0,建筑照明设计标准对应的国家标准编号是什么？,GB 50034
+fee_v7_001,fee,industry,True,True,True,0.0,1,按省电子政务工程造价指导书表5-49，500万项目的验收测评费大约是多少？,V=D×g×(1-Z)
+fee_v7_005,fee,mixed,False,False,False,0.0,1,佛山、东莞和省指导书对验收测评费的口径有什么差异？请按层级说明。,
+NF01,fee,industry,False,False,False,0.0,1,三级等保测评收费标准是多少？,
+fee_v7_004,fee,mixed,True,True,True,0.0,1,500万软件项目验收测评费，省指导书、佛山和东莞分别应怎么说？,V=D×g×(1-Z)
+NF04,fee,industry,False,False,False,0.0,1,验收测评费按什么标准计算？,
+fee_v7_008,fee,industry,True,True,True,0.0,1,验收测评费怎么计算？请列出省指导书表5-49的完整费率档位。,V=D×g×(1-Z)
+C03,cross,industry_docs,False,False,False,0.0,1,东莞市政府投资信息化项目的造价编制依据引用了哪些国家或行业标准？,
+NC12,cross,standards,False,False,False,0.6904374057255402,3,综合布线系统验收需要满足GB/T 50312和GB/T 21671哪些要求？,
+fee_v7_006,cross,industry,False,False,False,0.0,1,三级等保测评收费标准是不是按验收测评费表5-49来算？,
+fee_v7_007,cross,industry,False,False,False,0.0,1,项目监理费和弱电设计费是不是同一个取费标准？如果不是分别按什么口径回答？,
+C04,cross,standards,True,True,False,0.5460199405249786,1,不同声学功能区（剧场/电影院/厅堂）的声学设计规范差异有哪些？,混响时间/噪声限值
+C02,cross,standards,False,False,False,1.6193010910544992,6,信息安全等级保护要求与数据中心设计规范之间的关联是什么？,
+NB25,open,咨询,False,False,False,0.8873097554338032,7,咨询资料中对数据中心项目规划阶段有哪些重点关注事项？,
+O14,open,business,True,True,True,0.8708599060592929,4,信息化测评室内部工作流程中原始记录有哪些填写要求？,问题描述
+O02,open,standards,False,False,False,1.674325031568395,3,信息安全等级保护的主要流程有哪些环节？,
+NB23,open,industry,False,False,False,1.773716412921586,7,政务信息化项目验收管理的主要流程和关键节点有哪些？,
+O10,open,standards,False,False,False,1.590916734087738,2,网络安全法中对不履行网络安全保护义务的单位和个人有哪些处罚措施？,
+NB22,open,industry,False,False,False,0.5942214209234234,2,从行业资料角度说明数据中心PUE的含义、影响因素和常见优化方向，不要引用标准条文。,
+NE19,edge,all,False,False,False,0.5162812432572409,1,???###@@@???,
+NE20,edge,standards,False,False,False,0.0,1,DJJBQ等保,
+R04,rejection,all,False,False,False,0.0,0,世界杯足球赛历史上夺冠次数最多的是哪个国家,
+NR08,rejection,standards,False,False,False,0.0,0,高血压患者日常饮食有什么注意事项,
