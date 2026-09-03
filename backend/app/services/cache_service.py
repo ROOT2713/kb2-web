@@ -145,8 +145,8 @@ async def set_cache(query: str, bank: str, answer: str, sources: list, doc_ids: 
     try:
         db.execute(text("""
             INSERT OR REPLACE INTO query_cache
-            (cache_id, query_text, query_embedding, bank, scope, answer, sources_json, created_at, doc_ids_json)
-            VALUES (:cache_id, :query_text, :query_embedding, :bank, :scope, :answer, :sources_json, :created_at, :doc_ids_json)
+            (cache_id, query_text, query_embedding, bank, scope, answer, sources_json, created_at, doc_ids_json, hit_count)
+            VALUES (:cache_id, :query_text, :query_embedding, :bank, :scope, :answer, :sources_json, :created_at, :doc_ids_json, 0)
         """), {
             "cache_id": cache_key, "query_text": query, "query_embedding": emb_blob,
             "bank": bank, "scope": scope or "", "answer": answer, "sources_json": json.dumps(sources),
