@@ -71,6 +71,28 @@ MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
 MAX_BATCH_FILES = 200
 MAX_BATCH_TOTAL_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
 
+# 【FIX-004】上传防护：扩展名白名单（与 app/services/parsing.py parse_document
+# 实际支持的格式严格一致，无扩展名/其他类型一律拒绝，防任意文件进入解析管线）
+ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".doc", ".docx", ".xlsx", ".md", ".markdown", ".txt", ".text"}
+
+
+def _sanitize_and_validate_upload(f) -> str:
+    """【FIX-004】basename 清理 + 扩展白名单校验；返回清理后的文件名。
+
+    单文件与 /batch 两条上传路径共用：去除路径分量（防子目录拼接失败/路径穿越），
+    校验扩展名白名单（防任意类型文件被解析、落盘、送入 LLM）。
+    """
+    raw = getattr(f, "filename", None) or ""
+    sanitized = raw.replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not sanitized:
+        raise HTTPException(400, "文件名不能为空")
+    ext = os.path.splitext(sanitized)[1].lower()
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_UPLOAD_EXTENSIONS))
+        raise HTTPException(400, f"不支持的文件类型 '{ext or '(无扩展名)'}'，允许: {allowed}")
+    f.filename = sanitized
+    return sanitized
+
 # ── P0-3: bank → OKF domain 映射 (定义在 concept_gen.py，此处引用) ──
 # _infer_domain 已统一到 concept_gen.infer_domain()，此处保留别名
 _infer_domain = infer_domain
@@ -155,11 +177,8 @@ async def upload_document(
     # ── 防御性 sanitize：选择文件夹上传时 file.filename 可能含子目录路径（如 "上岗学习/xxx.doc"），
     # 后端解析/转换/落盘逻辑均按 basename 处理，这里统一去掉路径分量，避免 tempfile.mkdtemp 后
     # open(os.path.join(tmpdir, filename)) 因子目录不存在导致 FileNotFoundError。──
-    if file.filename and ("/" in file.filename or "\\" in file.filename):
-        original_filename = file.filename
-        sanitized = file.filename.replace("\\", "/").rsplit("/", 1)[-1]
-        file.filename = sanitized
-        logger.info("[upload] sanitize filename: %r -> %r", original_filename, sanitized)
+    # 【FIX-004】升级为 basename 清理 + 扩展白名单校验（/batch 同口径）
+    _sanitize_and_validate_upload(file)
 
     # ── bank 兼容性与验证 ──
     if bank == "kb":
@@ -500,7 +519,11 @@ async def _process_upload_task(
             try:
                 retained += await hs.upsert(doc_id, batch, hs_bank, append=(batch_i > 0), offset=bs)
             except Exception as e:
-                logger.error("indexing error: %s", e)
+                # 【FIX-005】失败批次明确计数日志（retained 不含失败批次，由下方质量门拦截）
+                logger.error(
+                    "indexing error (batch %d/%d, %d items): %s",
+                    batch_i + 1, (len(memory_items) + BS - 1) // BS, len(batch), e,
+                )
         invalidate_bm25_cache(bank)
         invalidate_bm25_cache("all")
 
@@ -516,7 +539,9 @@ async def _process_upload_task(
                 integrity = {"original_chars": len(text), "recalled_chars": len(rt), "coverage_pct": cov, "chunks": len(rc), "meta_chunks": len(parent_map), "status": "ok" if cov >= 80 else ("partial" if cov >= 50 else "low")}
                 if cov < 80 and retained < len(memory_items):
                     try:
-                        rr = await hs.upsert(doc_id, memory_items[retained:], hs_bank)
+                        # 补插缺失 chunk（pgvector 下必须 append=True，否则默认 append=False
+                        # 会先 DELETE 整篇再插 memory_items[retained:]，丢掉已成功的批次）
+                        rr = await hs.upsert(doc_id, memory_items[retained:], hs_bank, append=True, offset=retained)
                         if rr > 0:
                             retained += rr
                             integrity["retried"] = True
@@ -532,10 +557,20 @@ async def _process_upload_task(
         if doc:
             doc.original_text_length = len(text)
             doc.chunk_count = retained
-            # searchable=1 if upsert succeeded (at least some chunks stored)
-            # Integrity/recall check is a quality signal, not a gate
-            if retained > 0 or (integrity and integrity.get("status") == "ok"):
+            # 【FIX-005】searchable 质量门：索引覆盖率 ≥ 80% 才允许进入检索。
+            # 旧逻辑 retained > 0 即 searchable=1：100 块只存 1 块也标记可检索，
+            # 产生"僵尸文档"——前台可见但检索不到内容，掩盖上传/索引失败。
+            _expected = len(memory_items) if memory_items else 0
+            _coverage = (retained / _expected) if _expected else 0.0
+            if _expected and _coverage >= 0.8:
                 doc.searchable = 1
+            elif _expected:
+                doc.searchable = 0
+                logger.error(
+                    "[FIX-005] doc %s indexed coverage %.1f%% (%d/%d) < 80%% — marked NOT searchable",
+                    doc_id, _coverage * 100, retained, _expected,
+                )
+            # integrity/recall 覆盖率仍记录为质量信号（旧语义保留）
             if integrity:
                 doc.coverage_pct = integrity.get("coverage_pct", 0.0)
             doc.verified_at = datetime.now(timezone.utc)
@@ -746,10 +781,24 @@ async def upload_batch(
     for f in files:
         try:
             f.file.seek(0)
+            # 【FIX-004】/batch 同口径防护：basename 清理 + 扩展白名单（单文件失败不中断批次）
+            try:
+                _sanitize_and_validate_upload(f)
+            except HTTPException as _ve:
+                failed_count += 1
+                results.append({"filename": (getattr(f, "filename", "") or "")[-80:], "ok": False, "detail": _ve.detail})
+                continue
             f_content = await f.read()
             if not f_content:
                 failed_count += 1
                 results.append({"filename": f.filename, "ok": False, "detail": "文件为空"})
+                continue
+            if len(f_content) > MAX_FILE_SIZE:  # 【FIX-004】补批次内单文件上限（此前仅校验总量）
+                failed_count += 1
+                results.append({
+                    "filename": f.filename, "ok": False,
+                    "detail": f"文件过大（{len(f_content) // 1024 // 1024}MB），单文件上限 {MAX_FILE_SIZE // 1024 // 1024}MB",
+                })
                 continue
             task_id = str(uuid.uuid4())
             _create_upload_task(task_id, f.filename)

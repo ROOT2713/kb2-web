@@ -77,8 +77,15 @@ OLD_HINDSIGHT_BANKS = ["tech", "security", "ai", "notes", "proposals", "assessme
 # Background: verify document searchability
 # ═══════════════════════════════════════════════════════════════════
 
-async def _verify_searchable(v_doc_id, v_title, v_original_len, v_bank="kb"):
-    """Upload/reparse async verification of document searchability (matches v1 L1772-L1796)."""
+async def _verify_searchable(v_doc_id, v_title, v_original_len, v_bank="kb", expected=0, retained=0):
+    """Upload/reparse async verification of document searchability.
+
+    【FIX-005 补强】searchable 不再由 recall 单点翻 1：
+    - 质量门: retained/expected >= 80%（与 upload 主路径 upload.py 质量门一致）才允许 searchable=1；
+      覆盖率不足时即使 recall 命中也不翻 1（堵住 reparse 推翻质量门的后门）。
+    - coverage_pct 保留入库时的真实解析覆盖率，不再硬编码 80.0。
+    """
+    gate_pass = (retained / expected) >= 0.8 if expected else False
     await asyncio.sleep(10)  # wait for consolidation
     for attempt in range(3):
         try:
@@ -86,14 +93,17 @@ async def _verify_searchable(v_doc_id, v_title, v_original_len, v_bank="kb"):
             if len(recalled) > 0:
                 db2 = SessionLocal()
                 try:
-                    db2.execute(
-                        sa_text("UPDATE documents SET searchable=1, coverage_pct=80.0, verified_at=:now, original_text_length=:olen WHERE doc_id=:did"),
-                        {"now": datetime.now(timezone.utc), "olen": v_original_len, "did": v_doc_id}
-                    )
-                    db2.commit()
+                    if gate_pass:
+                        db2.execute(
+                            sa_text("UPDATE documents SET searchable=1, verified_at=:now, original_text_length=:olen WHERE doc_id=:did"),
+                            {"now": datetime.now(timezone.utc), "olen": v_original_len, "did": v_doc_id}
+                        )
+                        db2.commit()
+                        logger.info("VERIFY OK %s searchable=true (recall=%d, cov_gate=%.0f%%)", v_title[:40], len(recalled), (retained / expected * 100) if expected else 0)
+                    else:
+                        logger.warning("VERIFY %s recall 可达但覆盖率质量门未过 (retained=%d/%d) — 保持 searchable=0", v_title[:40], retained, expected)
                 finally:
                     db2.close()
-                logger.info("VERIFY OK %s searchable=true (recall=%d)", v_title[:40], len(recalled))
                 return
             if attempt < 2:
                 await asyncio.sleep(30 * (2 ** attempt))
@@ -101,10 +111,11 @@ async def _verify_searchable(v_doc_id, v_title, v_original_len, v_bank="kb"):
             logger.warning("VERIFY attempt %d error: %s", attempt + 1, e)
             if attempt < 2:
                 await asyncio.sleep(10)
+    # 3 次 recall 均失败: 保守置 searchable=0（可能 consolidation 延迟或索引异常）
     db2 = SessionLocal()
     try:
         db2.execute(
-            sa_text("UPDATE documents SET searchable=0, coverage_pct=0, verified_at=:now WHERE doc_id=:did"),
+            sa_text("UPDATE documents SET searchable=0, verified_at=:now WHERE doc_id=:did"),
             {"now": datetime.now(timezone.utc), "did": v_doc_id}
         )
         db2.commit()
@@ -1309,7 +1320,7 @@ async def reparse_document(
             pass
     db.commit()
 
-    asyncio.create_task(_verify_searchable(new_doc_id, doc_title, len(text), hs_bank)).add_done_callback(_log_task_exception)
+    asyncio.create_task(_verify_searchable(new_doc_id, doc_title, len(text), hs_bank, expected=len(memory_items), retained=retained)).add_done_callback(_log_task_exception)
 
     # 重解析 → BM25索引失效（内容已变，清旧bank+全量）
     invalidate_bm25_cache(bank=old_bank)

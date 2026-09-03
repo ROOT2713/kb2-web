@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     trust_proxy: bool = False  # 反代部署时置 True 才信任 X-Forwarded-For（2026-08-14 CC P1）
 
     # ── JWT ──
-    jwt_secret: str = "CHANGE_ME_IN_PRODUCTION"
+    jwt_secret: str = ""  # 【FIX-003】无默认密钥——空值启动即报错，杜绝默认密钥上线
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440  # 24 hours
 
@@ -100,8 +100,14 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-if "CHANGE_ME" in settings.jwt_secret:
+# 【FIX-003】JWT 密钥三重启动守卫：空值 / 残留默认值 / 弱长度均拒绝启动
+if not settings.jwt_secret or "CHANGE_ME" in settings.jwt_secret:
     raise RuntimeError(
-        "JWT_SECRET is the default 'CHANGE_ME_IN_PRODUCTION'. "
-        "Set JWT_SECRET in .env before starting in production."
+        "JWT_SECRET is empty or still the default 'CHANGE_ME_IN_PRODUCTION'. "
+        "Set JWT_SECRET in .env before starting. Generate with: openssl rand -hex 32"
+    )
+if len(settings.jwt_secret) < 32:
+    raise RuntimeError(
+        "JWT_SECRET too short (< 32 chars) — weak secrets are brute-forceable. "
+        "Generate with: openssl rand -hex 32"
     )

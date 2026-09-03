@@ -1,0 +1,73 @@
+# kb2-web 生产 Nginx 反向代理样例【FIX-006】
+#
+# 用法：
+#   1. 复制到 /etc/nginx/sites-available/kb2-web 并按需修改 server_name
+#   2. ln -s 到 sites-enabled，nginx -t && systemctl reload nginx
+#   3. 后端 config 中设置 TRUST_PROXY=true（信任本反代传来的 X-Forwarded-For）
+#
+# 设计要点（对应审计建议）：
+#   - 应用只监听 127.0.0.1，由 nginx 统一对外（后端 uvicorn 勿再绑 0.0.0.0 暴露公网）
+#   - Hindsight(:8080)/Wiki(:3006) 不直接对外；Wiki 经路径前缀代理
+#   - client_max_body_size 覆盖上传上限（后端 MAX_FILE_SIZE=200MB）
+#   - 读写超时 ≥300s：RAG 查询 P95 可达 100s+（rerank/LLM 链路），默认 60s 会截断
+
+upstream kb2_app {
+    server 127.0.0.1:3027;
+    keepalive 16;
+}
+
+upstream kb2_wiki {
+    server 127.0.0.1:3006;
+    keepalive 8;
+}
+
+server {
+    listen 80;
+    # listen 443 ssl;                     # 生产建议 TLS：
+    # ssl_certificate     /etc/ssl/certs/kb2.crt;
+    # ssl_certificate_key /etc/ssl/private/kb2.key;
+    server_name kb2.example.com;         # ← 改为实际域名或内网 IP
+
+    # ── 可选：内网白名单（对外部署时建议启用或改为 VPN/基础认证）──
+    # allow 10.0.0.0/8;
+    # allow 192.168.0.0/16;
+    # deny  all;
+
+    # 上传上限略大于后端 MAX_FILE_SIZE(200MB)，保证 413 由后端业务逻辑返回
+    client_max_body_size 210m;
+
+    # ── 主应用 ──
+    location / {
+        proxy_pass http://kb2_app;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection        "";
+
+        # RAG 查询链路（检索 + rerank + LLM 合成）长耗时保护
+        proxy_connect_timeout 10s;
+        proxy_send_timeout    300s;
+        proxy_read_timeout    300s;
+        proxy_buffering off;             # 流式回答不被缓冲延迟
+    }
+
+    # ── Wiki（:3006，路径前缀方式；如 Wiki 支持子路径需同步配置其 base_url）──
+    location /wiki/ {
+        proxy_pass http://kb2_wiki/;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_read_timeout 120s;
+    }
+
+    # ── 明确拒绝内部服务直连探测 ──
+    location = /health {
+        proxy_pass http://kb2_app;
+        allow 10.0.0.0/8;
+        allow 192.168.0.0/16;
+        deny  all;
+    }
+}

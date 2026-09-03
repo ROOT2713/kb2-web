@@ -46,7 +46,7 @@ import re
 import uuid
 from collections import defaultdict
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from sqlalchemy import text as sa_text
 
 from app.models.database import SessionLocal
@@ -55,7 +55,7 @@ from app.services.session_manager import (
     create_or_update_session as session_update,
     release_session as session_release,
 )
-from app.middleware.jwt_auth import get_username_from_token
+from app.middleware.jwt_auth import get_current_user, require_role, get_username_from_token
 from app.models.audit import AuditLog
 from app.services.standard_boost import extract_standard_numbers
 from app.services.cache_service import (
@@ -76,6 +76,7 @@ from app.services.retrieval import (
     keyword_rerank,
     llm_rerank,
     cross_encoder_rerank,
+    doc_bank_filter,
     get_bank_config,
     recall,
     rrf_merge,
@@ -111,6 +112,7 @@ async def query(
     rerank_mode: str = Form("default"),
     session_id: str = Form(""),
     categories: str = Form(""),
+    current_user: str = Depends(get_current_user),  # 【FIX-002】缓存用户隔离 scope（依赖缓存复用认证，零额外开销）
 ):
     """搜索知识库 → 召回 → DeepSeek 合成答案（支持多 bank）"""
     if not q.strip():
@@ -164,7 +166,7 @@ async def query(
     # ── 缓存命中检查（L1精确 + L2语义）──
     if not _skip_cache:
         try:
-            cached = cache_get_exact(q, bank)
+            cached = cache_get_exact(q, bank, scope=current_user)
             if cached:
                 # 写入审计日志（缓存命中路径）
                 _write_audit_log(request, q, cached["answer"], cached.get("sources", []), cache_hit=1)
@@ -177,7 +179,7 @@ async def query(
                     "session_id": session_id,
                     "suggestions": _build_persistent_suggestions(q, cached["sources"]),
                 }
-            cached = await cache_get_semantic(q, bank, threshold=settings.cache_l2_threshold)
+            cached = await cache_get_semantic(q, bank, threshold=settings.cache_l2_threshold, scope=current_user)
             if cached:
                 # 写入审计日志（缓存命中路径）
                 _write_audit_log(request, q, cached["answer"], cached.get("sources", []), cache_hit=1)
@@ -512,10 +514,11 @@ async def query(
 
     # ── 缓存写入 ──
     # 有文档事实的查询可缓存；空结果不缓存；缓存命中时动态重建 suggestions
-    if not _skip_cache and ctx["doc_facts"]:
+    # 【FIX-002】拒绝性回答不入缓存（doc_facts 非空但 L3 校验拒答时会污染同/近义查询）
+    if not _skip_cache and ctx["doc_facts"] and answer != _REJECT_MSG_KNOWLEDGE_GAP:
         try:
             doc_ids = set(ctx["doc_facts"].keys()) if ctx["doc_facts"] else set()
-            await cache_set(q, bank, answer, sources, doc_ids)
+            await cache_set(q, bank, answer, sources, doc_ids, scope=current_user)
             logger.info("[CACHE] Stored result for: %s", q[:50])
         except Exception as e:
             logger.info("[CACHE] Write error: %s", e)
@@ -558,10 +561,13 @@ async def query(
 
 
 @router.post("/cache-clear")
-async def clear_llm_cache():
-    """清除所有 L1/L2 查询缓存 + BM25 缓存"""
+async def clear_llm_cache(
+    current_user: str = Depends(get_current_user),
+    _: None = Depends(require_role("admin")),  # 【FIX-002】清缓存提权至 admin，防止 viewer/匿名清空全站缓存
+):
+    """清除所有 L1/L2 查询缓存 + BM25 缓存（仅 admin）"""
     count = await clear_all_cache()
-    logger.info("[CACHE] User triggered cache clear: %d entries", count)
+    logger.info("[CACHE] User %s triggered cache clear: %d entries", current_user, count)
     return {"status": "ok", "cleared": count, "message": f"已清除 {count} 条缓存"}
 
 
@@ -572,9 +578,12 @@ async def get_standard_full_text(doc_id: str, bank: str = "all"):
     try:
         params = {"doc_id": doc_id}
         doc_sql = "SELECT doc_id, title FROM documents WHERE doc_id=:doc_id AND searchable=1"
-        if bank != "all":
-            doc_sql += " AND bank=:bank"
-            params["bank"] = bank
+        hs_banks = doc_bank_filter(bank)
+        if hs_banks:
+            # 【FIX-001】按 hs_bank 过滤，替代与值域不匹配的 bank=:bank（会误 404）
+            _holders = ",".join(f":hs{i}" for i in range(len(hs_banks)))
+            doc_sql += f" AND hs_bank IN ({_holders})"
+            params.update({f"hs{i}": b for i, b in enumerate(hs_banks)})
         title_row = db.execute(sa_text(doc_sql), params).fetchone()
         if not title_row:
             raise HTTPException(404, f"文档 {doc_id} 未找到")

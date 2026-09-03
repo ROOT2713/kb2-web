@@ -29,7 +29,7 @@ _DEFAULT_TIMEOUT = 30
 class VectorStore(Protocol):
     """Abstract interface for vector storage backends."""
 
-    async def upsert(self, doc_id: str, chunks: List[Dict], bank: str) -> int:
+    async def upsert(self, doc_id: str, chunks: List[Dict], bank: str, append: bool = False, offset: int = 0) -> int:
         """Insert/update document chunks. Returns chunk count."""
         ...
 
@@ -117,7 +117,7 @@ class HindsightStore:
                 )
 
     # ── upsert ──────────────────────────────────────────────────
-    async def upsert(self, doc_id: str, chunks: List[Dict], bank: str) -> int:
+    async def upsert(self, doc_id: str, chunks: List[Dict], bank: str, append: bool = False, offset: int = 0) -> int:
         """Upload document chunks to Hindsight.
 
         chunks: list of dicts with keys like {"content": str, "tags": [...], "type": "world"}.
@@ -125,6 +125,7 @@ class HindsightStore:
         Returns number of chunks successfully stored.
 
         Matches v1: POST /v1/default/banks/{bank}/memories
+        (append/offset 兼容 pgvector 签名 — Hindsight 按 items 追加语义,忽略 append/offset)
         """
         if not chunks:
             logger.warning("upsert called with empty chunks for doc_id=%s", doc_id)
@@ -311,6 +312,22 @@ class PgVectorStore:
 
         rows = await self._chunks_to_rows(doc_id, chunks, bank, embeddings, offset=offset)
 
+        # 【FIX-005 补强】embedding 失败的 chunk 不入库（NULL embedding 行向量检索不可达，
+        # 且会虚高 retained 绕过 upload 质量门）。返回真实有效数，让
+        # upload.py retained/expected>=0.8 能拦截 embedding API 静默失败。
+        valid_rows = []
+        skipped = 0
+        for r in rows:
+            if r[5] is not None:  # embedding 列非空
+                valid_rows.append(r)
+            else:
+                skipped += 1
+        if skipped:
+            logger.error(
+                "PgVectorStore upsert: doc_id=%s %d/%d chunks 无 embedding(API失败?) — 跳过入库",
+                doc_id, skipped, len(rows),
+            )
+
         async with pool.acquire() as conn:
             if not append:
                 # 只在首次调用时删除旧chunks
@@ -319,14 +336,15 @@ class PgVectorStore:
                     doc_id, bank,
                 )
             # Bulk insert
-            await conn.executemany(
-                "INSERT INTO vector_chunks (doc_id, chunk_index, bank, content, metadata, embedding) "
-                "VALUES ($1, $2, $3, $4, $5, $6)",
-                rows,
-            )
+            if valid_rows:
+                await conn.executemany(
+                    "INSERT INTO vector_chunks (doc_id, chunk_index, bank, content, metadata, embedding) "
+                    "VALUES ($1, $2, $3, $4, $5, $6)",
+                    valid_rows,
+                )
 
-        logger.info("PgVectorStore upsert: doc_id=%s bank=%s chunks=%d", doc_id, bank, len(chunks))
-        return len(chunks)
+        logger.info("PgVectorStore upsert: doc_id=%s bank=%s stored=%d skipped=%d", doc_id, bank, len(valid_rows), skipped)
+        return len(valid_rows)
 
     # ── query (by text) ────────────────────────────────────────
     async def query(

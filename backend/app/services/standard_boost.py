@@ -18,6 +18,8 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text as sa_text
 
+from app.services.retrieval import doc_bank_filter  # 【FIX-001】
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,9 +79,13 @@ def find_docs_by_standard_number(db: Session, std_num: str, bank: str = "all") -
                AND doc_type IN ('gb_standard', 'regulation')
                AND (category IS NULL OR category = '' OR category NOT IN ('daily', 'news'))"""
     params = {}
-    if bank != "all":
-        sql += " AND bank=:bank"
-        params["bank"] = bank
+    hs_banks = doc_bank_filter(bank)
+    if hs_banks:
+        # 【FIX-001】按 hs_bank 过滤（旧 AND bank=:bank 与 documents.hs_bank 值域
+        # 不匹配，bank != "all" 时恒 0 命中，C1 增强整体失效）
+        _holders = ",".join(f":hs{i}" for i in range(len(hs_banks)))
+        sql += f" AND hs_bank IN ({_holders})"
+        params.update({f"hs{i}": b for i, b in enumerate(hs_banks)})
     rows = db.execute(sa_text(sql), params).fetchall()
 
     matches = []
@@ -204,9 +210,12 @@ def boost_exact_standards(
           AND p.parent_text LIKE :like_pattern
     """
     _supplement_params = {}
-    if bank != "all":
-        _supplement_sql += " AND d.bank=:bank"
-        _supplement_params["bank"] = bank
+    _sup_hs = doc_bank_filter(bank)
+    if _sup_hs:
+        # 【FIX-001】同上：按 d.hs_bank 过滤替代失效的 d.bank=:bank
+        _sup_holders = ",".join(f":hsb{i}" for i in range(len(_sup_hs)))
+        _supplement_sql += f" AND d.hs_bank IN ({_sup_holders})"
+        _supplement_params.update({f"hsb{i}": b for i, b in enumerate(_sup_hs)})
     for std_num in std_nums:
         # Use a short identifying fragment of the std number for LIKE match
         _fragment = std_num.strip().split()[-1] if std_num.strip() else std_num

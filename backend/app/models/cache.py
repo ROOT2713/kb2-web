@@ -19,6 +19,7 @@ class QueryCache(Base):
     query_text = Column(Text, nullable=False)
     query_embedding = Column(LargeBinary, nullable=True)
     bank = Column(String, default="all", index=True)
+    scope = Column(String, default="", index=True)  # 【FIX-002】用户隔离维度（username），空=旧数据/匿名
     answer = Column(Text, nullable=False, default="")
     sources_json = Column(Text, default="[]")
     hit_count = Column(Integer, default=0)

@@ -22,6 +22,29 @@ from app.services.query_decomposer import split_sub_queries
 
 logger = logging.getLogger(__name__)
 
+
+# ── 【FIX-002】scope 列幂等迁移（存量 SQLite 库）───────────────────
+# 新库由 create_all 按模型建表自带 scope；存量库在此补列。表不存在时 PRAGMA
+# 返回空列表自动跳过（首次启动 create_all 之前属正常路径）。
+def _ensure_scope_column() -> None:
+    try:
+        _db = SessionLocal()
+        try:
+            _rows = _db.execute(text("PRAGMA table_info(query_cache)")).fetchall()
+            _cols = {r[1] for r in _rows}
+            if _cols and "scope" not in _cols:
+                _db.execute(text("ALTER TABLE query_cache ADD COLUMN scope VARCHAR NOT NULL DEFAULT ''"))
+                _db.execute(text("CREATE INDEX IF NOT EXISTS ix_query_cache_scope ON query_cache (scope)"))
+                _db.commit()
+                logger.warning("[FIX-002] query_cache 补建 scope 列完成（缓存用户隔离迁移）")
+        finally:
+            _db.close()
+    except Exception as _e:  # 迁移失败不阻断启动，仅退化为共享缓存
+        logger.warning("[FIX-002] scope 列迁移跳过: %s", _e)
+
+
+_ensure_scope_column()
+
 # ── BM25 索引管理（多 bank 独立缓存 + TTL）─────────────────────────
 # Phase2: 每个 bank 独立缓存，切换 bank 时无需重建（避免 10-30s 冷启动）
 _bm25_caches: dict = {}  # {"all": {"index": BM25, "docs": [...], "ts": float}, "standards": {...}, ...}
@@ -30,9 +53,9 @@ _BM25_DOC_COUNT_KEY = "doc_count"  # 增量检测：文档数量变化时才重�
 
 
 
-def get_exact(query: str, bank: str) -> Optional[Dict]:
-    """L1精确匹配"""
-    cache_key = hashlib.sha256(f"{normalize_query(query)}:{bank}".encode()).hexdigest()
+def get_exact(query: str, bank: str, scope: str = "") -> Optional[Dict]:
+    """L1精确匹配（scope: 用户隔离维度，【FIX-002】）"""
+    cache_key = hashlib.sha256(f"{normalize_query(query)}:{bank}:{scope or ''}".encode()).hexdigest()
     db = SessionLocal()
     try:
         row = db.execute(
@@ -57,9 +80,10 @@ def get_exact(query: str, bank: str) -> Optional[Dict]:
     return None
 
 
-async def get_semantic(query: str, bank: str, threshold: float = 0.82) -> Optional[Dict]:
+async def get_semantic(query: str, bank: str, threshold: float = 0.82, scope: str = "") -> Optional[Dict]:
     """L2语义匹配（需要 get_embedding 可用时才生效）
-    [OPT-03] 阈值从 0.90 降到 0.82，提升近义查询命中率"""
+    [OPT-03] 阈值从 0.90 降到 0.82，提升近义查询命中率
+    [FIX-002] scope 用户隔离：语义召回仅在同 scope 缓存池内匹配"""
     from app.utils.embeddings import get_embedding
     query_emb = await get_embedding(query)
     if query_emb is None:
@@ -67,10 +91,11 @@ async def get_semantic(query: str, bank: str, threshold: float = 0.82) -> Option
     db = SessionLocal()
     try:
         # [P1-3] 严格bank隔离：所有bank统一用bank参数过滤，all只命中all缓存
+        # [FIX-002] 严格scope隔离：不同用户的语义缓存互不可见
         rows = db.execute(
             text("SELECT cache_id, query_text, query_embedding, answer, sources_json, created_at, ttl_seconds "
-                 "FROM query_cache WHERE bank=:bank AND query_embedding IS NOT NULL"),
-            {"bank": bank}
+                 "FROM query_cache WHERE bank=:bank AND scope=:scope AND query_embedding IS NOT NULL"),
+            {"bank": bank, "scope": scope or ""}
         ).fetchall()
         best_match = None
         best_sim = 0.0
@@ -110,21 +135,21 @@ async def get_semantic(query: str, bank: str, threshold: float = 0.82) -> Option
     return None
 
 
-async def set_cache(query: str, bank: str, answer: str, sources: list, doc_ids: set):
-    """写入缓存（L1精确key + L2 embedding）"""
+async def set_cache(query: str, bank: str, answer: str, sources: list, doc_ids: set, scope: str = ""):
+    """写入缓存（L1精确key + L2 embedding；scope 用户隔离【FIX-002】）"""
     from app.utils.embeddings import get_embedding
-    cache_key = hashlib.sha256(f"{normalize_query(query)}:{bank}".encode()).hexdigest()
+    cache_key = hashlib.sha256(f"{normalize_query(query)}:{bank}:{scope or ''}".encode()).hexdigest()
     embedding = await get_embedding(query)
     emb_blob = embedding.astype(np.float32).tobytes() if embedding is not None else None
     db = SessionLocal()
     try:
         db.execute(text("""
             INSERT OR REPLACE INTO query_cache
-            (cache_id, query_text, query_embedding, bank, answer, sources_json, created_at, doc_ids_json)
-            VALUES (:cache_id, :query_text, :query_embedding, :bank, :answer, :sources_json, :created_at, :doc_ids_json)
+            (cache_id, query_text, query_embedding, bank, scope, answer, sources_json, created_at, doc_ids_json)
+            VALUES (:cache_id, :query_text, :query_embedding, :bank, :scope, :answer, :sources_json, :created_at, :doc_ids_json)
         """), {
             "cache_id": cache_key, "query_text": query, "query_embedding": emb_blob,
-            "bank": bank, "answer": answer, "sources_json": json.dumps(sources),
+            "bank": bank, "scope": scope or "", "answer": answer, "sources_json": json.dumps(sources),
             "created_at": datetime.now(timezone.utc).isoformat(),  # [P2-4]
             "doc_ids_json": json.dumps(list(doc_ids))
         })

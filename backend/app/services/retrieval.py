@@ -86,6 +86,35 @@ def reload_bank_config() -> dict:
 
 reload_bank_config()
 
+
+def doc_bank_filter(bank_key: str) -> list[str]:
+    """【FIX-001】业务 bank key → documents.hs_bank 合法值列表。
+
+    documents.hs_bank 由 ingest 写入（upload.py: ``bank_cfg.get("hindsight") or "kb"``）。
+    旧逻辑按 ``documents.bank``（业务 key 列）做 ``AND bank=:bank`` 过滤，与 hs_bank
+    值域不匹配，导致 bank != "all" 时 C1 标准号增强 / 标准全文接口恒 0 命中（P0）。
+
+    过滤值域取该 bank 的检索范围：``hindsight_banks``（聚合 bank）优先，
+    退回 ``hindsight`` 单值，与 recall() 的检索口径保持一致。
+    返回空列表表示不限定 bank（all / kb），由调用方判断。
+    """
+    if not bank_key or bank_key in ("all", "kb"):
+        return []
+    if bank_key.startswith("kb_"):
+        return [bank_key]  # 已是 Hindsight bank 名，直接透传
+    cfg = BANKS.get(bank_key) or {}
+    banks = cfg.get("hindsight_banks") or []
+    if banks:
+        return list(banks)
+    hs = cfg.get("hindsight")
+    if hs:
+        return [hs]
+    # 未知 bank key（不在 BANKS 配置）: 兜底按 kb_<key> 猜测,但真实 hs_bank 可能不同
+    # (如 standards → kb_standard 而非 kb_standards)。告警以便发现配置漂移/写入口径错位。
+    logger.warning("[FIX-001] doc_bank_filter: bank_key=%r 不在 BANKS 配置,兜底 kb_%s (若过滤恒空请检查 upload 写入口径与 banks 配置)", bank_key, bank_key)
+    return [f"kb_{bank_key}"]
+
+
 # ── Active Hindsight banks 缓存 ────────────────────────────────────
 _active_hs_banks_cache = {"banks": None, "ts": 0}
 _ACTIVE_HS_BANKS_TTL = 300  # 5 minutes
@@ -295,13 +324,18 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
     """
     # 1. Resolve frontend bank key → Hindsight bank name
     #    兼容：调用方可能传前端 key（industry_docs）或 Hindsight 名（kb_industry）
-    bank_cfg = BANKS.get(bank, {})
-    if not bank_cfg:
-        # 传入的是 Hindsight bank 名，反查前端 key
-        _reverse_map = {v.get("hindsight"): k for k, v in BANKS.items() if v.get("hindsight")}
-        frontend_key = _reverse_map.get(bank)
-        if frontend_key:
-            bank_cfg = BANKS.get(frontend_key, {})
+    if bank.startswith("kb_") and bank not in BANKS:
+        # 【FIX-001】kb_ 前缀直通：此前反查失败会令 hs_bank=None，
+        # 落入下方 all-active-banks 分支，使定向 bank 召回退化为全库扫描
+        bank_cfg = {"hindsight": bank}
+    else:
+        bank_cfg = BANKS.get(bank, {})
+        if not bank_cfg:
+            # 传入的是 Hindsight bank 名，反查前端 key
+            _reverse_map = {v.get("hindsight"): k for k, v in BANKS.items() if v.get("hindsight")}
+            frontend_key = _reverse_map.get(bank)
+            if frontend_key:
+                bank_cfg = BANKS.get(frontend_key, {})
     hs_bank = bank_cfg.get("hindsight")
 
     # ── pgvector 后端 ──
