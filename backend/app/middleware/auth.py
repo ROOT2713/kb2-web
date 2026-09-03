@@ -19,7 +19,13 @@ async def require_admin(credentials: HTTPBasicCredentials = Depends(_security)):
     Uses secrets.compare_digest to prevent timing side-channel attacks.
     """
     if not settings.admin_password:
-        return True  # No password configured = skip auth (dev mode)
+        # 【审计盲区修复】原为 fail-open（return True），未配置密码时任何人均可访问。
+        # 改为 fail-closed：管理端点必须显式配置密码，防止误用/漏配导致越权。
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="管理员密码未配置，管理端点不可用",
+            headers={"WWW-Authenticate": "Basic"},
+        )
 
     user_ok = secrets.compare_digest(credentials.username, settings.admin_username)
     pass_ok = secrets.compare_digest(credentials.password, settings.admin_password)

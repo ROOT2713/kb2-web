@@ -247,8 +247,29 @@ async def _process_upload_task(
             parsed_pub_date = date(int(p[0]), int(p[1]), int(p[2]))
         except (ValueError, IndexError):
             pass
-    bank_cfg = get_bank_config(bank)
-    hs_bank = bank_cfg.get("hindsight") or "kb"
+    # 【审计盲区修复】写入口径归一化：前端可能传 legacy bank key
+    # （standards/industry_docs/general/咨询/kb_xhs 等历史 documents.bank 值），
+    # 不在 BANKS 配置时 get_bank_config 回退 all → hs_bank='kb' 黑洞。
+    # 按存量库实证主值（bank→hs_bank 交叉分布）直映射到 hindsight 库；
+    # kb_ 前缀已是 hindsight 名直接透传；其余走 BANKS 配置取 hindsight。
+    _LEGACY_BANK_TO_HS = {
+        "standards": "kb_standard", "industry_docs": "kb_industry",
+        "tech_guides": "kb_industry", "checklist": "kb_industry",
+        "templates": "kb_industry", "methodology": "kb_industry",
+        "business": "kb_industry", "traffic": "kb_industry",
+        "咨询": "kb_xhs", "xhs": "kb_xhs", "kb_xhs": "kb_xhs",
+        "project_docs": "kb_project",
+    }
+    if bank.startswith("kb_"):
+        hs_bank = bank  # 已是 hindsight bank 名，直接透传
+    elif bank in _LEGACY_BANK_TO_HS:
+        hs_bank = _LEGACY_BANK_TO_HS[bank]
+        logger.info("[upload] bank=%r legacy 映射 → hs_bank=%r", bank, hs_bank)
+    else:
+        bank_cfg = get_bank_config(bank)
+        hs_bank = bank_cfg.get("hindsight") or "kb"
+        if hs_bank == "kb":
+            logger.warning("[upload] bank=%r 无法解析 hindsight 目标,将写入 hs_bank='kb' 兜底(不可定向检索)", bank)
 
     try:
         text = await parse_document(filename, content)
