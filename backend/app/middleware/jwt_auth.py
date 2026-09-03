@@ -8,7 +8,7 @@ dependency for role-based access control.
 import time
 
 import jwt
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -80,24 +80,6 @@ async def get_current_user(
             detail="无效的认证凭证",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-
-async def get_optional_user(request: Request) -> str:
-    """读取可选身份: 有有效 token → username; 无/无效 → ""(不抛 401)。
-
-    【FIX-002b/CC-R2 M1】/query 等原匿名可用端点用它替代 get_current_user:
-    恢复匿名检索能力(旧行为),登录用户仍获得 scope 缓存隔离。
-    admin 写端点(cache-clear 等)保持 get_current_user 强制登录。
-    """
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return ""
-    token = auth[7:].strip()
-    try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
-        return payload.get("sub", "") or ""
-    except Exception:
-        return ""
 
 
 def require_role(min_role: str = "admin"):
