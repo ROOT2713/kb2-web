@@ -37,7 +37,7 @@ from app.services.chunking import (
 )
 from app.services.parsing import parse_document
 from app.services.quality import assess_quality, profile_document
-from app.services.retrieval import get_bank_config, recall
+from app.services.retrieval import LEGACY_BANK_TO_HS, get_bank_config, recall
 from app.services.quality_gates import check_document as qg_check_doc, hard_check_g1 as qg_hard_check_g1
 from app.utils.text_cleaning import clean_pipeline, filename_to_title
 
@@ -252,18 +252,11 @@ async def _process_upload_task(
     # 不在 BANKS 配置时 get_bank_config 回退 all → hs_bank='kb' 黑洞。
     # 按存量库实证主值（bank→hs_bank 交叉分布）直映射到 hindsight 库；
     # kb_ 前缀已是 hindsight 名直接透传；其余走 BANKS 配置取 hindsight。
-    _LEGACY_BANK_TO_HS = {
-        "standards": "kb_standard", "industry_docs": "kb_industry",
-        "tech_guides": "kb_industry", "checklist": "kb_industry",
-        "templates": "kb_industry", "methodology": "kb_industry",
-        "business": "kb_industry", "traffic": "kb_industry",
-        "咨询": "kb_xhs", "xhs": "kb_xhs", "kb_xhs": "kb_xhs",
-        "project_docs": "kb_project",
-    }
+    # 【CC-R2 L1】映射表已上移 retrieval.LEGACY_BANK_TO_HS 与读路径共用。
     if bank.startswith("kb_"):
         hs_bank = bank  # 已是 hindsight bank 名，直接透传
-    elif bank in _LEGACY_BANK_TO_HS:
-        hs_bank = _LEGACY_BANK_TO_HS[bank]
+    elif bank in LEGACY_BANK_TO_HS:
+        hs_bank = LEGACY_BANK_TO_HS[bank]
         logger.info("[upload] bank=%r legacy 映射 → hs_bank=%r", bank, hs_bank)
     else:
         bank_cfg = get_bank_config(bank)
@@ -531,6 +524,7 @@ async def _process_upload_task(
 
     _update_upload_task(task_id, progress=0.55, stage="indexing")
     retained = 0
+    failed_batches = []  # 【CC-R2】记录失败批次 (offset, batch) — 原子语义下精确重试
     if memory_items:
         hs = get_vector_store()
         tc = sum(len(m.get("content", "")) for m in memory_items)
@@ -540,11 +534,22 @@ async def _process_upload_task(
             try:
                 retained += await hs.upsert(doc_id, batch, hs_bank, append=(batch_i > 0), offset=bs)
             except Exception as e:
-                # 【FIX-005】失败批次明确计数日志（retained 不含失败批次，由下方质量门拦截）
+                # 【CC-R2】整批原子失败(如 embedding API 故障)→ 记录批次,循环后统一重试。
+                # 不再"跳过失败行返回散点计数"——旧逻辑与下方切片补插错位会重复插入 chunk。
                 logger.error(
-                    "indexing error (batch %d/%d, %d items): %s",
+                    "indexing error (batch %d/%d, %d items): %s — 记录待重试",
                     batch_i + 1, (len(memory_items) + BS - 1) // BS, len(batch), e,
                 )
+                failed_batches.append((bs, batch))
+        # 【CC-R2】失败批次精确重试: append=True 保已成功批次, offset=bs 保 chunk_index 连续不重复
+        for bs, batch in failed_batches:
+            try:
+                rr = await hs.upsert(doc_id, batch, hs_bank, append=True, offset=bs)
+                if rr > 0:
+                    retained += rr
+                    logger.info("retry batch OK (offset=%d, %d items) → retained=%d", bs, len(batch), retained)
+            except Exception as e:
+                logger.error("retry batch failed (offset=%d, %d items): %s", bs, len(batch), e)
         invalidate_bm25_cache(bank)
         invalidate_bm25_cache("all")
 
@@ -558,16 +563,8 @@ async def _process_upload_task(
             if rt and len(rt) > 200:
                 cov = min(100, round(len(rc) / max(len(parent_map), 1) * 100, 1))
                 integrity = {"original_chars": len(text), "recalled_chars": len(rt), "coverage_pct": cov, "chunks": len(rc), "meta_chunks": len(parent_map), "status": "ok" if cov >= 80 else ("partial" if cov >= 50 else "low")}
-                if cov < 80 and retained < len(memory_items):
-                    try:
-                        # 补插缺失 chunk（pgvector 下必须 append=True，否则默认 append=False
-                        # 会先 DELETE 整篇再插 memory_items[retained:]，丢掉已成功的批次）
-                        rr = await hs.upsert(doc_id, memory_items[retained:], hs_bank, append=True, offset=retained)
-                        if rr > 0:
-                            retained += rr
-                            integrity["retried"] = True
-                    except Exception as e:
-                        integrity["retry_failed"] = str(e)
+                if failed_batches and retained >= len(memory_items):
+                    integrity["retried"] = True  # 失败批次已全部重试成功
         except Exception as e:
             logger.error("integrity fail: %s", e)
 

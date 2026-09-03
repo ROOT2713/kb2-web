@@ -55,7 +55,7 @@ from app.services.session_manager import (
     create_or_update_session as session_update,
     release_session as session_release,
 )
-from app.middleware.jwt_auth import get_current_user, require_role, get_username_from_token
+from app.middleware.jwt_auth import get_current_user, get_optional_user, require_role, get_username_from_token
 from app.models.audit import AuditLog
 from app.services.standard_boost import extract_standard_numbers
 from app.services.cache_service import (
@@ -112,7 +112,7 @@ async def query(
     rerank_mode: str = Form("default"),
     session_id: str = Form(""),
     categories: str = Form(""),
-    current_user: str = Depends(get_current_user),  # 【FIX-002】缓存用户隔离 scope（依赖缓存复用认证，零额外开销）
+    current_user: str = Depends(get_optional_user),  # 【FIX-002b/CC-R2 M1】匿名可查(返回""),登录用户 scope 隔离
 ):
     """搜索知识库 → 召回 → DeepSeek 合成答案（支持多 bank）"""
     if not q.strip():

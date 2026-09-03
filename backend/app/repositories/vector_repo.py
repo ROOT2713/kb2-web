@@ -312,21 +312,21 @@ class PgVectorStore:
 
         rows = await self._chunks_to_rows(doc_id, chunks, bank, embeddings, offset=offset)
 
-        # 【FIX-005 补强】embedding 失败的 chunk 不入库（NULL embedding 行向量检索不可达，
-        # 且会虚高 retained 绕过 upload 质量门）。返回真实有效数，让
-        # upload.py retained/expected>=0.8 能拦截 embedding API 静默失败。
-        valid_rows = []
-        skipped = 0
-        for r in rows:
-            if r[5] is not None:  # embedding 列非空
-                valid_rows.append(r)
-            else:
-                skipped += 1
-        if skipped:
+        # 【FIX-005 补强→CC-R2 原子化】embedding 失败的 chunk 不再"跳过入库后返回散点计数"。
+        # 旧实现(散点成功计数)使 upload.py 的 retry 用 memory_items[retained:] 切片补插时
+        # 与真实失败位置错位 → 补插错 chunk + chunk_index 重复(CC 审查 C1)。
+        # 现改为整批原子: 任一 chunk embedding 失败 → 抛异常,调用方(upload)整批精确重试,
+        # 杜绝半批入库 + 返回计数与"连续成功前缀"解耦导致的切片错位。
+        failed = [i for i, r in enumerate(rows) if r[5] is None]
+        if failed:
             logger.error(
-                "PgVectorStore upsert: doc_id=%s %d/%d chunks 无 embedding(API失败?) — 跳过入库",
-                doc_id, skipped, len(rows),
+                "PgVectorStore upsert: doc_id=%s %d/%d chunks 无 embedding(API失败?) — 整批失败,由调用方重试",
+                doc_id, len(failed), len(rows),
             )
+            raise RuntimeError(
+                f"embedding 生成失败 {len(failed)}/{len(rows)} chunks (doc_id={doc_id})"
+            )
+        valid_rows = rows  # 全有 embedding,原样入库
 
         async with pool.acquire() as conn:
             if not append:
@@ -343,7 +343,7 @@ class PgVectorStore:
                     valid_rows,
                 )
 
-        logger.info("PgVectorStore upsert: doc_id=%s bank=%s stored=%d skipped=%d", doc_id, bank, len(valid_rows), skipped)
+        logger.info("PgVectorStore upsert: doc_id=%s bank=%s stored=%d", doc_id, bank, len(valid_rows))
         return len(valid_rows)
 
     # ── query (by text) ────────────────────────────────────────

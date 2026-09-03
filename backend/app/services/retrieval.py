@@ -46,6 +46,18 @@ _HARDCODED_BANKS = {
 }
 BANKS = dict(_HARDCODED_BANKS)
 
+# 【审计/CC-R2 L1】legacy bank key → hindsight bank 名映射。
+# 写路径(upload.py)与读路径(doc_bank_filter)共用同一常量,防两处口径漂移。
+# 来源: 存量 documents.bank 实证分布 + hindsight 库实际 bank 名对齐。
+LEGACY_BANK_TO_HS = {
+    "standards": "kb_standard", "industry_docs": "kb_industry",
+    "tech_guides": "kb_industry", "checklist": "kb_industry",
+    "templates": "kb_industry", "methodology": "kb_industry",
+    "business": "kb_industry", "traffic": "kb_industry",
+    "咨询": "kb_xhs", "xhs": "kb_xhs", "kb_xhs": "kb_xhs",
+    "project_docs": "kb_project",
+}
+
 
 def _normalize_bank_config(raw: dict) -> dict:
     normalized = {}
@@ -109,9 +121,12 @@ def doc_bank_filter(bank_key: str) -> list[str]:
     hs = cfg.get("hindsight")
     if hs:
         return [hs]
-    # 未知 bank key（不在 BANKS 配置）: 兜底按 kb_<key> 猜测,但真实 hs_bank 可能不同
-    # (如 standards → kb_standard 而非 kb_standards)。告警以便发现配置漂移/写入口径错位。
-    logger.warning("[FIX-001] doc_bank_filter: bank_key=%r 不在 BANKS 配置,兜底 kb_%s (若过滤恒空请检查 upload 写入口径与 banks 配置)", bank_key, bank_key)
+    # 【CC-R2 L1】未知 bank key: 先查共享 legacy 映射(与 upload 写路径同口径),
+    # 仍无则兜底 kb_<key> 并告警以便发现配置漂移。
+    legacy = LEGACY_BANK_TO_HS.get(bank_key)
+    if legacy:
+        return [legacy]
+    logger.warning("[FIX-001] doc_bank_filter: bank_key=%r 不在 BANKS 配置/legacy 映射,兜底 kb_%s (若过滤恒空请检查 upload 写入口径与 banks 配置)", bank_key, bank_key)
     return [f"kb_{bank_key}"]
 
 

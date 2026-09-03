@@ -49,7 +49,7 @@ class Settings(BaseSettings):
 
     # ── Vector Store ──
     vector_backend: str = "hindsight"  # "pgvector" | "hindsight" — 切换开关
-    pgvector_database_url: str = "postgresql://hindsight:hindsight123@localhost:5432/hindsight"
+    pgvector_database_url: str = ""  # 【FIX-003b】无默认口令——VECTOR_BACKEND=pgvector 时必须经 .env 显式提供
 
     # ── LLM ──
     llm_base_url: str = ""
@@ -110,4 +110,11 @@ if len(settings.jwt_secret) < 32:
     raise RuntimeError(
         "JWT_SECRET too short (< 32 chars) — weak secrets are brute-forceable. "
         "Generate with: openssl rand -hex 32"
+    )
+
+# 【FIX-003b】pgvector 后端必须显式配置连接串——禁止明文默认口令上线
+if settings.vector_backend == "pgvector" and not settings.pgvector_database_url:
+    raise RuntimeError(
+        "VECTOR_BACKEND=pgvector 但未配置 pgvector_database_url. "
+        "请在 .env 设置完整连接串 (postgresql://user:pass@host:port/db)"
     )

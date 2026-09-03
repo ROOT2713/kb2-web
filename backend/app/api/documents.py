@@ -86,6 +86,24 @@ async def _verify_searchable(v_doc_id, v_title, v_original_len, v_bank="kb", exp
     - coverage_pct 保留入库时的真实解析覆盖率，不再硬编码 80.0。
     """
     gate_pass = (retained / expected) >= 0.8 if expected else False
+    if not gate_pass:
+        # 【CC-R2 L2】覆盖率质量门未过 → 直接置 searchable=0 返回,
+        # 跳过 3 次 recall(每次 30s 退避,共 ~100s) — recall 可达也不能翻 1,
+        # 与 upload 主路径质量门一致(堵住 reparse 推翻质量门的后门)。
+        db2 = SessionLocal()
+        try:
+            db2.execute(
+                sa_text("UPDATE documents SET searchable=0, verified_at=:now WHERE doc_id=:did"),
+                {"now": datetime.now(timezone.utc), "did": v_doc_id}
+            )
+            db2.commit()
+        finally:
+            db2.close()
+        logger.warning(
+            "VERIFY %s 覆盖率质量门未过 (retained=%d/%d) — searchable=0 (跳过 recall)",
+            v_title[:40], retained, expected,
+        )
+        return
     await asyncio.sleep(10)  # wait for consolidation
     for attempt in range(3):
         try:

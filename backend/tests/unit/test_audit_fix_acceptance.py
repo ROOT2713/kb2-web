@@ -153,30 +153,82 @@ class TestUnknownBankWarning:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 5. vector_repo.upsert embedding 失败跳库(0005 补强②)
+# 5. vector_repo.upsert embedding 失败整批原子(CC-R2 C1 修复后语义)
 # ═══════════════════════════════════════════════════════════════════
 
-class TestUpsertSkipsFailedEmbedding:
-    def test_upsert_returns_real_count_with_failed_embeddings(self, monkeypatch):
-        """embedding 生成失败的 chunk 应跳过入库,返回真实有效数。"""
+class TestUpsertAtomicFailure:
+    def test_partial_embedding_failure_raises_atomic(self, monkeypatch):
+        """【CC-R2】任一 chunk embedding 失败 → 整批抛异常,不静默跳库(防切片补插错位)。"""
+        import pytest
         from app.repositories.vector_repo import PgVectorStore
         store = PgVectorStore.__new__(PgVectorStore)  # 绕过 __init__
 
-        # 模拟:第一个 chunk embedding 失败(None),第二、三个成功
         fake_chunks = [
-            {"doc_id": "d1", "chunk_index": 0, "text": "a", "embedding": None},   # 失败
-            {"doc_id": "d1", "chunk_index": 1, "text": "b", "embedding": [0.1]*1024},  # 成功
-            {"doc_id": "d1", "chunk_index": 2, "text": "c", "embedding": [0.2]*1024},  # 成功
+            {"doc_id": "d1", "content": "a"},
+            {"doc_id": "d1", "content": "b"},
+            {"doc_id": "d1", "content": "c"},
         ]
-        inserted = []
-        store._insert_embedding_rows = lambda rows: inserted.extend(rows) or len(rows)
 
-        # 打补丁的 upsert 内部逻辑:调用 _insert_embedding_rows 且返回 len(inserted)
-        # 直接测核心逻辑:过滤 + 计数
-        valid = [c for c in fake_chunks if c.get("embedding") is not None]
-        skipped = len(fake_chunks) - len(valid)
-        assert len(valid) == 2, "失败 chunk 应被过滤"
-        assert skipped == 1, "应计数 1 个 skipped"
+        async def fake_embedding_batch(texts):
+            # 第一个失败(None),其余成功(真实 get_embedding 返回 np.ndarray)
+            import numpy as np
+            return [None, np.array([0.1] * 1024, dtype=np.float32), np.array([0.2] * 1024, dtype=np.float32)]
+
+        class FakePoolNoAcquire:
+            def acquire(self):  # asyncpg 语义: 同步返回 async CM
+                raise AssertionError("失败路径不应进入 DB 写入(pool.acquire)")
+
+        async def fake_pool_acquire():
+            return FakePoolNoAcquire()
+
+        monkeypatch.setattr(store, "get_embedding_batch", fake_embedding_batch)
+        monkeypatch.setattr(store, "_get_pool", fake_pool_acquire)
+
+        with pytest.raises(RuntimeError, match="embedding 生成失败"):
+            import asyncio
+            asyncio.run(store.upsert("d1", fake_chunks, "kb_standard", append=True, offset=0))
+
+    def test_all_embeddings_ok_passes_through(self, monkeypatch):
+        """【CC-R2】embedding 全成功 → 正常入库返回 chunk 数(回归)。"""
+        from app.repositories.vector_repo import PgVectorStore
+        store = PgVectorStore.__new__(PgVectorStore)  # 绕过 __init__
+
+        fake_chunks = [
+            {"doc_id": "d1", "content": "a"},
+            {"doc_id": "d1", "content": "b"},
+        ]
+
+        async def fake_embedding_batch(texts):
+            import numpy as np
+            return [np.array([0.1] * 1024, dtype=np.float32), np.array([0.2] * 1024, dtype=np.float32)]
+
+        inserted_rows = []
+
+        class FakePoolAcquire:
+            # asyncpg 语义: pool.acquire() 返回 async CM,进入后即 conn
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                return False
+            async def execute(self, sql, *args):
+                return None
+            async def executemany(self, sql, rows):
+                inserted_rows.extend(rows)
+
+        class FakePool:
+            def acquire(self):  # asyncpg 语义: 同步返回 async CM
+                return FakePoolAcquire()
+
+        async def fake_pool_acquire():
+            return FakePool()
+
+        monkeypatch.setattr(store, "get_embedding_batch", fake_embedding_batch)
+        monkeypatch.setattr(store, "_get_pool", fake_pool_acquire)
+
+        import asyncio
+        n = asyncio.run(store.upsert("d1", fake_chunks, "kb_standard", append=True, offset=0))
+        assert n == 2, f"应返回 2,实际 {n}"
+        assert len(inserted_rows) == 2, "两行都应入库"
 
     def test_protocol_upsert_has_append_offset_params(self):
         """VectorStore Protocol.upsert 签名应含 append/offset(连带 bug 修复)。"""
