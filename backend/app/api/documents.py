@@ -110,8 +110,10 @@ async def _verify_searchable(v_doc_id, v_title, v_original_len, v_bank="kb", exp
         # 3 次仍不可见 → 保守置 searchable=0（僵尸文档防护，与 Hindsight 分支一致）。
         # 旧 upload.py 版单次直查无重试、失败仅 log —— 文档保持 searchable=1 但向量侧
         # 查不到 = 前台可见检索不到的僵尸文档（FIX-005 目标场景）。
-        from app.repositories.vector_repo import PgVectorStore
-        vs = PgVectorStore()
+        # 【FIX-R2-CC1】用 get_vector_store() 单例而非直接 PgVectorStore()：
+        # 直接实例化每次 verify 新开 asyncpg 池(min_size=2 永不 close) → 上传/重解析
+        # 若干次后打满 PG max_connections（CC 对抗审查必改项）。
+        vs = get_vector_store()
         for attempt in range(3):
             try:
                 docs = await vs.list_documents(v_bank)
@@ -1035,6 +1037,9 @@ async def patch_document_bank(
     # bank变更 → BM25索引失效（只清旧bank，doc已移走）
     invalidate_bm25_cache(bank=old_bank)
     invalidate_bm25_cache(bank="all")
+    # 【FIX-R2-CC1】bank 变更改变文档集 → 旧 bank 缓存答案可能引用已移走文档，
+    # 补清 query_cache（与 R2-7 同型遗漏）
+    invalidate_query_cache_by_bank(old_bank)
     return {"ok": True, "doc_id": doc_id, "bank": bank}
 
 
@@ -1106,14 +1111,10 @@ async def delete_document(
         invalidate_bm25_cache(bank=doc_bank)
     invalidate_bm25_cache(bank="all")
 
-    try:
-        if doc_bank:
-            db.execute(sa_text("DELETE FROM query_cache WHERE bank=:bank"), {"bank": doc_bank})
-            db.execute(sa_text("DELETE FROM query_cache WHERE bank='all'"))
-            db.commit()
-            logger.info("CACHE invalidated for bank=%s after deleting %s", doc_bank, doc_id)
-    except Exception as e:
-        logger.warning("Cache invalidation after delete failed: %s", e)
+    # 【FIX-R2-CC1】复用 invalidate_query_cache_by_bank 统一口径（原内联双条 SQL 易漂移）
+    if doc_bank:
+        invalidate_query_cache_by_bank(doc_bank)
+        logger.info("CACHE invalidated for bank=%s after deleting %s", doc_bank, doc_id)
 
     try:
         invalidate_for_doc(doc_id)
