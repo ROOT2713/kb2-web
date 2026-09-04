@@ -220,6 +220,45 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 
 ---
 
+## 🗄️ 数据治理整改记录（2026-09-04）
+
+> 0904 数据治理全景核查：主 agent 定性 + CC 独立审计（deleg_b10a31fe）双轨收敛，
+> 交付物：交接文件 `kb2-data-governance-0904-handoff.md` + 本记录 + 整改 commit `e5f6152`。
+
+### 问题定性（已闭合验证）
+
+- **真孤儿 13,711 条** = 13,706（2026-06 批次 BGE-M3 回填）+ 5（08 月波次）；pg 总 doc 13,897 = 13,891 backfill + 6 真实上传。
+- 数字闭合：13,897 − 186（SQLite 交集）= 13,711；06 批次 content 与 memory_units.text **100% 精确重叠**（BGE-M3 回填铁证）。
+- 判定：**中等数据治理缺陷，非灾难性数据丢失**。根因 = 回填未落 SQLite 元数据（系统缺陷 ~70%）+ 低价值自然淘汰（~30%）。
+- 恢复锚点：storage/backups 5/30 备份存 40 个源 PDF（GY 5055、GB/T 43206、造价指导书 Part1-3 等独有业务资料）。
+
+### 整改方案（修订版 A，用户拍板执行）
+
+| 层 | 措施 | 落地 |
+|----|------|------|
+| 一档回填 | 359 个**有 title** 孤儿（6月批次 354 + 8月 5）→ SQLite `documents` 建行 | `backfill_0904_registry.py`（幂等/dry-run 默认）；source=backfill_0904, searchable=1, active, coverage=1.0 |
+| 检索端过滤 | pgvector 语义召回仅放行 `metadata->>'registry'='1'` 的 doc | `vector_repo.query_by_embedding` CTE WHERE（【FIX-0904】） |
+| 防复发 | 所有写入口（upload/refetch/reparse）新 chunk 默认注入 `registry:1` | `vector_repo._chunks_to_rows` meta.setdefault |
+| 数据保留 | 13,352 无 title 孤儿**不删除**（吸取"清库无保留"教训），仅检索不可见 | registry 未打标 = 天然隔离 |
+
+### 整改后状态（运行时验证）
+
+- SQLite documents：203 → **562**（+359 backfill，全部 active+searchable）
+- pg registry=1：**545 doc / 10,032 chunks**（186 原 sqlite∩pg + 359 回填）
+- 冒烟（真实查询, nocache, doc_id 级断言）：孤儿泄漏 **0/3**；回填文档（东莞造价指南/GB/T 25000.51）检索命中 ✓
+- 语义过滤损耗：被排除 chunk **无一有 title**（0 合法损失）
+- 已知残留（P4，不阻塞）：359 回填中部分与存量 doc 同标题重复（如 25000.51 现 2 份），源自历史多次入库，待后续去重治理
+
+### 关键教训
+
+1. **回填/打标脚本的集合必须在写操作后动态重算**——初版 tag 集合在 INSERT 前固定，359 个新回填行全部漏标（若上线会被检索端过滤误杀），verify 段 `cur.execute().fetchone()` 链式调用在 psycopg2 下返回 None 崩溃。
+2. **psycopg2 `cursor.execute()` 返回 None**，不可链式 `.fetchall()/.fetchone()`。
+3. **SQLite 路径双硬链接**（/home/ubuntu/kb-web/data/kb.db ≡ /data/projects/kb-web/data/kb.db 同 inode）——改库前须以服务进程 environ 的 DB_PATH 为准，勿凭记忆判断。
+4. **冒烟断言必须用 doc_id 引用级**而非响应全文子串——LLM 回答会复述查询词，全文搜必假阳性。
+5. **API 契约实测**：POST /api/query 用 form（q + bank=all + nocache=1），非 JSON；bank="kb" 非法 400。
+
+---
+
 ## 📊 当前状态（2026-09-03 更新）
 
 | 指标 | 数值 |
