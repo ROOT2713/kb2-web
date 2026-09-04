@@ -39,6 +39,43 @@ _DEAI_RULES = [
     ("在…方面", "针对"),
 ]
 
+# ── R3-5 内部错误文案特征（answer 出口过滤）──
+# LLM 在极少数失败/上下文异常时会把内部错误文案 echo 进 answer（如复述错误日志、
+# 或异常串入生成链路）。政务/标准答案正常不含以下模式；命中即删除对应行/块。
+_INTERNAL_ERROR_LINE = re.compile(
+    r"^\s*(?:"
+    r"Traceback \(most recent call last\):|"
+    r"File \"[^\"]+\", line \d+.*|"
+    r"LLM API .*(?:异常|失败|返回非 JSON|重试 \d+ 次后仍失败).*|"
+    r"httpx\.\w+Error.*|"
+    r"Read timed out.*|"
+    r"rate limit.*|"
+    r"HTTP [45]\d\d.*|"
+    r"Internal Server Error.*|"
+    r"OpenAIError.*|"
+    r"APIError.*|"
+    r"APIConnectionError.*|"
+    r"APITimeoutError.*"
+    r")\s*$",
+    re.M,
+)
+# Traceback 块：从 "Traceback" 行起到下一个空行/结尾整体删除
+_TRACEBACK_BLOCK = re.compile(
+    r"Traceback \(most recent call last\):.*?(?=\n\s*\n|\Z)", re.S
+)
+
+
+def _strip_internal_error_text(text: str) -> str:
+    """删除 answer 中残留的内部错误文案（R3-5）。"""
+    if not text:
+        return text
+    result = _TRACEBACK_BLOCK.sub("", text)
+    result = _INTERNAL_ERROR_LINE.sub("", result)
+    # 清洗后可能残留连续空行
+    result = re.sub(r"\n{3,}", "\n\n", result).strip()
+    # 整段都是错误文案 → 返回原文（上层 degraded/拒答逻辑兜底，避免空 answer 冒充成功）
+    return result if result else text
+
 
 def clean_watermarks(text: str) -> str:
     """清洗常见网站水印和无效内容"""
@@ -169,8 +206,11 @@ def filename_to_title(filename: str, content: str = "") -> str:
 
 
 def deai_postprocess(text: str) -> str:
-    """去AI味后处理：替换禁用词，调整结构"""
+    """去AI味后处理：替换禁用词，调整结构，【R3-5】过滤内部错误文案"""
     result = text
+
+    # 0. 【FIX-R3-5】内部错误文案过滤（Traceback/LLM API 异常/httpx 错误/超时等）
+    result = _strip_internal_error_text(result)
 
     # 1. 替换禁用词
     for old, new in _DEAI_RULES:

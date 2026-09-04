@@ -22,6 +22,10 @@ from app.services.query_decomposer import split_sub_queries
 
 logger = logging.getLogger(__name__)
 
+# 【FIX-R3-7】全局缓存总量上限（条）。evict_lru 按 (bank,scope) 分区防单用户灌满，
+# 但 scope×bank 组合数可无限增长 → 全局总量仍需封顶；超限按全局 LRU 淘汰最冷。
+_CACHE_MAX_TOTAL = 2000
+
 
 # ── 【FIX-002】scope 列幂等迁移（存量 SQLite 库）───────────────────
 # 新库由 create_all 按模型建表自带 scope；存量库在此补列。表不存在时 PRAGMA
@@ -173,6 +177,7 @@ async def set_cache(query: str, bank: str, answer: str, sources: list, doc_ids: 
     # LRU淘汰
     try:
         evict_lru(bank, max_entries=200)  # [P2-2] reduce LRU max entries
+        evict_global()  # 【FIX-R3-7】全局总量封顶（默认 _CACHE_MAX_TOTAL=2000）
     except Exception:
         pass
 
@@ -243,6 +248,31 @@ def evict_lru(bank: str, max_entries: int = 1000):
                 ) WHERE rn > :max_entries
             )
         """), {"bank": bank, "max_entries": max_entries})
+        db.commit()
+    finally:
+        db.close()
+
+
+def evict_global(max_total: int = _CACHE_MAX_TOTAL):
+    """【FIX-R3-7】全局总量上限：query_cache 总行数超 max_total 时按全局 LRU
+    （hit_count DESC, last_hit_at DESC）淘汰最冷条目。
+    与 evict_lru 的 (bank,scope) 分区公平互补——分区上限防单用户灌满某组，
+    全局上限防 scope×bank 组合无限增长致总量失控。NULL last_hit_at
+    （从未命中）在 SQLite DESC 排序中排尾部 → 最优先淘汰，符合 LRU 语义。
+    """
+    db = SessionLocal()
+    try:
+        db.execute(text("""
+            DELETE FROM query_cache WHERE cache_id IN (
+                SELECT cache_id FROM (
+                    SELECT cache_id,
+                           ROW_NUMBER() OVER (
+                               ORDER BY hit_count DESC, last_hit_at DESC
+                           ) AS rn
+                    FROM query_cache
+                ) WHERE rn > :max_total
+            )
+        """), {"max_total": max_total})
         db.commit()
     finally:
         db.close()

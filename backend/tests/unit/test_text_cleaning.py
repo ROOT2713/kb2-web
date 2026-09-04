@@ -367,6 +367,33 @@ class TestDeaiPostprocess:
         result = deai_postprocess(text)
         assert "\n\n\n" not in result
 
+    # ── R3-5: 内部错误文案过滤 ──
+    def test_keeps_normal_answer_unchanged(self):
+        text = "根据《GB/T 21671-2008》，系统应满足下列要求。\n验收测试需覆盖全部功能点。"
+        result = deai_postprocess(text)
+        assert "21671-2008" in result
+        assert "验收测试" in result
+
+    def test_strips_traceback_block(self):
+        text = "结论如下：\nTraceback (most recent call last):\n  File \"gen.py\", line 42\n    raise ValueError\nLLM API 重试 3 次后仍失败: Read timed out\n\n正确答案是 A。"
+        result = deai_postprocess(text)
+        assert "Traceback" not in result
+        assert "Read timed out" not in result
+        assert "正确答案是 A" in result
+
+    def test_strips_internal_error_lines(self):
+        text = "rate limit exceeded: retry later\n实际回答内容不变。"
+        result = deai_postprocess(text)
+        assert "rate limit" not in result
+        assert "实际回答内容" in result
+
+    def test_error_only_answer_kept_for_degraded_handling(self):
+        # 整段都是错误文案 → 保留原文（上层 degraded/拒答逻辑兜底，避免空 answer 冒充成功）
+        text = "LLM API 返回异常: server error"
+        result = deai_postprocess(text)
+        assert result  # 非空
+        assert "server error" in result
+
 
 # ═══════════════════════════════════════════════════════
 # _extract_numbers

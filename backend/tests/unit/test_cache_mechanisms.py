@@ -23,6 +23,7 @@ from app.services.cache_service import (
     set_cache,
     invalidate_for_doc,
     evict_lru,
+    evict_global,
     _get_bm25_cache,
     invalidate_bm25_cache,
     _bm25_caches,
@@ -221,6 +222,58 @@ class TestCacheWriteAndInvalidation:
         finally:
             db.close()
         assert count <= 3, f"期望 ≤3 条缓存，实际 {count}"
+
+    @pytest.mark.asyncio
+    async def test_evict_global_total_cap(self):
+        """【R3-7】全局总量超 max_total 后按全局 LRU 淘汰（跨 bank/scope）。"""
+        # 跨 bank 写 5 条（每写一条 set_cache 内部会跑 evict_lru/evict_global，但默认上限远高于 5）
+        for i in range(5):
+            bank = "standards" if i % 2 == 0 else "industry"
+            await set_cache(f"全局查询{i}", bank, f"答案{i}", [], {f"doc{i}"})
+
+        evict_global(max_total=3)
+
+        db = SessionLocal()
+        try:
+            count = db.execute(
+                sa_text("SELECT COUNT(*) FROM query_cache")
+            ).fetchone()[0]
+        finally:
+            db.close()
+        assert count <= 3, f"期望 ≤3 条缓存，实际 {count}"
+
+    @pytest.mark.asyncio
+    async def test_evict_global_keeps_hottest(self):
+        """【R3-7】全局淘汰保留最热条目（hit_count 高者存活）。"""
+        for i in range(4):
+            await set_cache(f"热度查询{i}", "standards", f"答案{i}", [], {f"doc{i}"})
+        # 人为抬高 2 条的命中热度
+        db = SessionLocal()
+        try:
+            db.execute(
+                sa_text("UPDATE query_cache SET hit_count=100 WHERE query_text='热度查询0'")
+            )
+            db.execute(
+                sa_text("UPDATE query_cache SET hit_count=90 WHERE query_text='热度查询1'")
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        evict_global(max_total=2)
+
+        db = SessionLocal()
+        try:
+            rows = db.execute(
+                sa_text("SELECT query_text FROM query_cache ORDER BY hit_count DESC")
+            ).fetchall()
+        finally:
+            db.close()
+        texts = [r[0] for r in rows]
+        assert len(texts) <= 2
+        # 最热的 2 条必须存活
+        assert "热度查询0" in texts
+        assert "热度查询1" in texts
 
 
 # ═══════════════════════════════════════════════════════════════════

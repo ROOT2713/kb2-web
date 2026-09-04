@@ -181,20 +181,8 @@ from app.services.quality_gates import check_document, check_all_documents
 
 # 【FIX-R2-13】原 L182+L185 双相同 @router.post("/quality/check") 堆叠——
 # 第一个空装饰器把同一路由注册两次（Starlette 匹配首个），冗余技术债。删空装饰器。
-
-@router.post("/quality/check")
-def quality_check_single(
-    doc_id: str = Query(..., description="文档 ID"),
-    gates: str = Query("G1,G2,G3", description="门禁级别"),
-    db: Session = Depends(get_db),
-):
-    """对单个文档执行质量门禁检查。"""
-    result = check_document(db, doc_id, gates)
-    if "error" in result:
-        raise HTTPException(404, result["error"])
-    db.commit()
-    return result
-
+# 【FIX-R3-10】单文档端点 /quality/check 下线（前端/测试 0 调用，与 check-all/stats 冗余）。
+# check_document 保留——check-all 内部仍使用；外部逐文档检查走 check-all + 前端过滤。
 
 @router.post("/quality/check-all")
 def quality_check_all(
