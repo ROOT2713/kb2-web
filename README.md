@@ -58,9 +58,15 @@
 
 - Python 3.10+
 - Node.js 18+
-- SQLite 3
+- SQLite >= 3.25（依赖窗口函数 `ROW_NUMBER() OVER` 与 JSON1；Ubuntu 22.04+ 自带 3.37 满足）
 - Hindsight 服务 (`:8888`)
 - MinerU API Key（文档解析）
+
+### 账号与权限
+
+- **admin 账号 = `.env` 配置账号**（`ADMIN_USERNAME`/`ADMIN_PASSWORD`），即超级管理员，不经 User 表校验。
+- 若 DB `users` 表存在与 `ADMIN_USERNAME` 同名的低权用户：同名者走角色校验（防撞名提权）；配置账号本身始终直通。
+- viewer 等普通用户在 `users` 表 + 前端登录页双通道。
 
 ### 后端启动
 
@@ -308,7 +314,76 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 
 ---
 
-## 📊 当前状态（2026-09-04 更新）
+## 🔐 第三轮外部审计（R3）整改记录（2026-09-05）
+
+审计对象 `main@d77a802`（2026-09-04，交付包 `0909/kb2-web-audit-r3.zip`）。裁决：R3-1~R3-13 + 审计盲区 B1/B2，其中 P1×2 / P2×3 / P3×9。执行节奏：A 批（P1/P2 + R3-1 降级采纳）当日凌晨闭环 `f0a2b8a`；P3 批次 2026-09-05 闭环 `a6c1003`+`e31e5cd`；R3-13 经实证**重定性**（见下）。
+
+### 问题清单与修复（A 批 = P1/P2，commit `f0a2b8a`）
+
+| # | Commit | 级别 | 发现的问题（根因机制） | 修复内容 |
+|---|--------|------|----------------------|---------|
+| R3-12 | `f0a2b8a` | P1 | R2-17 修复激活发布时间重排：standard_boost 排序作用于整个 doc_facts（`ORDER BY published_date DESC`），标准号查询被无关新文档压顶 → bank=all R@1 **−21.4pp**（独立复算口径 B 22/39→14/40 全吻合） | 排序收窄为仅注入组：boosted_ids 置顶 + 组内日期倒序，检索组保持相关性原序。CC-C1 补：already-in-search 命中文档也入组，防新旧版本倒挂 |
+| B1 | `f0a2b8a` | P1（审计盲区） | banks.json 运行时残留幽灵库 `kb_咨询`/`kb_personal`：审计只核仓库代码（0 处）即判 R2-16 闭环，漏运行时配置注入层——personal 聚合检索会向 2 个不存在的 hindsight 库请求 | banks.json personal 显式 `hindsight=kb_xhs`（真库）。根因 `_normalize_bank_config` 加载即自动补默认 `kb_<key>`——**删键无效**，须显式设真库名；生效路径分裂：/api/banks 每次 reload 实时 vs 写路径模块 BANKS 需重启 |
+| R3-2 | `f0a2b8a` | P2 | chat() 重试链无总预算：3×60s + 退避 1+2+4s + 检索 ≈ **283s** 超网关白烧配额（评测 CSV 实锤 c01/c02/c05 Read timed out） | `budget_s` 总预算 96s（≈网关 120s 的 80%）：deadline 钳制单次 timeout=min(llm_timeout, 剩余)，全部重试分支（网络/429/5xx/非 JSON/body 限流）退避前查预算，超时归一 ValueError |
+| R3-3 | `f0a2b8a` | P2 | 上传限流覆盖面缺口：Semaphore(4) 只包 `_process_upload_task_impl`，spawn 出的解析/向量化派生任务不在信号量内 | `_BG_SEM(8)` + `spawn_bg()` 统一派生任务（verify/kg/quality）限流 + 异常日志；documents.py 重解析 `_verify_searchable` 也接入（CC-C2） |
+| R3-1 | `f0a2b8a` | P1→P3 | LLM 故障降级文本与拒答常量**字节全等**（40 字符）→ "入缓存固化 24h"现网不可触发（机理误报），但字符串比对脆弱性真实 | 采纳方案 A：`_generate_answer` 返回 `degraded=True` 标志（常量替代硬编码比对）+ query.py 写缓存补 LOW_COVERAGE 拦截 + `not degraded` |
+| B2 | — | P3 | R3-1 审计对 `_REJECT_MSG_LOW_COVERAGE` 的附带推断错误（L44=L45 文本相同故"漏网路径"不存在） | 审计方推断错误，无需修复；两常量文本相同为设计内 |
+
+**A 批验收**：行为单测 16/16（含 CC-C1/C2 语义）；全量回归 443 passed 62 skipped；48 题黄金集 R@1 **21/39 vs 审计基线 14/39 = +17.9pp**（f01 GB/T 21671-2008 由 rank2 → top1 直接翻案 R3-12）。
+
+### 问题清单与修复（P3 批次，commit `a6c1003` + `e31e5cd`）
+
+| # | Commit | 级别 | 发现的问题 | 修复内容 |
+|---|--------|------|-----------|---------|
+| R3-4 | `a6c1003` | P3 | stream 死代码：`stream_chat()` 全仓 0 调用点，chat() `stream=True` 分支从不消费 | 删 `stream_chat()` + chat() 的 stream 参数/分支（含 API body `"stream"` 键） |
+| R3-9 | `a6c1003` | P3 | 死 import ×30（documents/query/upload/models 等） | AST 精确扫描（import 外 0 引用）+ 跨文件 re-export 保护后逐处删除 |
+| R3-5 | `e31e5cd` | P3 | 内部错误文案可串入 answer（deai_postprocess 只做禁用词替换/空行修复，无内容安全过滤） | `deai_postprocess` 前置 `_strip_internal_error_text`：Traceback 块整删 + 内部错误特征行删（LLM API 异常/httpx 错误/Read timed out/rate limit/HTTP 4xx5xx/API*Error）；清洗为空返回原文（上层 degraded 兜底，防空 answer 冒充成功）。新增 4 用例 |
+| R3-7 | `e31e5cd` | P3 | 缓存无全局总量上限（仅 (bank,scope) 分区 evict，scope×bank 组合可无限增长） | `_CACHE_MAX_TOTAL=2000` + `evict_global()`：全表 ROW_NUMBER(hit_count DESC, last_hit_at DESC) 删最冷超限条目；set_cache 尾部追加。NULL last_hit_at（未命中）优先淘汰。新增 2 语义用例 |
+| R3-10 | `e31e5cd` | P3 | 双套门禁端点冗余：`/quality/check`（单）+ check-all + stats 并存 | 下线单文档端点 `POST /quality/check`（前端/测试 0 调用）；`check_document` 保留供 check-all 内部使用 |
+| R3-6 | README | P3 | admin 自锁副作用未文档注明 | README 新增"账号与权限"节：admin=`.env` 配置账号即超级管理员，DB 同名用户落角色校验 |
+| R3-8 | README | P3 | SQLite 版本未声明 | README 前置依赖声明 SQLite >= 3.25（窗口函数 + JSON1） |
+| R3-11 | README | P3 | R2-16 后 README 表述歧义（LEGACY_BANK_TO_HS 兼容映射） | B1 已清 banks.json 运行时侧（kb_咨询/kb_personal → kb_xhs）；兼容映射 `"咨询"→"kb_xhs"` 为设计内旧名路由（非幽灵配置），本表 + B1 行即澄清 |
+
+### R3-13 重定性（数据治理联动，另立项）
+
+审计主张"存量重复文档 57%（545 行/234 title），查重上线前上传所致，建议保留主版本/标记 superseded"。**实证推翻归因**：
+
+- 重复 348 行构成：**343 行 `source=backfill_0904`**（0904 治理的回填元数据行，parent_chunks=0）+ 真实上传重复**仅 1 组 2 行** + 混合组（上传+回填同名）3 个。
+- 检索召回 SQL（retrieval L474/486、query_engine L301/724）与孤儿过滤 title_map（L305）均依赖 `status='active'` → 对 343 回填行标 superseded 会使对应 pgvector 孤儿 chunk **再次失去来源名**（0904 治理成果倒退），不可执行。
+- **已执行**（安全子集）：真实上传重复组「网络安全等级保护测评高风险判定实施指引」保留 aeb89ad1（08-21 完整解析 807 chunks/41.6K 字符），298ad3a9（07-20 PyPDF 回退 12 chunks/38.5K）标 superseded + pg 12 chunks 双写删除。
+- **决议**：343 回填同名 = 内容层重复（6 月 memory_units 转储批多次转储同文件），与 0904 修订版 A 的检索端过滤/内容去重方案**合并另立项**；本次不动数据。
+
+### 验收测试（P3 批次）
+
+- 全量单测 **397 passed 62 skipped**（含新增 6 用例：R3-5 ×4 + R3-7 ×2）；golden 22 题集成回归 **39 passed**（--run-integration 真库）零回归。
+- R3-5 行为验证：正常答案不受影响 / Traceback 块整删 / 错误行删 / 全错误文案保底非空。
+
+### 关键教训
+
+1. **运行时配置是审计盲区**：只核仓库代码 ≠ 闭环——banks.json/`_normalize` 自动补默认可独立于代码制造幽灵库；三方核对须含 `/proc/PID/environ` 实际加载值（B1）。
+2. **排序修复先画数据流边界**：日期倒序不是问题，作用域（全 doc_facts vs 注入组）才是（R3-12）。
+3. **审计方机理误报也要采纳其方向**："入缓存固化"现网不可触发，但字符串比对脆弱性真实——显式 degraded 标志防未来常量漂移（R3-1）。
+4. **重试必须算总账**：单次 timeout 合规 ≠ 链路合规，283s 超网关白烧配额——总预算 = 网关阈值×80%（R3-2）。
+5. **回归评测三坑**：nocache=1（缓存命中 sources 空 = 假 MISS）/ source 字段是 `doc` 非 `title` / 长跑增量落盘续跑——否则回归数字失真。
+6. **数据治理项先验"重复的构成"再定方案**：545/234 数字对但 98.6% 重复是治理回填行——对治理产物执行审计建议会推翻治理本身；数据操作前必须分层验证 source/parent_chunks/pg 三侧（R3-13）。
+
+---
+
+## 📊 当前状态（2026-09-05 更新）
+
+| 指标 | 数值 |
+|------|------|
+| 后端测试 | **443 passed**（单测 397 + golden 集成 39；62 skipped 环境项）；R3 P3 批次新增 6 用例 |
+| R3 第三轮外部审计 | **P1/P2 全闭环**（R3-12/B1/R3-2/R3-3 + R3-1 降级采纳；`f0a2b8a`）+ **P3 全闭环**（R3-4~R3-11；`a6c1003`+`e31e5cd`）；R3-13 重定性合并 0904 另立项 |
+| R2 第二轮外部审计 | **17 项全闭环**（`d77a802`） |
+| 代码状态 | HEAD `f0a2b8a` + `a6c1003` + `e31e5cd`，已推送 origin/main；服务重启生效（MainPID 3349354） |
+| 缓存 | hit_count 累加 + scope 隔离（含 rerank 维度）+ (bank,scope) 分区 LRU + **全局总量上限 2000（R3-7）** |
+| 权限 | JWT 三重守卫 + require_role fail-closed + admin 同名 DB 用户落角色校验（.env 配置账号即超管，README 注明） |
+| 健壮性 | chat() 总预算 96s（R3-2）+ 上传/派生任务统一限流（R3-3）+ answer 出口错误文案过滤（R3-5）+ 500 带 request_id |
+| 检索质量 | 48 题黄金集 R@1 **21/39 vs 审计基线 14/39 = +17.9pp**（R3-12 排序收窄后） |
+| 文档数 | **544 篇 active**（545 − 1 重复旧版标 superseded；含 0904 回填 359） |
+
+### 历史状态（2026-09-04 存档）
 
 | 指标 | 数值 |
 |------|------|
