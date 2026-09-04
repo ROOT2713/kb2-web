@@ -176,7 +176,61 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 
 ---
 
-## 📊 当前状态（2026-07-01）
+## 🔐 安全审计整改记录（2026-09-03）
+
+> 外部安全审计（kb2-web-audit-delivery）+ CC（Claude Code）独立复审双轮驱动，
+> 共 6 commits：外部审计整改 0001-0006 → 写路径归一化 → 缓存计数修复 → 验收测试 → CC-R2 整改 → M1 误报回滚。
+
+### 问题清单与修复（按发现顺序）
+
+| # | Commit | 级别 | 发现的问题 | 修复内容 |
+|---|--------|------|-----------|---------|
+| 1 | `cb711d5` | **P0** | 检索过滤用 `documents.bank`，写入用 `hs_bank`，两侧口径不统一 → 定向 bank 检索漏数据/串数据 | FIX-001：bank→hs_bank 过滤口径统一，`doc_bank_filter` 映射（query.py/standard_boost.py/retrieval.py） |
+| 2 | `cb711d5` | **P0** | 缓存无用户隔离（A 用户命中 B 用户私有文档缓存）；拒答内容也入缓存；cache-clear 无 admin 提权 | FIX-002：缓存 `scope` 用户隔离 + 拒答不入缓存 + cache-clear 仅 admin |
+| 3 | `cb711d5` | **HIGH** | JWT 密钥可为空/默认 CHANGE_ME/<32 字符，密钥强度无守卫 | FIX-003：JWT 密钥三重守卫（空/CHANGE_ME/<32 字符直接拒启） |
+| 4 | `cb711d5` | **HIGH** | 上传无扩展名白名单，任意文件可入库；/batch basename 未清理 | FIX-004：上传扩展名白名单 + /batch basename 清理 + 单文件上限 |
+| 5 | `cb711d5` | **P1** | searchable=1 无质量门（embedding 失败也标记可检索）；embedding 同步阻塞无重试 | FIX-005：searchable 质量门（覆盖率≥80%）+ embedding 异步化/重试/熔断 |
+| 6 | `cb711d5` | **P2** | 无部署加固文档（nginx 反代/生产清单缺失） | FIX-006：`deploy/nginx.conf.example` + `deploy/PRODUCTION-CHECKLIST.md` |
+| 7 | `cb711d5` | 附加 | 审计补丁自身缺陷：`_ensure_scope_column` 的 `text(...).fetchall()` 括号错位 → **迁移静默失败**，存量库 scope 列永不补建 | 修正括号；验收测试覆盖幂等/默认值 |
+| 8 | `cb711d5` | 附加 | `_verify_searchable` 硬编码 `coverage_pct=80.0` + recall 命中即翻 1 = **reparse 后门**（绕过质量门） | searchable 由质量门统一决定，删硬编码后门 |
+| 9 | `cb711d5` | 附加 | upsert embedding 失败 chunk 跳过入库但计数虚高（`retained` 虚高绕过质量门）；补插切片 `memory_items[retained:]` 与分批错位 → **重复 chunk** | embedding 失败跳过并计数，返回真实有效数；补插 `append=True+offset=retained` |
+| 10 | `7836e13` | P1 | 写路径 legacy bank key（standards/industry_docs/咨询）不在 BANKS → `get_bank_config` 回退 all → **hs_bank='kb' 黑洞**（检索不可达） | 写路径按存量库实证主值直映射 `kb_standard/kb_industry/kb_xhs/kb_general`，`kb_` 前缀透传 |
+| 11 | `7836e13` | P1 | `require_admin` 未配置 admin_password 时 **fail-open**（直接放行） | 改 fail-closed：503 拒绝，管理端点必须显式配置密码 |
+| 12 | `4762aa4` | P2 | `query_cache.hit_count` INTEGER 无 DEFAULT + INSERT 未给值 → NULL；命中 `NULL+1=NULL` **计数永不累加**；LRU 排序失真 | INSERT 显式 `hit_count=0` + 存量 NULL 归零（运行时验证发现） |
+| 13 | `a336b9d` | **C1** | upsert embedding 失败逐条散点计数 → 补插切片错位（重复 chunk） | 整批原子抛异常，upload 按失败批次精确重试 |
+| 14 | `a336b9d` | **M1** | CC 认为 `/query` 匿名可达（旧 query.py 无显式认证） | **误报**——router.py 聚合层 `APIRouter(dependencies=[Depends(get_current_user)])` 早已全站强制 JWT（见 #16 回滚） |
+| 15 | `a336b9d` | **C2** | pgvector 连接串含明文默认口令（0003 只清了 JWT，漏了 pgvector） | `config.py` 默认清空 + 启动守卫，连接串移至 `.env` |
+| 16 | `a336b9d` | L1/L2 | 写路径兜底 `kb_<key>` 与读路径映射漂移；质量门未过仍跑 3 次 recall（~100s 浪费） | L1：`LEGACY_BANK_TO_HS` 共享常量同口径；L2：质量门未过直接 `searchable=0` 返回 |
+| 17 | `981ab81` | 回滚 | M1 整改（/query 匿名化）**双重误报**：CC 未查 router 聚合层 + 我方只 diff query.py 单文件未看 router.py → 误删端点级认证 | 回滚恢复 `Depends(get_current_user)`（纵深防御显式化），删无用 `get_optional_user`；保留 C1/C2/L1/L2 真实修复 |
+
+### 新增验收测试（2813dc2 + a336b9d）
+
+- `backend/tests/unit/test_audit_fix_acceptance.py`（13 道）+ CC-R2 增补（14 道）覆盖：
+  `_ensure_scope_column` PRAGMA 修复 / `hit_count` 从 0 累加（NULL+1=NULL 回归防护）/ scope 用户隔离+默认域共存 /
+  `doc_bank_filter` 未知 bank 告警 / upsert embedding 失败**整批原子抛异常**+全成功入库回归 / `_verify_searchable` 质量门（覆盖率≥80%，无硬编码后门）
+- 全量后端测试：**442 passed**（1 个既有环境失败=checklist LLM 依赖，与基线一致）
+
+### 关键教训（写入代码库的工程经验）
+
+1. **端点级认证变更前，必须先查 router 聚合层全局依赖**（`APIRouter(dependencies=[...])`）再定性"破坏性"——M1 双重误报的根因。
+2. **缓存列无 DEFAULT + INSERT 不全列清单** = 静默 NULL 陷阱（`NULL+1=NULL`），排查"计数不涨"先查 DDL。
+3. **bank 路由是双写两侧的事**：写路径 hs_bank 推导静默回退 'kb' 是黑洞，读路径映射与写路径必须同口径共享常量。
+4. **fail-open 是默认的安全反模式**：未配置密码/密钥时拒绝服务（fail-closed），而不是放行。
+5. **质量门不能有后门**：`_verify_searchable` 曾可被 reparse 的 recall 命中直接翻 1 绕过。
+
+---
+
+## 📊 当前状态（2026-09-03 更新）
+
+| 指标 | 数值 |
+|------|------|
+| 后端测试 | **442 passed**（含审计整改验收测试 13+14 道） |
+| 安全审计整改 | 17 项问题全闭环（外部审计 0001-0006 + 附加 5 项 + CC-R2 5 项 + M1 回滚） |
+| 缓存命中计数 | 已修复（hit_count NULL→0 累加） |
+| 认证/密钥 | JWT 三重守卫 + require_admin fail-closed + pgvector 口令出代码 |
+| 文档数 | **182 篇 active**（跨多 banks，见上表） |
+
+### 历史状态（2026-07-01 存档）
 
 | 指标 | 数值 |
 |------|------|
