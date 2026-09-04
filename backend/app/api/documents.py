@@ -1376,7 +1376,15 @@ async def reparse_document(
             pass
     db.commit()
 
-    asyncio.create_task(_verify_searchable(new_doc_id, doc_title, len(text), hs_bank, expected=len(memory_items), retained=retained)).add_done_callback(_log_task_exception)
+    # 【R3-3 CC-C2】重解析派生 _verify_searchable 统一走 spawn_bg（_BG_SEM 限流），
+    # 与 upload.py 派生任务同水位，防重解析批量触发打爆外部 API。
+    # 延迟 import 避免 upload↔documents 顶层循环依赖（upload 仅函数内 import documents）。
+    try:
+        from app.api.upload import spawn_bg
+        spawn_bg(_verify_searchable(new_doc_id, doc_title, len(text), hs_bank, expected=len(memory_items), retained=retained), name="reparse-verify")
+    except Exception:
+        # 兜底：import 失败退化为原直启（不因限流包装破坏重解析主流程）
+        asyncio.create_task(_verify_searchable(new_doc_id, doc_title, len(text), hs_bank, expected=len(memory_items), retained=retained)).add_done_callback(_log_task_exception)
 
     # 重解析 → BM25索引失效（内容已变，清旧bank+全量）
     invalidate_bm25_cache(bank=old_bank)

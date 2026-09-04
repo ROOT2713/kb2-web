@@ -75,6 +75,24 @@ MAX_BATCH_TOTAL_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
 # embedding/upsert 打爆外部 API。全局信号量限流（单文件上传同样受控，公平合理）。
 _UPLOAD_SEM = asyncio.Semaphore(4)
 
+# 【R3-3】后台派生任务统一限流：_UPLOAD_SEM(4) 只包 _process_upload_task_impl，
+# spawn 出的解析/向量化/校验子任务此前不受控，批量上传峰值可到数百并发。
+# 统一走 spawn_bg()（共享 _BG_SEM(8)），上传主流程 4 + 后台派生 8 两级水位。
+_BG_SEM = asyncio.Semaphore(8)
+
+
+def spawn_bg(coro, *, name: str):
+    """【R3-3】fire-and-forget 后台派生任务统一启动器：限流 + 异常日志。
+    所有派生任务（verify_searchable / kg_index / quality_gates 等）一律经此启动，
+    避免不受控并发打爆外部 API，且异常不再被静默吞掉。"""
+    async def _runner():
+        async with _BG_SEM:
+            try:
+                await coro
+            except Exception:
+                logger.exception("[BG:%s] task failed", name)
+    return asyncio.create_task(_runner(), name=f"bg-{name}")
+
 # 【FIX-004】上传防护：扩展名白名单（与 app/services/parsing.py parse_document
 # 实际支持的格式严格一致，无扩展名/其他类型一律拒绝，防任意文件进入解析管线）
 ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".doc", ".docx", ".xlsx", ".md", ".markdown", ".txt", ".text"}
@@ -607,13 +625,13 @@ async def _process_upload_task_impl(
         # + searchable=0 保守降级。upload.py 旧版单次 list_documents 无重试、失败仅 log——
         # 向量侧不可检索时文档保持 searchable=1 = 僵尸文档（FIX-005 目标场景）。
         from app.api.documents import _verify_searchable
-        asyncio.create_task(_verify_searchable(
+        spawn_bg(_verify_searchable(
             doc_id, doc_title, len(text), hs_bank,
             expected=_expected, retained=retained,
-        )).add_done_callback(_log_task_exception)
-    asyncio.create_task(asyncio.to_thread(kg_index_document, doc_id, doc_title, text, bank)).add_done_callback(_log_task_exception)
+        ), name="verify")  # 【R3-3】派生任务统一限流
+    spawn_bg(asyncio.to_thread(kg_index_document, doc_id, doc_title, text, bank), name="kg")  # 【R3-3】
     # P2: 异步触发质量门禁检查，不阻塞上传返回
-    asyncio.create_task(_async_quality_gates_check(doc_id, hs_bank)).add_done_callback(_log_task_exception)
+    spawn_bg(_async_quality_gates_check(doc_id, hs_bank), name="quality")  # 【R3-3】
     invalidate_bm25_cache(bank=bank)
     # 【FIX-R2-7】上传新文档 → 该 bank + all 的旧答案缓存失效（否则检索不到新文档）
     invalidate_query_cache_by_bank(bank)

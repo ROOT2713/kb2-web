@@ -1445,6 +1445,7 @@ async def _generate_answer(
                 "sources": [],
                 "validation_result": None,
                 "suggestions": suggestions,
+                "degraded": False,  # 【R3-1】空 doc_facts 拒答（非 LLM 故障）→ 非降级
             }
 
     # ── 批量查询 parent 上下文 ──
@@ -2008,6 +2009,7 @@ async def _generate_answer(
             {"role": "system", "content": bank_prompt},
             {"role": "user", "content": prompt},
         ], max_tokens=8000)
+        degraded = False  # 【R3-1】正常生成路径
     except ValueError as e:
         err_msg = str(e)
         # 空内容或格式异常 → 使用温控降低重试（一次）
@@ -2018,12 +2020,15 @@ async def _generate_answer(
                     {"role": "system", "content": bank_prompt},
                     {"role": "user", "content": prompt},
                 ], temperature=0.1, max_tokens=8000)
+                degraded = False  # 【R3-1】降温重试成功 → 非降级
             except Exception as e2:
                 logger.error("[GEN] Retry also failed: %s", e2)
-                answer = "知识库中未找到与您问题直接相关的信息。请尝试换一种方式提问，或确认您的查询范围。"
+                answer = _REJECT_MSG_KNOWLEDGE_GAP
+                degraded = True  # 【R3-1】LLM 故障降级 → 显式打标（不依赖字符串比对）
         else:
             logger.warning("[GEN] LLM generation failed: %s", e)
-            answer = "知识库中未找到与您问题直接相关的信息。请尝试换一种方式提问，或确认您的查询范围。"
+            answer = _REJECT_MSG_KNOWLEDGE_GAP
+            degraded = True  # 【R3-1】同上
 
     # ── 去AI味后处理 + 逻辑校验 ──
     validation_result = None
@@ -2053,6 +2058,7 @@ async def _generate_answer(
         "validation_result": validation_result,
         "suggestions": suggestions,
         "kg_context_text": kg_context_text,
+        "degraded": degraded,  # 【R3-1】LLM 故障降级标志（写缓存拦截用）
     }
 
 

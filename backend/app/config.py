@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     llm_model: str = "deepseek-chat"
     llm_max_retries: int = 3
     llm_timeout: int = 60
+    # 【R3-2】chat() 重试链总预算（秒）：≈ 网关/客户端超时(120s) 的 80%。
+    # 最坏情形 3×60s+退避 ≈283s 会白烧配额且无人收货——总预算钳制在最坏耗时。
+    chat_retry_budget_s: float = 96.0
 
     # ── Embedding ──
     embedding_url: str = ""

@@ -6,6 +6,7 @@ Ported from: kb-web server.py deepseek_chat() L1250-L1303, logic_validate() L116
 import re
 import asyncio
 import logging
+import time
 from typing import List, Dict, Optional
 
 import httpx
@@ -24,9 +25,10 @@ async def chat(
     max_retries: int = 3,
     temperature: float = 0.3,
     max_tokens: int = 4000,
+    budget_s: Optional[float] = None,
 ) -> str:
     """
-    调用 LLM Chat API（带 429 重试）
+    调用 LLM Chat API（带 429 重试 + 【R3-2】总预算钳制）
 
     Args:
         messages: OpenAI 格式的消息列表
@@ -34,22 +36,35 @@ async def chat(
         max_retries: 最大重试次数
         temperature: 温度参数
         max_tokens: 最大输出 token 数
+        budget_s: 整条重试链的总时间预算（秒）；默认取 settings.chat_retry_budget_s。
+            单次调用 timeout 钳在 min(llm_timeout, 剩余预算)；预算耗尽立即放弃，
+            不再发起下一次重试——防 3×60s+退避 ≈283s 白烧配额且客户端已超时。
 
     Returns:
         模型输出文本
 
     Raises:
-        ValueError: API 返回异常
+        ValueError: API 返回异常 / 预算耗尽仍失败
     """
     if not settings.llm_base_url or not settings.llm_api_key:
         raise ValueError("LLM_BASE_URL 或 LLM_API_KEY 未配置")
 
+    budget = budget_s if budget_s is not None else settings.chat_retry_budget_s
+    deadline = time.monotonic() + budget
     last_error = None
     for attempt in range(max_retries):
+        # 【R3-2】预算耗尽 → 不再发起下一次，直接失败路径
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logger.warning(
+                "LLM API chat budget exhausted (%.0fs), giving up after %d attempts",
+                budget, attempt,
+            )
+            break
         # 【FIX-R2-1】网络层异常（超时/连接失败）必须捕获重试——此前 httpx.ReadTimeout/
         # ConnectError 直接冒泡 → 调用方只捕 ValueError → 整请求 500（fee+all 500 根因）
         try:
-            async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
+            async with httpx.AsyncClient(timeout=min(settings.llm_timeout, remaining)) as client:
                 resp = await client.post(
                     f"{settings.llm_base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {settings.llm_api_key}"},
@@ -70,7 +85,11 @@ async def chat(
                 type(e).__name__, attempt + 1, max_retries, min(2 ** attempt, 15),
             )
             if attempt < max_retries - 1:
-                await asyncio.sleep(min(2 ** attempt, 15))
+                backoff = min(2 ** attempt, 15)
+                # 【R3-2】退避后会穿预算 → 直接放弃，不再 sleep
+                if time.monotonic() + backoff >= deadline:
+                    break
+                await asyncio.sleep(backoff)
                 continue
             break  # 重试耗尽 → 落到循环外 raise ValueError(last_error)
 
@@ -78,6 +97,10 @@ async def chat(
         if resp.status_code == 429:
             retry_after = int(resp.headers.get("Retry-After", 5 * (attempt + 1)))
             logger.warning("LLM API 429 限流, 第%d次重试, 等待 %ds", attempt + 1, retry_after)
+            # 【R3-2】等待会穿预算 → 直接放弃
+            if time.monotonic() + retry_after >= deadline:
+                last_error = f"HTTP 429 (retry would exceed budget)"
+                break
             await asyncio.sleep(retry_after)
             continue
 
@@ -89,7 +112,11 @@ async def chat(
                 resp.status_code, attempt + 1, max_retries, min(2 ** attempt, 15),
             )
             if attempt < max_retries - 1:
-                await asyncio.sleep(min(2 ** attempt, 15))
+                backoff = min(2 ** attempt, 15)
+                # 【R3-2】退避后会穿预算 → 直接放弃
+                if time.monotonic() + backoff >= deadline:
+                    break
+                await asyncio.sleep(backoff)
                 continue
             break
 
@@ -103,7 +130,11 @@ async def chat(
                 attempt + 1, max_retries, resp.text,
             )
             if attempt < max_retries - 1:
-                await asyncio.sleep(min(2 ** attempt, 15))
+                backoff = min(2 ** attempt, 15)
+                # 【R3-2】退避后会穿预算 → 直接放弃
+                if time.monotonic() + backoff >= deadline:
+                    break
+                await asyncio.sleep(backoff)
                 continue
             raise ValueError(f"LLM API 返回非 JSON: {resp.text[:200]}")
         # API 容错：choices 字段缺失或格式异常
@@ -116,6 +147,10 @@ async def chat(
             if error_code == "429" or "limit" in error_msg.lower():
                 wait = 5 * (attempt + 1)
                 logger.warning("LLM API rate limit in body, 第%d次重试, 等待 %ds", attempt + 1, wait)
+                # 【R3-2】等待会穿预算 → 直接放弃
+                if time.monotonic() + wait >= deadline:
+                    last_error = "rate limit in body (retry would exceed budget)"
+                    break
                 await asyncio.sleep(wait)
                 continue
             logger.warning("LLM API 无 choices. status=%d error=%s", resp.status_code, error_msg)

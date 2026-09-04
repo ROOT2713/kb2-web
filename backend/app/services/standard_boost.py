@@ -138,6 +138,7 @@ def boost_exact_standards(
     Returns stats: {"std_nums_detected": int, "docs_injected": int, "chunks_injected": int}
     """
     stats = {"std_nums_detected": 0, "docs_injected": 0, "chunks_injected": 0}
+    boosted_ids: set[str] = set()  # 【R3-12】记录注入文档集合（主扫描+补充扫描），供排序仅排注入组
 
     std_nums = extract_standard_numbers(q)
     if not std_nums:
@@ -176,6 +177,9 @@ def boost_exact_standards(
                 doc_facts.clear()
                 doc_facts.update(new_facts)
                 stats["docs_boosted"] = stats.get("docs_boosted", 0) + 1
+                # 【R3-12 CC-C1】already-in-search 的标准文档也归入注入组——
+                # 参与组内日期排序，防多版本(旧/新都已检索命中)时版本倒挂
+                boosted_ids.add(doc_id)
                 continue
 
             # Inject chunks. Format matches what _build_search_context produces:
@@ -194,6 +198,7 @@ def boost_exact_standards(
             doc_facts.clear()
             doc_facts.update(new_facts)
             stats["chunks_injected"] += len(chunks_to_inject)
+            boosted_ids.add(doc_id)  # 【R3-12】主扫描注入 → 归入注入组
 
             seen_doc_ids.add(doc_id)
             stats["docs_injected"] += 1
@@ -247,6 +252,7 @@ def boost_exact_standards(
             doc_facts.clear()
             doc_facts.update(_new_facts)
             seen_doc_ids.add(_sid)
+            boosted_ids.add(_sid)  # 【R3-12】补充扫描注入 → 归入注入组
             stats["docs_injected"] += 1
             stats["chunks_injected"] += len(_chunks_to_inject)
             logger.info(
@@ -254,27 +260,34 @@ def boost_exact_standards(
                 _stitle[:60], len(_schunks), std_num,
             )
 
-    # ── 最终排序：按发布时间倒序，最新版排最前 ──
-    # 防止补充扫描注入的旧版本把主扫描注入的新版本推到后面
-    if len(doc_facts) > 1 and seen_doc_ids:
+    # ── 最终排序【R3-12】：仅注入组按发布时间倒序，注入组整体置顶；检索组保持相关性序 ──
+    # R2-17 修复前排序静默失效，修复后副作用显形：published_date DESC 重排整个
+    # doc_facts（含检索结果），0904 回填的新文档压过 gold 标准文档 → bank=all R@1 −21.4pp。
+    # 修正：只对 boost_exact_standards 实际注入的文档（boosted_ids）按日期排序并整体前置，
+    # 检索命中的文档维持原相关性顺序不被重排。
+    if len(doc_facts) > 1 and boosted_ids:
         try:
-            # 【FIX-R2-17】原 text("... IN (:ids)") 直接传 tuple —— SQLAlchemy text()
-            # 不会展开序列绑定，执行必失败 → except 吞掉仅 warning "Sort skipped"
-            # = 按发布时间排序静默失效（功能降级无告警）。改用 expanding bindparam，
-            # 并将异常升级为 error 暴露真因（排序失败不再无声）。
+            # 【FIX-R2-17】expanding bindparam（text() 不展开序列绑定，旧写法必失败被吞）
             _sort_stmt = sa_text(
                 "SELECT doc_id, published_date FROM documents WHERE doc_id IN :ids"
             ).bindparams(sa_bindparam("ids", expanding=True))
-            _date_rows = db.execute(_sort_stmt, {"ids": tuple(seen_doc_ids)}).fetchall()
+            _date_rows = db.execute(_sort_stmt, {"ids": tuple(boosted_ids)}).fetchall()
             _date_map = {row[0]: row[1] or "0000-01-01" for row in _date_rows}
-            _sorted = sorted(
-                doc_facts.items(),
+            # 注入组内部按日期倒序（保留"最新版优先"意图），检索组保持原序
+            _boosted_sorted = sorted(
+                (item for item in doc_facts.items() if item[0] in boosted_ids),
                 key=lambda x: _date_map.get(x[0], "0000-01-01"),
                 reverse=True,
             )
+            _rest = [item for item in doc_facts.items() if item[0] not in boosted_ids]
+            _new = dict(_boosted_sorted)
+            _new.update(dict(_rest))  # 注入组置顶，检索组原序在后
             doc_facts.clear()
-            doc_facts.update(dict(_sorted))
-            logger.info("[C1-StdBoost] Sorted %d docs by published_date (newest first)", len(_sorted))
+            doc_facts.update(_new)
+            logger.info(
+                "[C1-StdBoost] Pinned %d boosted docs to front (date-sorted inside group), %d retrieval docs kept original order",
+                len(_boosted_sorted), len(_rest),
+            )
         except Exception as e:
             logger.error("[C1-StdBoost] Sort failed (non-fatal): %s", e, exc_info=True)
 

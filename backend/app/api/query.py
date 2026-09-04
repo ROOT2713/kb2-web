@@ -498,6 +498,8 @@ async def query(
     sources = gen["sources"]
     validation_result = gen["validation_result"]
     suggestions = gen.get("suggestions")
+    # 【R3-1】LLM 故障降级标志（_generate_answer 返回结构新增；旧缓存命中路径无此键）
+    ctx["degraded"] = gen.get("degraded", False)
 
     # ── Confidence Gate (L3): LLM 生成后质量校验 ──
     if (
@@ -517,7 +519,15 @@ async def query(
     # ── 缓存写入 ──
     # 有文档事实的查询可缓存；空结果不缓存；缓存命中时动态重建 suggestions
     # 【FIX-002】拒绝性回答不入缓存（doc_facts 非空但 L3 校验拒答时会污染同/近义查询）
-    if not _skip_cache and ctx["doc_facts"] and answer != _REJECT_MSG_KNOWLEDGE_GAP:
+    # 【R3-1】拒答常量清单补全（LOW_COVERAGE 与 KNOWLEDGE_GAP 现同文案，双拦防未来拆分）
+    #         + LLM 故障降级（degraded=True）不入缓存（防降级文本固化 24h）
+    if (
+        not _skip_cache
+        and ctx["doc_facts"]
+        and answer != _REJECT_MSG_KNOWLEDGE_GAP
+        and answer != _REJECT_MSG_LOW_COVERAGE
+        and not ctx.get("degraded")
+    ):
         try:
             doc_ids = set(ctx["doc_facts"].keys()) if ctx["doc_facts"] else set()
             await cache_set(q, bank, answer, sources, doc_ids, scope=cache_scope)  # 【FIX-R2-2】
