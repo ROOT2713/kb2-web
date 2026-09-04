@@ -24,6 +24,7 @@ from app.config import settings
 from app.models.database import SessionLocal
 from app.repositories.vector_repo import get_vector_store
 from app.services.cache_service import _bm25_caches, _get_bm25_cache, _BM25_TTL
+from app.services.generation import chat  # 【FIX-R2-CC1】rerank 走统一 chat()（R2-1 重试/5xx/JSON 容错）
 from app.utils.tokenizer import tokenize, expand_keywords
 from app.utils.text_cleaning import normalize_query, expand_amount_tiers
 
@@ -203,83 +204,6 @@ async def _get_active_hindsight_banks(min_docs: int = 1) -> list:
     except Exception as e:
         logger.warning("Failed to discover Hindsight banks: %s", e)
         return ["kb"]  # fallback
-
-
-# ── LLM Chat helper (for rerank; will be replaced by generation.py in Batch 5) ──
-async def _llm_chat(messages: list, stream: bool = False, max_retries: int = 3) -> str:
-    """调用 LLM Chat API（带 429 重试）"""
-    if not settings.llm_base_url or not settings.llm_api_key:
-        raise ValueError("LLM_BASE_URL 或 LLM_API_KEY 未配置（.env）")
-    llm_base_url = settings.llm_base_url
-    llm_api_key = settings.llm_api_key
-    llm_model = settings.llm_model
-
-    last_error = None
-    max_tokens = 3000
-    for attempt in range(max_retries):
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                f"{llm_base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {llm_api_key}"},
-                json={
-                    "model": llm_model,
-                    "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": max_tokens,
-                    "stream": stream,
-                },
-                timeout=120,
-            )
-            if stream:
-                return resp
-
-            # 429 限流 → 等待重试
-            if resp.status_code == 429:
-                retry_after = int(resp.headers.get("Retry-After", 5 * (attempt + 1)))
-                logger.warning("llm_chat: 429 限流, 第%d次重试, 等待 %ds", attempt + 1, retry_after)
-                await asyncio.sleep(retry_after)
-                continue
-
-            data = resp.json()
-            # mimo API 容错：choices 字段缺失或格式异常时返回错误信息而非抛异常
-            choices = data.get("choices")
-            if not choices:
-                error_info = data.get("error", {})
-                error_msg = error_info.get("message", "") if isinstance(error_info, dict) else str(error_info)
-                error_code = error_info.get("code", "") if isinstance(error_info, dict) else ""
-                # 429 也可能在 JSON body 中而非 HTTP status
-                if error_code == "429" or "limit" in error_msg.lower():
-                    wait = 5 * (attempt + 1)
-                    logger.warning("llm_chat: rate limit in body, 第%d次重试, 等待 %ds", attempt + 1, wait)
-                    await asyncio.sleep(wait)
-                    continue
-                logger.warning("llm_chat: LLM API 无 choices. status=%d error=%s", resp.status_code, error_msg)
-                raise ValueError(f"LLM API 返回异常: {error_msg or resp.text[:200]}")
-            try:
-                content = choices[0]["message"]["content"]
-                finish_reason = choices[0].get("finish_reason", "")
-                # 铁律：content 为空时绝不使用 reasoning_content（思维链不是答案）。
-                # finish_reason=length → 推理吃满预算 → 翻倍 max_tokens 重试（带上限保护）。
-                if not content and finish_reason == "length":
-                    if attempt < max_retries - 1:
-                        next_mt = min(max_tokens * 2, 12000)
-                        logger.warning(
-                            "llm_chat: content empty (finish_reason=length), retrying with max_tokens=%d",
-                            next_mt,
-                        )
-                        max_tokens = next_mt
-                        continue
-                if not content:
-                    logger.warning("llm_chat: empty content (finish_reason=%s), attempt=%d", finish_reason, attempt + 1)
-                    if attempt < max_retries - 1:
-                        continue
-                    raise ValueError("LLM returned empty content")
-                return content
-            except (KeyError, IndexError, TypeError) as e:
-                logger.warning("llm_chat: choices 格式异常: %s", e)
-                raise ValueError(f"LLM API choices 格式异常: {e}")
-
-    raise ValueError(f"LLM API 重试 {max_retries} 次后仍失败: {last_error or 'rate limit'}")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1037,7 +961,10 @@ async def llm_rerank(query: str, candidates: list, top_k: int = 15) -> list:
 只输出数字，不要解释。"""
 
     try:
-        result = await _llm_chat([{"role": "user", "content": prompt}], stream=False)
+        # 【FIX-R2-CC1】改走 generation.chat()（统一实现）：自动获得 httpx 网络异常捕获、
+        # 5xx 退避重试、非 JSON 容错。原 _llm_chat 副本无这些（R2-1 修复前同款缺陷）。
+        # chat() 默认 temperature=0.3 / max_tokens=4000，与原 _llm_chat 语义一致。
+        result = await chat([{"role": "user", "content": prompt}])
         # 解析排序结果
         indices = [int(x.strip()) for x in result.strip().split(",") if x.strip().isdigit()]
         # 按LLM排序重组结果
