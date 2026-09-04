@@ -21,8 +21,7 @@ from app.services.retrieval import (
     BANKS, _active_hs_banks_cache, _hindsight_request, get_bank_config, reload_bank_config,
 )
 
-from app.middleware.auth import require_admin
-from app.middleware.jwt_auth import require_role
+from app.middleware.jwt_auth import require_role  # 【FIX-R2-12】删 require_admin 死 import（HTTP Basic 遗留，0 调用点）
 
 logger = logging.getLogger(__name__)
  

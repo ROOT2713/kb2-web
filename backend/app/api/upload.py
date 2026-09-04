@@ -169,7 +169,6 @@ async def upload_document(
     category: str = Form(""),
     subcategory: str = Form(""),
     bank: str = Form("general"),
-    confirm_quality: str = Form(""),
     source: str = Form("manual"),
     published_date: str = Form(None),
     geo_scope: str = Form(None),
@@ -774,7 +773,6 @@ async def upload_batch(
     category: str = Form(""),
     subcategory: str = Form(""),
     bank: str = Form("general"),
-    confirm_quality: str = Form(""),
     source: str = Form("manual"),
 ):
     """Batch upload: receive multiple files and process them serially.

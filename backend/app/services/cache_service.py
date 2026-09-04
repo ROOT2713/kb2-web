@@ -181,7 +181,13 @@ def invalidate_for_doc(doc_id: str):
     """文档删除/更新时失效相关缓存"""
     db = SessionLocal()
     try:
-        rows = db.execute(text("SELECT cache_id, doc_ids_json FROM query_cache")).fetchall()
+        # 【FIX-R2-15】原全表 SELECT 无 WHERE —— doc_ids_json 为 JSON 数组文本，
+        # 无法索引，但可用 LIKE 粗过滤（doc_id 为 uuid hex + '-'，无 % _ 通配符语义），
+        # 避免每次全表行传输到 Python 层再 json.loads 逐个判。
+        rows = db.execute(
+            text("SELECT cache_id, doc_ids_json FROM query_cache WHERE doc_ids_json LIKE :pat"),
+            {"pat": f"%{doc_id}%"},
+        ).fetchall()
         count = 0
         for r in rows:
             if doc_id in json.loads(r[1] or "[]"):
@@ -214,21 +220,30 @@ def invalidate_query_cache_by_bank(bank: str) -> None:
 
 
 def evict_lru(bank: str, max_entries: int = 1000):
-    """LRU淘汰：每个bank最多max_entries条"""
+    """LRU淘汰：每个 (bank, scope) 组合最多 max_entries 条。
+
+    【FIX-R2-5】原实现仅按 bank COUNT/DELETE —— 多用户下单个 scope
+    （如 admin 高频查询）灌满配额会把其他用户的缓存条目一起驱逐。
+    改为窗口函数按 (bank, scope) 分组，每组只保留 hit_count/last_hit_at
+    最新的 max_entries 条；未超限的组不受影响（scope 隔离公平）。
+    排序 DESC：rn=1 为最热（hit_count 最大），rn>max 尾部即最冷条目
+    （CC 审查修正：初版误用 ASC 导致淘汰最热保留最冷，方向相反）。
+    """
     db = SessionLocal()
     try:
-        count = db.execute(
-            text("SELECT COUNT(*) FROM query_cache WHERE bank=:bank"), {"bank": bank}
-        ).fetchone()[0]
-        if count > max_entries:
-            db.execute(text("""
-                DELETE FROM query_cache WHERE cache_id IN (
-                    SELECT cache_id FROM query_cache WHERE bank=:bank
-                    ORDER BY hit_count ASC, last_hit_at ASC
-                    LIMIT :limit
-                )
-            """), {"bank": bank, "limit": count - max_entries})
-            db.commit()
+        db.execute(text("""
+            DELETE FROM query_cache WHERE cache_id IN (
+                SELECT cache_id FROM (
+                    SELECT cache_id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY bank, scope
+                               ORDER BY hit_count DESC, last_hit_at DESC
+                           ) AS rn
+                    FROM query_cache WHERE bank = :bank
+                ) WHERE rn > :max_entries
+            )
+        """), {"bank": bank, "max_entries": max_entries})
+        db.commit()
     finally:
         db.close()
 

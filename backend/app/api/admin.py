@@ -179,8 +179,8 @@ async def admin_health():
 from app.services.parsing import get_mineru_stats
 from app.services.quality_gates import check_document, check_all_documents
 
-@router.post("/quality/check")
-
+# 【FIX-R2-13】原 L182+L185 双相同 @router.post("/quality/check") 堆叠——
+# 第一个空装饰器把同一路由注册两次（Starlette 匹配首个），冗余技术债。删空装饰器。
 
 @router.post("/quality/check")
 def quality_check_single(

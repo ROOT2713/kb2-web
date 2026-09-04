@@ -17,6 +17,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 from sqlalchemy import text as sa_text
+from sqlalchemy import bindparam as sa_bindparam  # 【FIX-R2-17】expanding IN 绑定
 
 from app.services.retrieval import doc_bank_filter  # 【FIX-001】
 
@@ -257,10 +258,14 @@ def boost_exact_standards(
     # 防止补充扫描注入的旧版本把主扫描注入的新版本推到后面
     if len(doc_facts) > 1 and seen_doc_ids:
         try:
-            _date_rows = db.execute(
-                sa_text("SELECT doc_id, published_date FROM documents WHERE doc_id IN (:ids)"),
-                {"ids": tuple(seen_doc_ids)},
-            ).fetchall()
+            # 【FIX-R2-17】原 text("... IN (:ids)") 直接传 tuple —— SQLAlchemy text()
+            # 不会展开序列绑定，执行必失败 → except 吞掉仅 warning "Sort skipped"
+            # = 按发布时间排序静默失效（功能降级无告警）。改用 expanding bindparam，
+            # 并将异常升级为 error 暴露真因（排序失败不再无声）。
+            _sort_stmt = sa_text(
+                "SELECT doc_id, published_date FROM documents WHERE doc_id IN :ids"
+            ).bindparams(sa_bindparam("ids", expanding=True))
+            _date_rows = db.execute(_sort_stmt, {"ids": tuple(seen_doc_ids)}).fetchall()
             _date_map = {row[0]: row[1] or "0000-01-01" for row in _date_rows}
             _sorted = sorted(
                 doc_facts.items(),
@@ -271,6 +276,6 @@ def boost_exact_standards(
             doc_facts.update(dict(_sorted))
             logger.info("[C1-StdBoost] Sorted %d docs by published_date (newest first)", len(_sorted))
         except Exception as e:
-            logger.warning("[C1-StdBoost] Sort skipped: %s", e)
+            logger.error("[C1-StdBoost] Sort failed (non-fatal): %s", e, exc_info=True)
 
     return stats

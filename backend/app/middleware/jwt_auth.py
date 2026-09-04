@@ -93,19 +93,30 @@ def require_role(min_role: str = "admin"):
 
     The admin config user always passes all role checks.
     DB users must have role >= min_role (admin > viewer).
+
+    【FIX-R2-8】min_role 未知角色 fail-closed：原 _role_rank.get(min_role, 0)
+    把拼写错误/未知角色解析为 0 → 所有用户（viewer≥0）通过 = fail-open。
+    改为定义期校验，配置错误在 import/启动即抛 ValueError 暴露。
     """
+    _VALID_ROLES = {"admin", "uploader", "viewer"}
+    if min_role not in _VALID_ROLES:
+        raise ValueError(
+            f"[FIX-R2-8] require_role: 未知角色 {min_role!r}，合法值 {sorted(_VALID_ROLES)}"
+        )
     _admin_username = settings.admin_username
 
     def _role_checker(
         username: str = Depends(get_current_user),
         db: Session = Depends(get_db),
     ) -> bool:
-        # Admin config user: always pass
-        if username == _admin_username:
+        # 【FIX-R2-9】admin 配置用户名不再无条件直通：先查 DB，
+        # 若存在同名用户则按其 DB 角色走下方校验（防 .env admin_username 与
+        # DB 内低权账号重名导致提权）；DB 无同名用户 = 配置账号（.env 管理员
+        # 不在 User 表），保持直通能力（先前回归教训：配置账号不可降级 viewer）。
+        user = db.query(User).filter(User.username == username).first()
+        if user is None and username == _admin_username:
             return True
 
-        # DB user: check role
-        user = db.query(User).filter(User.username == username).first()
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -113,7 +124,7 @@ def require_role(min_role: str = "admin"):
             )
 
         _role_rank = {"admin": 3, "uploader": 2, "viewer": 1}
-        _min_rank = _role_rank.get(min_role, 0)
+        _min_rank = _role_rank[min_role]  # R2-8: 定义期已校验，此处必命中
         _user_rank = _role_rank.get(user.role, 0)
 
         if _user_rank < _min_rank:

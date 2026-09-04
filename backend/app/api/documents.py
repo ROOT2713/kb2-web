@@ -45,8 +45,7 @@ from app.services.chunking import heading_chunk, parent_child_chunk
 from app.services.quality import assess_quality, profile_document
 from app.services.cache_service import invalidate_for_doc, invalidate_bm25_cache, invalidate_query_cache_by_bank
 from app.utils.text_cleaning import filename_to_title, clean_watermarks
-from app.middleware.auth import require_admin
-from app.middleware.jwt_auth import require_role
+from app.middleware.jwt_auth import require_role  # 【FIX-R2-12】删 require_admin 死 import（HTTP Basic 遗留，0 调用点）
 
 logger = logging.getLogger(__name__)
 
