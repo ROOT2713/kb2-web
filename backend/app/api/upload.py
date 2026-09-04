@@ -27,7 +27,7 @@ from app.services.concept_gen import generate_concepts_for_doc, infer_doc_concep
 from app.services.confidence import update_concept_confidence
 from app.repositories.document_repo import DocumentRepository
 from app.repositories.vector_repo import get_vector_store
-from app.services.cache_service import invalidate_bm25_cache
+from app.services.cache_service import invalidate_bm25_cache, invalidate_query_cache_by_bank
 from scripts.kg_client import kg_index_document
 from app.services.chunking import (
     heading_chunk,
@@ -70,6 +70,10 @@ router = APIRouter()
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
 MAX_BATCH_FILES = 200
 MAX_BATCH_TOTAL_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
+
+# 【FIX-R2-3】上传处理并发上限：批量 200 文件若逐文件全异步并发，会同时触发
+# embedding/upsert 打爆外部 API。全局信号量限流（单文件上传同样受控，公平合理）。
+_UPLOAD_SEM = asyncio.Semaphore(4)
 
 # 【FIX-004】上传防护：扩展名白名单（与 app/services/parsing.py parse_document
 # 实际支持的格式严格一致，无扩展名/其他类型一律拒绝，防任意文件进入解析管线）
@@ -226,7 +230,7 @@ async def upload_document(
     return {"task_id": task_id, "status": "pending", "filename": file.filename}
 
 
-async def _process_upload_task(
+async def _process_upload_task_impl(
     task_id: str, filename: str, content: bytes,
     title: str = "", category: str = "", subcategory: str = "", bank: str = "general",
     source: str = "manual", published_date: str = None, geo_scope: str = None,
@@ -599,12 +603,21 @@ async def _process_upload_task(
     finally:
         db.close()
 
-    if integrity and integrity.get("status") in ("ok", "pending"):
-        asyncio.create_task(_verify_searchable(doc_id, doc_title, len(text), hs_bank)).add_done_callback(_log_task_exception)
+    if integrity and integrity.get("status") in ("ok", "pending") and _expected:
+        # 【FIX-R2-6】统一走 documents._verify_searchable（唯一实现）：质量门 + 3 次退避重试
+        # + searchable=0 保守降级。upload.py 旧版单次 list_documents 无重试、失败仅 log——
+        # 向量侧不可检索时文档保持 searchable=1 = 僵尸文档（FIX-005 目标场景）。
+        from app.api.documents import _verify_searchable
+        asyncio.create_task(_verify_searchable(
+            doc_id, doc_title, len(text), hs_bank,
+            expected=_expected, retained=retained,
+        )).add_done_callback(_log_task_exception)
     asyncio.create_task(asyncio.to_thread(kg_index_document, doc_id, doc_title, text, bank)).add_done_callback(_log_task_exception)
     # P2: 异步触发质量门禁检查，不阻塞上传返回
     asyncio.create_task(_async_quality_gates_check(doc_id, hs_bank)).add_done_callback(_log_task_exception)
     invalidate_bm25_cache(bank=bank)
+    # 【FIX-R2-7】上传新文档 → 该 bank + all 的旧答案缓存失效（否则检索不到新文档）
+    invalidate_query_cache_by_bank(bank)
 
     result_dict = {"ok": True, "doc_id": doc_id, "title": doc_title, "category": doc_category, "filename": filename, "chunks": retained, "total_chars": len(text), "preview": text[:200] + ("..." if len(text) > 200 else ""), "quality": {"score": quality["score"], "issues": quality["issues"], "needs_confirm": quality["score"] < 80}, "integrity": integrity, "doc_type": doc_type, "kg_indexed": True}
     _update_upload_task(task_id, status="done", progress=1.0, stage="complete", result_doc_id=doc_id, result=json.dumps(result_dict, ensure_ascii=False))
@@ -856,32 +869,10 @@ async def upload_batch(
     }
 
 
-async def _verify_searchable(doc_id: str, doc_title: str, text_len: int, hs_bank: str):
-    """验证文档可搜索"""
-    try:
-        if settings.vector_backend == "pgvector":
-            from app.repositories.vector_repo import PgVectorStore
-            vs = PgVectorStore()
-            docs = await vs.list_documents(hs_bank)
-            found = any(d.get("doc_id") == doc_id for d in docs)
-            if found:
-                logger.info("[VERIFY] doc %s searchable ✓ (pgvector)", doc_id[:8])
-            else:
-                logger.warning("[VERIFY] doc %s NOT found in pgvector", doc_id[:8])
-        else:
-            await asyncio.sleep(60)
-            recalled = await recall(doc_title[:50], limit=5, bank=hs_bank)
-            found = False
-            for r in recalled:
-                for t in r.get("tags", []):
-                    if t.startswith("doc_id:") and t[7:] == doc_id:
-                        found = True
-                        break
-                if found:
-                    break
-            if found:
-                logger.info("[VERIFY] doc %s searchable ✓", doc_id[:8])
-            else:
-                logger.warning("[VERIFY] doc %s NOT found after 60s", doc_id[:8])
-    except Exception as e:
-        logger.warning("[VERIFY] doc %s check failed: %s", doc_id[:8], e)
+async def _process_upload_task(*args, **kwargs):
+    """上传处理入口（信号量限流 wrapper，【FIX-R2-3】）。
+    原 _process_upload_task_impl 是完整实现；此 wrapper 统一限流并发，
+    单文件端点与 /batch 共用，防止批量上传打爆 embedding/upsert API。
+    """
+    async with _UPLOAD_SEM:
+        await _process_upload_task_impl(*args, **kwargs)

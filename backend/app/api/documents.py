@@ -43,7 +43,7 @@ from app.services.generation import chat
 from app.services.parsing import parse_document, mineru_parse_pdf
 from app.services.chunking import heading_chunk, parent_child_chunk
 from app.services.quality import assess_quality, profile_document
-from app.services.cache_service import invalidate_for_doc, invalidate_bm25_cache
+from app.services.cache_service import invalidate_for_doc, invalidate_bm25_cache, invalidate_query_cache_by_bank
 from app.utils.text_cleaning import filename_to_title, clean_watermarks
 from app.middleware.auth import require_admin
 from app.middleware.jwt_auth import require_role
@@ -104,7 +104,45 @@ async def _verify_searchable(v_doc_id, v_title, v_original_len, v_bank="kb", exp
             v_title[:40], retained, expected,
         )
         return
-    await asyncio.sleep(10)  # wait for consolidation
+    if settings.vector_backend == "pgvector":
+        # 【FIX-R2-6】pgvector 验证：list_documents 3 次短退避（2/4/8s）。
+        # 上传主路径已同步 upsert 完成，直查向量库即可确认 doc 真实可检索；
+        # 3 次仍不可见 → 保守置 searchable=0（僵尸文档防护，与 Hindsight 分支一致）。
+        # 旧 upload.py 版单次直查无重试、失败仅 log —— 文档保持 searchable=1 但向量侧
+        # 查不到 = 前台可见检索不到的僵尸文档（FIX-005 目标场景）。
+        from app.repositories.vector_repo import PgVectorStore
+        vs = PgVectorStore()
+        for attempt in range(3):
+            try:
+                docs = await vs.list_documents(v_bank)
+                if any(d.get("doc_id") == v_doc_id for d in docs):
+                    db2 = SessionLocal()
+                    try:
+                        db2.execute(
+                            sa_text("UPDATE documents SET searchable=1, verified_at=:now, original_text_length=:olen WHERE doc_id=:did"),
+                            {"now": datetime.now(timezone.utc), "olen": v_original_len, "did": v_doc_id}
+                        )
+                        db2.commit()
+                        logger.info("VERIFY OK %s searchable=true (pgvector)", v_title[:40])
+                    finally:
+                        db2.close()
+                    return
+            except Exception as e:
+                logger.warning("VERIFY pgvector attempt %d error: %s", attempt + 1, e)
+            if attempt < 2:
+                await asyncio.sleep(2 * (2 ** attempt))
+        db2 = SessionLocal()
+        try:
+            db2.execute(
+                sa_text("UPDATE documents SET searchable=0, verified_at=:now WHERE doc_id=:did"),
+                {"now": datetime.now(timezone.utc), "did": v_doc_id}
+            )
+            db2.commit()
+        finally:
+            db2.close()
+        logger.warning("VERIFY FAIL %s searchable=false after 3 pgvector attempts (doc not found in vector store)", v_title[:40])
+        return
+    await asyncio.sleep(10)  # wait for consolidation (Hindsight 路径)
     for attempt in range(3):
         try:
             recalled = await recall(v_title[:50], limit=20, bank=v_bank, max_tokens=8192)
@@ -1343,6 +1381,8 @@ async def reparse_document(
     # 重解析 → BM25索引失效（内容已变，清旧bank+全量）
     invalidate_bm25_cache(bank=old_bank)
     invalidate_bm25_cache(bank="all")
+    # 【FIX-R2-7】重解析内容已变 → 旧答案缓存失效（按 bank + all 精确清）
+    invalidate_query_cache_by_bank(old_bank)
 
     return {
         "ok": True,

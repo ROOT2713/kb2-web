@@ -26,7 +26,13 @@ logger = logging.getLogger(__name__)
 # ── 【FIX-002】scope 列幂等迁移（存量 SQLite 库）───────────────────
 # 新库由 create_all 按模型建表自带 scope；存量库在此补列。表不存在时 PRAGMA
 # 返回空列表自动跳过（首次启动 create_all 之前属正常路径）。
+# 【FIX-R2-4】fail-closed：迁移失败禁用缓存（宁缺毋串），不再静默退化共享缓存——
+# 后者与 FIX-002 自身声明的用户隔离原则矛盾（跨用户串缓存）。
+_scope_ready = True  # 默认可用；_ensure_scope_column 失败时置 False
+
+
 def _ensure_scope_column() -> None:
+    global _scope_ready
     try:
         _db = SessionLocal()
         try:
@@ -37,10 +43,12 @@ def _ensure_scope_column() -> None:
                 _db.execute(text("CREATE INDEX IF NOT EXISTS ix_query_cache_scope ON query_cache (scope)"))
                 _db.commit()
                 logger.warning("[FIX-002] query_cache 补建 scope 列完成（缓存用户隔离迁移）")
+            _scope_ready = True
         finally:
             _db.close()
-    except Exception as _e:  # 迁移失败不阻断启动，仅退化为共享缓存
-        logger.warning("[FIX-002] scope 列迁移跳过: %s", _e)
+    except Exception as _e:  # 【FIX-R2-4】迁移失败 → 禁用缓存而非共享（fail-closed）
+        _scope_ready = False
+        logger.critical("[FIX-R2-4] scope 列迁移失败，查询缓存已禁用（fail-closed，宁缺毋串）: %s", _e)
 
 
 _ensure_scope_column()
@@ -55,6 +63,8 @@ _BM25_DOC_COUNT_KEY = "doc_count"  # 增量检测：文档数量变化时才重�
 
 def get_exact(query: str, bank: str, scope: str = "") -> Optional[Dict]:
     """L1精确匹配（scope: 用户隔离维度，【FIX-002】）"""
+    if not _scope_ready:  # 【FIX-R2-4】fail-closed：scope 迁移失败 → 缓存不可用返回 miss
+        return None
     cache_key = hashlib.sha256(f"{normalize_query(query)}:{bank}:{scope or ''}".encode()).hexdigest()
     db = SessionLocal()
     try:
@@ -84,6 +94,8 @@ async def get_semantic(query: str, bank: str, threshold: float = 0.82, scope: st
     """L2语义匹配（需要 get_embedding 可用时才生效）
     [OPT-03] 阈值从 0.90 降到 0.82，提升近义查询命中率
     [FIX-002] scope 用户隔离：语义召回仅在同 scope 缓存池内匹配"""
+    if not _scope_ready:  # 【FIX-R2-4】fail-closed
+        return None
     from app.utils.embeddings import get_embedding
     query_emb = await get_embedding(query)
     if query_emb is None:
@@ -137,6 +149,8 @@ async def get_semantic(query: str, bank: str, threshold: float = 0.82, scope: st
 
 async def set_cache(query: str, bank: str, answer: str, sources: list, doc_ids: set, scope: str = ""):
     """写入缓存（L1精确key + L2 embedding；scope 用户隔离【FIX-002】）"""
+    if not _scope_ready:  # 【FIX-R2-4】fail-closed：scope 迁移失败 → 不写缓存
+        return
     from app.utils.embeddings import get_embedding
     cache_key = hashlib.sha256(f"{normalize_query(query)}:{bank}:{scope or ''}".encode()).hexdigest()
     embedding = await get_embedding(query)
@@ -177,6 +191,26 @@ def invalidate_for_doc(doc_id: str):
     finally:
         db.close()
     return count
+
+
+def invalidate_query_cache_by_bank(bank: str) -> None:
+    """上传/重解析后失效查询缓存（该 bank + 'all' 的答案缓存都基于旧文档集）。
+    【FIX-R2-7】原只 invalidate_bm25，query_cache 留存旧答案 → 检索不到新文档。
+    删除路径用 invalidate_for_doc（per-doc 精确）；新增/内容变更无 doc_id 可对 → 按 bank 清。
+    """
+    db = SessionLocal()
+    try:
+        result = db.execute(
+            text("DELETE FROM query_cache WHERE bank IN (:b1, :b2)"),
+            {"b1": bank, "b2": "all"},
+        )
+        db.commit()
+        logger.info("[CACHE] query_cache invalidated %d rows for bank=%s(+all)", result.rowcount, bank)
+    except Exception as e:
+        db.rollback()
+        logger.warning("[CACHE] invalidate_query_cache_by_bank failed: %s", e)
+    finally:
+        db.close()
 
 
 def evict_lru(bank: str, max_entries: int = 1000):
