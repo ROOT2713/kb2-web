@@ -18,7 +18,7 @@
 | **多用户权限** | admin/viewer 双角色 + JWT + 路由级 require_role |
 | **Domain 过滤** | 按领域关键词自动路由到对应 Hindsight bank |
 | **OKF 信息架构** | Document 12 字段 + Concept/KGTriple/QualityGate + Concept Summary 上浮 |
-| **66 题质量评估** | 并行测试脚本，66 道真实政务场景题，当前通过率 **74.2%** |
+| **66 题质量评估** | 并行测试脚本，66 道真实政务场景题（历史存档通过率 74.2%，见文末） |
 
 ---
 
@@ -154,7 +154,7 @@ kb2-web/
 | LLM | DeepSeek V4 (OpenRouter) | 成本低、中文表现强 |
 | 缓存 | L2 语义缓存 | 相似 query 命中，nocache 强制绕过 |
 | 鉴权 | JWT + require_role | 轻量、stateless、支持 admin/viewer |
-| 数据存储 | SQLite (共享 V1) | 无需额外 DB 服务，双写策略待定 |
+| 数据存储 | SQLite (kb.db 元数据) + pgvector (向量) | 元数据/缓存 SQLite，chunk 向量 pgvector；registry 打标隔离孤儿 |
 
 ---
 
@@ -208,7 +208,7 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 - `backend/tests/unit/test_audit_fix_acceptance.py`（13 道）+ CC-R2 增补（14 道）覆盖：
   `_ensure_scope_column` PRAGMA 修复 / `hit_count` 从 0 累加（NULL+1=NULL 回归防护）/ scope 用户隔离+默认域共存 /
   `doc_bank_filter` 未知 bank 告警 / upsert embedding 失败**整批原子抛异常**+全成功入库回归 / `_verify_searchable` 质量门（覆盖率≥80%，无硬编码后门）
-- 全量后端测试：**442 passed**（1 个既有环境失败=checklist LLM 依赖，与基线一致）
+- 全量后端测试：**443 passed**（1 个既有环境失败=checklist LLM 依赖，与基线一致）
 
 ### 关键教训（写入代码库的工程经验）
 
@@ -259,7 +259,68 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 
 ---
 
-## 📊 当前状态（2026-09-03 更新）
+## 🔐 第二轮外部审计（R2）整改记录（2026-09-04）
+
+> 独立外部审计 kb2-web-audit-r2（基线 `main@526df74`）17 项发现，经 CC（Claude Code）
+> 对抗复审 + 行为级/语义级测试 + 重启后运行时冒烟三层验证，全数闭环。
+> commits：`d859513 → e395ffa → fa8661b → 59738db → d77a802`（均已推送 origin/main）。
+
+### 问题清单与修复
+
+| # | Commit | 级别 | 发现的问题 | 修复内容 |
+|---|--------|------|-----------|---------|
+| R2-1 | `d859513` | P0 | `generation.chat()` 网络异常/5xx/非 JSON 响应裸抛 500 | httpx 异常捕获 + 指数退避重试(≤15s) + 非 JSON 容错（网关 HTML 页）；顺带修复缩进语义：正常路径误入 except 永不 return |
+| R2-2 | `d859513` | P0 | 缓存隔离未含 rerank 维度（rr=0/1 串缓存） | `cache_scope=f'{user}\|rr={int(use_rerank)}:{mode}'` 复合键并入三处缓存读写；删死代码 `_use_rerank` |
+| R2-3 | `e395ffa` | P1 | 上传任务无并发上限 | `_process_upload_task`→`_impl` + 文件尾同名 wrapper `Semaphore(4)` 限流（调用点零改动，200 硬上限约束无堆积） |
+| R2-4 | `e395ffa` | P1 | 缓存 scope 列迁移失败静默继续（旧逻辑可能串用户缓存） | **fail-closed**：`_scope_ready=False` → 缓存 get/set 全禁用（宁缺毋串） |
+| R2-5 | `d77a802` | P1 | LRU 驱逐仅按 bank COUNT/DELETE，单 scope 灌爆驱逐全 bank | 窗口函数 `ROW_NUMBER() OVER (PARTITION BY bank, scope)` 分组驱逐，scope 隔离公平；**CC 审查修正排序 DESC**（初版 ASC 误淘汰最热条目） |
+| R2-6 | `e395ffa` | P1 | `_verify_searchable` 双份实现（upload/documents 漂移风险）+ pgvector verify 无重试 | 全仓统一 documents 版（质量门 + 3 次 2/4/8s 退避 + searchable=0 保守降级）；upload 主路径补 expected/retained 参数 |
+| R2-7 | `e395ffa` | P1 | 上传/重解析后 query_cache 不失效 → 旧答案残留 | `invalidate_query_cache_by_bank(bank)`（DELETE bank IN (目标, all)），upload + reparse 路径均调用 |
+| R2-8 | `d77a802` | P1 | `require_role` 未知 min_role **fail-open**（`_role_rank.get→0` 全放行） | 定义期 `raise ValueError`（fail-closed，启动即暴露拼写错误） |
+| R2-9 | `d77a802` | P1 | admin 配置用户名无条件直通 → DB 同名低权用户被提权 | 先查 DB：同名存在走角色校验；无同名=配置账号直通（防回归保留） |
+| R2-10 | — | P2 | systemd ExecStart 显式 `--host 0.0.0.0` | **不采纳**：前端/浏览器访问需 0.0.0.0 绑定，属部署需求非疏漏；暴露面由云安全组控制 |
+| R2-11 | `d77a802` | P2 | 500 错误无 request_id，报障无法关联日志 | error_handler 500 body 增加 `request_id` 字段 + `X-Request-ID` header |
+| R2-12 | `d77a802` | P2 | `require_admin`（HTTP Basic 遗留）死 import ×2 | 删除（全仓 0 调用点） |
+| R2-13 | `d77a802` | P2 | admin.py 两个相同 `@router.post("/quality/check")` 堆叠 → 路由注册两次 | 删除冗余空装饰器 |
+| R2-14 | `d77a802` | P2 | upload.py `confirm_quality` Form 参数从未被读取（死参数 ×2） | 删除（外部脚本/测试仍发送该字段会被静默忽略，无害） |
+| R2-15 | `d77a802` | P2 | `invalidate_for_doc` 全表 SELECT 无 WHERE（doc_ids_json JSON 数组无法索引） | `WHERE doc_ids_json LIKE '%doc_id%'` 预过滤（doc_id 仅 hex+`-` 无通配符语义，无注入/无假阴性） |
+| R2-16 | `d77a802` | P2 | 检索配置含幽灵库 `kb_咨询`（pg 实测仅 1 条测试残留 chunk） | BANKS 配置移除 + pg 孤儿 chunk 物理删除归零；咨询内容归 `kb_xhs` 口径一致 |
+| R2-17 | `d77a802` | P2 | `standard_boost` `IN (:ids)` 传 tuple（SQLAlchemy text 不展开，**实测必 ProgrammingError**，异常被吞仅 warning → 排序静默跳过） | expanding bindparam；异常升级 error+exc_info 暴露 |
+
+### CC 对抗审查（proc_b683aa1336b3）与修正
+
+- **R2-5 P0 修正**：初版 `ORDER BY hit_count ASC` + `rn>max` 删的是最热条目（淘汰热保留冷，与原实现相反，缓存命中率会塌陷）。CC 引行号抓出 → 改 `DESC` + docstring 注明 + 语义级测试（真实 SQLite 复刻 schema，2 scope×5 条，断言存活=各 scope 最热 3 条）。
+- 其余 9 项（R2-8/9/11/12/13/14/15/16/17）✅ 无回归。
+
+### 验证方法学（本批）
+
+- **行为级单测** mock 不污染生产库；t6 实证旧写法 ProgrammingError = bug 真实。
+- **语义级测试**（R2-5）真实 SQLite 内存库断言存活集合，比 SQL 字符串断言强。
+- **重启后运行时冒烟 5/5**：admin 配置账号登录 200（R2-9 直通回归保护）/ admin 端点 200（未误伤）/ 无 token→401 / query 200（9 sources）/ R2-15 真实 DB 0 删除不误伤。
+- 单测 9/6 + evict 语义测试全 PASS。
+
+### 关键教训
+
+1. **LRU 驱逐排序方向要对着淘汰目标写**：`ORDER BY ... ASC/DESC` 决定 rn=1 是谁，`rn>max` 删的是尾部——写反 = 静默淘汰最热条目，且"只查数量不查存活集合"的测试捕获不了，必须断言存活集合。
+2. **权限 fail-open 是安全反模式**：未知角色应定义期抛错而非默默放行；同名配置账号必须落角色校验，防 DB 低权用户撞名提权。
+3. **SQLAlchemy text() 不展开序列绑定**：`IN (:ids)` 传 tuple 必炸且异常被吞时最阴险（功能静默降级），用 `bindparam(expanding=True)` 且异常要升级可见。
+4. **JSON 数组列无法索引但可 LIKE 预过滤**：doc_id 字符集（hex+`-`）无通配符语义 → 安全超集粗筛 + JSON 精确判保留，全表扫变点查。
+
+---
+
+## 📊 当前状态（2026-09-04 更新）
+
+| 指标 | 数值 |
+|------|------|
+| 后端测试 | **443 passed**（含审计整改验收测试 13+14 道；62 skipped 环境项） |
+| R2 第二轮外部审计 | **17 项全闭环**（16 修复 + 1 不采纳 R2-10；CC 对抗复审修正 R2-5 P0） |
+| 代码状态 | HEAD `d77a802`，全部推送 origin/main；服务已重启生效（MainPID 3205534） |
+| 缓存 | hit_count 从 0 累加 + scope 隔离（含 rerank 维度）+ (bank,scope) 分组 LRU 驱逐 |
+| 权限 | JWT 三重守卫 + require_role fail-closed（未知角色拒启）+ admin 同名 DB 用户落角色校验 |
+| 健壮性 | chat() 指数退避重试 + LLM rerank 统一走 chat + 上传 Semaphore(4) + 500 带 request_id |
+| 文档数 | **562 篇 active**（含 0904 回填 359；跨多 banks） |
+
+### 历史状态（2026-09-03 存档）
 
 | 指标 | 数值 |
 |------|------|
