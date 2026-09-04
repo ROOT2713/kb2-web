@@ -10,9 +10,8 @@ Roles:
 
 import bcrypt
 import hashlib
-import os
 
-from sqlalchemy import Column, String, Integer, Enum as SAEnum
+from sqlalchemy import Column, String, Integer
 
 from app.models.database import Base
 

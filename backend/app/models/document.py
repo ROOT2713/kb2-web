@@ -6,7 +6,7 @@ OKF lifecycle: concept_id, domain, confidence, status, superseded_by (P0 2026-06
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, String, DateTime, Text, Integer, Float, ForeignKey, Date, Index
+from sqlalchemy import Column, String, DateTime, Text, Integer, Float, Date, Index
 from app.models.database import Base
 
 

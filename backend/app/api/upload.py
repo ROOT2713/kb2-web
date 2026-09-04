@@ -23,7 +23,7 @@ from app.models.database import SessionLocal
 from app.models.document import Document, ParentChunk
 from app.models.concept import Concept
 from app.models.upload_task import UploadTask
-from app.services.concept_gen import generate_concepts_for_doc, infer_doc_concept_id, infer_domain, _BANK_TO_DOMAIN
+from app.services.concept_gen import generate_concepts_for_doc, infer_doc_concept_id, infer_domain
 from app.services.confidence import update_concept_confidence
 from app.repositories.document_repo import DocumentRepository
 from app.repositories.vector_repo import get_vector_store
@@ -38,7 +38,7 @@ from app.services.chunking import (
 from app.services.parsing import parse_document
 from app.services.quality import assess_quality, profile_document
 from app.services.retrieval import LEGACY_BANK_TO_HS, get_bank_config, recall
-from app.services.quality_gates import check_document as qg_check_doc, hard_check_g1 as qg_hard_check_g1
+from app.services.quality_gates import check_document as qg_check_doc
 from app.utils.text_cleaning import clean_pipeline, filename_to_title
 
 logger = logging.getLogger(__name__)

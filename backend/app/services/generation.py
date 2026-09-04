@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 async def chat(
     messages: List[Dict],
-    stream: bool = False,
     max_retries: int = 3,
     temperature: float = 0.3,
     max_tokens: int = 4000,
@@ -32,7 +31,6 @@ async def chat(
 
     Args:
         messages: OpenAI 格式的消息列表
-        stream: 是否流式返回
         max_retries: 最大重试次数
         temperature: 温度参数
         max_tokens: 最大输出 token 数
@@ -73,11 +71,8 @@ async def chat(
                         "messages": messages,
                         "temperature": temperature,
                         "max_tokens": max_tokens,
-                        "stream": stream,
                     },
                 )
-                if stream:
-                    return resp
         except httpx.HTTPError as e:
             last_error = e
             logger.warning(
@@ -195,13 +190,6 @@ async def chat(
             raise ValueError(f"LLM API choices 格式异常: {e}")
 
     raise ValueError(f"LLM API 重试 {max_retries} 次后仍失败: {last_error or 'rate limit'}")
-
-
-async def stream_chat(messages: List[Dict]):
-    """
-    流式聊天 — 返回 httpx.Response 对象，调用者遍历 resp.aiter_lines()
-    """
-    return await chat(messages, stream=True)
 
 
 # ── 逻辑校验 ────────────────────────────────────────────────────────────────

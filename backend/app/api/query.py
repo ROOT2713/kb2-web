@@ -15,24 +15,9 @@ from app.api.query_engine import (
     _generate_answer,
     _assess_recall_confidence,
     _write_audit_log,
-    _extract_high_signal_terms,
-    _is_summary_doc,
-    _sort_by_confidence,
-    _sort_by_freshness,
-    _clean_source_text,
-    _extract_standard_base_and_year,
-    _normalize_doc_title_for_standard,
-    _normalize_standard_keyword,
-    _keyword_suggestion_rules,
     _assemble_standard_contents_meta,
-    _build_follow_up_questions,
-    _extract_standard_hints_from_sources,
-    _merge_persistent_suggestions,
     _build_persistent_suggestions,
-    _suggestions_for_answer,
     _generate_query_suggestions,
-    _STD_VERSION_PATTERN,
-    _STD_PATTERN,
     _REJECT_MSG_KNOWLEDGE_GAP,
     _REJECT_MSG_LOW_COVERAGE,
 )
@@ -53,7 +38,6 @@ from app.models.database import SessionLocal
 from app.services.session_manager import (
     get_session as session_get,
     create_or_update_session as session_update,
-    release_session as session_release,
 )
 from app.middleware.jwt_auth import get_current_user, require_role, get_username_from_token
 from app.models.audit import AuditLog
@@ -68,21 +52,16 @@ from app.services.generation import chat, logic_validate
 from app.services.retrieval import (
     BANKS,
     _get_active_hindsight_banks,
-    _find_rate_table_snippet,
-    apply_tiebreaker_sort,
+    expand_query_synonyms,
     bm25_search,
     build_bm25_index,
-    expand_query_synonyms,
     keyword_rerank,
-    llm_rerank,
-    cross_encoder_rerank,
     doc_bank_filter,
     get_bank_config,
     recall,
     rrf_merge,
 )
 from app.utils.text_cleaning import (
-    deai_postprocess,
     expand_amount_tiers,
     normalize_standard_numbers,
     _fix_encoding,

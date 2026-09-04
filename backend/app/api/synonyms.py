@@ -12,7 +12,6 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app.models.database import get_db
-from app.models.synonym import Synonym
 from app.services.retrieval import _synonym_cache
 from app.middleware.jwt_auth import require_role
 

@@ -241,7 +241,6 @@ def quality_stats(db: Session = Depends(get_db)):
 # ═══════════════════════════════════════════════════════
 
 from app.services.confidence import (
-    compute_concept_confidence,
     compute_document_confidence,
     update_concept_confidence,
     update_all_confidences,

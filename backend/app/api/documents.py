@@ -18,12 +18,10 @@ import tempfile
 import traceback
 import uuid
 from datetime import datetime, timezone
-from io import BytesIO
 from pathlib import Path
 from typing import Optional
 from pydantic import BaseModel
 
-import docx as _docx_lib
 import httpx
 import pypdf
 from fastapi import APIRouter, Depends, Form, HTTPException, Query

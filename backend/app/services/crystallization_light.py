@@ -188,9 +188,8 @@ def collect_grey_zone_candidates(db: Session, limit: int = 500) -> List[Dict]:
     """
     import asyncio
     from app.models.concept import Concept
-    from app.services.contradiction import _get_concept_embedding, _cosine_similarity, MAX_SIBLINGS, SIBLING_SAMPLE_SIZE
+    from app.services.contradiction import _cosine_similarity, MAX_SIBLINGS, SIBLING_SAMPLE_SIZE
     from app.utils.embeddings import get_embedding
-    import numpy as np
 
     concepts = db.query(Concept).filter(
         Concept.status == "active",

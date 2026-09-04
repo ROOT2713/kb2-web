@@ -8,7 +8,6 @@ Ported from: kb-web server.py list_banks() L4152-L4179,
 import json
 import logging
 import re
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -16,9 +15,9 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models.database import get_db, SessionLocal
+from app.models.database import get_db
 from app.services.retrieval import (
-    BANKS, _active_hs_banks_cache, _hindsight_request, get_bank_config, reload_bank_config,
+    BANKS, _active_hs_banks_cache, _hindsight_request, reload_bank_config,
 )
 
 from app.middleware.jwt_auth import require_role  # 【FIX-R2-12】删 require_admin 死 import（HTTP Basic 遗留，0 调用点）
@@ -144,7 +143,7 @@ async def list_categories(db: Session = Depends(get_db)):
     Returns hierarchical structure: super_category → category → subcategories.
     """
     from app.services.category_rules import CATEGORIES, SUPER_CATEGORY_MAP, \
-        SUPER_CATEGORY_ORDER, SUBCATEGORY_TO_CATEGORY
+        SUPER_CATEGORY_ORDER
     
     rows = db.execute(
         sa_text(
