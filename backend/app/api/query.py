@@ -125,12 +125,19 @@ async def query(
 
     # ── nocache 参数解析（兼容 "false"/"0" 为空）──
     _skip_cache = nocache and nocache.lower() not in ("false", "0", "")
-    _use_rerank = rerank and rerank.lower() not in ("false", "0", "")
 
     # bank 白名单校验
     if bank not in BANKS:
         valid = list(BANKS.keys())
         raise HTTPException(400, f"未知 bank '{bank}'，可选: {valid}")
+
+    # ── 确定 rerank 配置（提前到缓存检查前，作为缓存隔离维度）──
+    # 【FIX-R2-2】缓存 key/scope 必须含 rerank 配置——不同 rerank 产出的答案不同，
+    # 共用缓存会串答案并污染 rerank A/B 评测（外部审计 R2 实证：E2 全 cache_hit=exact）
+    use_rerank = rerank.lower() == "true" or (bank == "checklist")
+    valid_modes = {"default", "multidim", "confidence", "freshness", "cross_encoder"}
+    use_rerank_mode = rerank_mode if rerank_mode in valid_modes else "default"
+    cache_scope = f"{current_user}|rr={int(use_rerank)}:{use_rerank_mode}"
 
     # ── 多轮域锁定：获取会话状态 ──
     session_doc_ids = None
@@ -166,7 +173,7 @@ async def query(
     # ── 缓存命中检查（L1精确 + L2语义）──
     if not _skip_cache:
         try:
-            cached = cache_get_exact(q, bank, scope=current_user)
+            cached = cache_get_exact(q, bank, scope=cache_scope)  # 【FIX-R2-2】scope 含 rerank 维度
             if cached:
                 # 写入审计日志（缓存命中路径）
                 _write_audit_log(request, q, cached["answer"], cached.get("sources", []), cache_hit=1)
@@ -179,7 +186,7 @@ async def query(
                     "session_id": session_id,
                     "suggestions": _build_persistent_suggestions(q, cached["sources"]),
                 }
-            cached = await cache_get_semantic(q, bank, threshold=settings.cache_l2_threshold, scope=current_user)
+            cached = await cache_get_semantic(q, bank, threshold=settings.cache_l2_threshold, scope=cache_scope)  # 【FIX-R2-2】
             if cached:
                 # 写入审计日志（缓存命中路径）
                 _write_audit_log(request, q, cached["answer"], cached.get("sources", []), cache_hit=1)
@@ -256,12 +263,7 @@ async def query(
     if _tier_extra:
         query_keywords = list(set(query_keywords + _tier_extra))
 
-    # ── 确定是否使用 rerank ──
-    use_rerank = rerank.lower() == "true" or (bank == "checklist")
-
-    # ── 确定 rerank_mode ──
-    valid_modes = {"default", "multidim", "confidence", "freshness", "cross_encoder"}
-    use_rerank_mode = rerank_mode if rerank_mode in valid_modes else "default"
+    # （use_rerank / use_rerank_mode / cache_scope 已在函数头部计算，见 【FIX-R2-2】）
 
     # ── Phase 1: 构建搜索上下文 ──
     ctx = await _build_search_context(
@@ -518,7 +520,7 @@ async def query(
     if not _skip_cache and ctx["doc_facts"] and answer != _REJECT_MSG_KNOWLEDGE_GAP:
         try:
             doc_ids = set(ctx["doc_facts"].keys()) if ctx["doc_facts"] else set()
-            await cache_set(q, bank, answer, sources, doc_ids, scope=current_user)
+            await cache_set(q, bank, answer, sources, doc_ids, scope=cache_scope)  # 【FIX-R2-2】
             logger.info("[CACHE] Stored result for: %s", q[:50])
         except Exception as e:
             logger.info("[CACHE] Write error: %s", e)

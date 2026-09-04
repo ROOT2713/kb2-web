@@ -46,81 +46,118 @@ async def chat(
 
     last_error = None
     for attempt in range(max_retries):
-        async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
-            resp = await client.post(
-                f"{settings.llm_base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-                json={
-                    "model": settings.llm_model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                    "stream": stream,
-                },
+        # 【FIX-R2-1】网络层异常（超时/连接失败）必须捕获重试——此前 httpx.ReadTimeout/
+        # ConnectError 直接冒泡 → 调用方只捕 ValueError → 整请求 500（fee+all 500 根因）
+        try:
+            async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
+                resp = await client.post(
+                    f"{settings.llm_base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+                    json={
+                        "model": settings.llm_model,
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "stream": stream,
+                    },
+                )
+                if stream:
+                    return resp
+        except httpx.HTTPError as e:
+            last_error = e
+            logger.warning(
+                "LLM API 网络异常 %s (attempt %d/%d), %ds 后重试",
+                type(e).__name__, attempt + 1, max_retries, min(2 ** attempt, 15),
             )
-            if stream:
-                return resp
-
-            # 429 限流 → 等待重试
-            if resp.status_code == 429:
-                retry_after = int(resp.headers.get("Retry-After", 5 * (attempt + 1)))
-                logger.warning("LLM API 429 限流, 第%d次重试, 等待 %ds", attempt + 1, retry_after)
-                await asyncio.sleep(retry_after)
+            if attempt < max_retries - 1:
+                await asyncio.sleep(min(2 ** attempt, 15))
                 continue
+            break  # 重试耗尽 → 落到循环外 raise ValueError(last_error)
 
+        # 429 限流 → 等待重试
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", 5 * (attempt + 1)))
+            logger.warning("LLM API 429 限流, 第%d次重试, 等待 %ds", attempt + 1, retry_after)
+            await asyncio.sleep(retry_after)
+            continue
+
+        # 【FIX-R2-1】服务端 5xx（LLM 网关 500/502/503 等临时故障）→ 退避重试
+        if resp.status_code >= 500:
+            last_error = f"HTTP {resp.status_code}"
+            logger.warning(
+                "LLM API %d 服务端错误 (attempt %d/%d), %ds 后重试",
+                resp.status_code, attempt + 1, max_retries, min(2 ** attempt, 15),
+            )
+            if attempt < max_retries - 1:
+                await asyncio.sleep(min(2 ** attempt, 15))
+                continue
+            break
+
+        try:
             data = resp.json()
-            # API 容错：choices 字段缺失或格式异常
-            choices = data.get("choices")
-            if not choices:
-                error_info = data.get("error", {})
-                error_msg = error_info.get("message", "") if isinstance(error_info, dict) else str(error_info)
-                error_code = error_info.get("code", "") if isinstance(error_info, dict) else ""
-                # 429 也可能在 JSON body 中
-                if error_code == "429" or "limit" in error_msg.lower():
-                    wait = 5 * (attempt + 1)
-                    logger.warning("LLM API rate limit in body, 第%d次重试, 等待 %ds", attempt + 1, wait)
-                    await asyncio.sleep(wait)
+        except ValueError as e:
+            # 【FIX-R2-1】非 JSON 响应（网关 HTML 错误页等）→ 重试，不裸抛成 500
+            last_error = f"invalid JSON: {e}"
+            logger.warning(
+                "LLM API 响应非 JSON (attempt %d/%d): %.120s",
+                attempt + 1, max_retries, resp.text,
+            )
+            if attempt < max_retries - 1:
+                await asyncio.sleep(min(2 ** attempt, 15))
+                continue
+            raise ValueError(f"LLM API 返回非 JSON: {resp.text[:200]}")
+        # API 容错：choices 字段缺失或格式异常
+        choices = data.get("choices")
+        if not choices:
+            error_info = data.get("error", {})
+            error_msg = error_info.get("message", "") if isinstance(error_info, dict) else str(error_info)
+            error_code = error_info.get("code", "") if isinstance(error_info, dict) else ""
+            # 429 也可能在 JSON body 中
+            if error_code == "429" or "limit" in error_msg.lower():
+                wait = 5 * (attempt + 1)
+                logger.warning("LLM API rate limit in body, 第%d次重试, 等待 %ds", attempt + 1, wait)
+                await asyncio.sleep(wait)
+                continue
+            logger.warning("LLM API 无 choices. status=%d error=%s", resp.status_code, error_msg)
+            raise ValueError(f"LLM API 返回异常: {error_msg or resp.text[:200]}")
+
+        try:
+            # ── Cost tracking ──
+            usage = data.get("usage", {})
+            if usage:
+                try:
+                    record_call(
+                        model=settings.llm_model,
+                        prompt_tokens=usage.get("prompt_tokens", 0),
+                        completion_tokens=usage.get("completion_tokens", 0),
+                        source="chat",
+                    )
+                except Exception as e:
+                    logger.warning("cost_tracker failed: %s", e)
+
+            content = choices[0]["message"]["content"]
+            finish_reason = choices[0].get("finish_reason", "")
+            # 铁律：content 为空时绝不使用 reasoning_content（思维链不是答案）。
+            # 推理模型 reasoning 会吃满 token 预算 → content 被截断为空（finish_reason=length）
+            # → 翻倍 max_tokens 重试（带上限保护）；其余空内容走正常重试/报错。
+            if not content and finish_reason == "length":
+                if attempt < max_retries - 1:
+                    next_mt = min(max_tokens * 2, 16000)
+                    logger.warning(
+                        "LLM content empty (finish_reason=length), retrying with max_tokens=%d",
+                        next_mt,
+                    )
+                    max_tokens = next_mt
                     continue
-                logger.warning("LLM API 无 choices. status=%d error=%s", resp.status_code, error_msg)
-                raise ValueError(f"LLM API 返回异常: {error_msg or resp.text[:200]}")
+            if not content:
+                logger.warning("LLM returned empty content (finish_reason=%s), attempt=%d", finish_reason, attempt + 1)
+                if attempt < max_retries - 1:
+                    continue
+                raise ValueError(f"LLM returned empty content after {max_retries} attempts")
+            return content
 
-            try:
-                # ── Cost tracking ──
-                usage = data.get("usage", {})
-                if usage:
-                    try:
-                        record_call(
-                            model=settings.llm_model,
-                            prompt_tokens=usage.get("prompt_tokens", 0),
-                            completion_tokens=usage.get("completion_tokens", 0),
-                            source="chat",
-                        )
-                    except Exception as e:
-                        logger.warning("cost_tracker failed: %s", e)
-
-                content = choices[0]["message"]["content"]
-                finish_reason = choices[0].get("finish_reason", "")
-                # 铁律：content 为空时绝不使用 reasoning_content（思维链不是答案）。
-                # 推理模型 reasoning 会吃满 token 预算 → content 被截断为空（finish_reason=length）
-                # → 翻倍 max_tokens 重试（带上限保护）；其余空内容走正常重试/报错。
-                if not content and finish_reason == "length":
-                    if attempt < max_retries - 1:
-                        next_mt = min(max_tokens * 2, 16000)
-                        logger.warning(
-                            "LLM content empty (finish_reason=length), retrying with max_tokens=%d",
-                            next_mt,
-                        )
-                        max_tokens = next_mt
-                        continue
-                if not content:
-                    logger.warning("LLM returned empty content (finish_reason=%s), attempt=%d", finish_reason, attempt + 1)
-                    if attempt < max_retries - 1:
-                        continue
-                    raise ValueError(f"LLM returned empty content after {max_retries} attempts")
-                return content
-
-            except (KeyError, IndexError, TypeError) as e:
-                raise ValueError(f"LLM API choices 格式异常: {e}")
+        except (KeyError, IndexError, TypeError) as e:
+            raise ValueError(f"LLM API choices 格式异常: {e}")
 
     raise ValueError(f"LLM API 重试 {max_retries} 次后仍失败: {last_error or 'rate limit'}")
 
