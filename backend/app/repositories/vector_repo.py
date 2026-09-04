@@ -279,6 +279,8 @@ class PgVectorStore:
             text = chunk.get("content") or chunk.get("text", "")
             tags = chunk.get("tags", [])
             meta = await self._tags_to_metadata(tags)
+            # 【FIX-0904】防复发: 所有写入口(upload/refetch/reparse)经此方法, 新 chunk 默认注册
+            meta.setdefault("registry", "1")
             rows.append((
                 doc_id,
                 offset + i,  # global chunk_index
@@ -379,7 +381,9 @@ class PgVectorStore:
                 WITH top_vec AS (
                     SELECT content, metadata, doc_id, chunk_index, embedding
                     FROM vector_chunks
-                    WHERE bank = $1 AND embedding IS NOT NULL
+                    -- 【FIX-0904】检索端过滤孤儿：仅放行 SQLite documents 有行(registry=1)的 doc。
+                    -- 13,711 历史孤儿(6月批次 BGE-M3 回填未落元数据)无此标记 → 语义检索不可见。
+                    WHERE bank = $1 AND embedding IS NOT NULL AND metadata->>'registry' = '1'
                     ORDER BY embedding <=> $2::vector
                     LIMIT $3
                 )
@@ -413,6 +417,8 @@ class PgVectorStore:
             else:
                 meta = dict(raw_meta) if raw_meta else {}
             for k, v in meta.items():
+                if k == "registry":  # 【FIX-0904】内部标记, 不暴露给 LLM 上下文
+                    continue
                 tags.append(f"{k}:{v}")
             tags.append(f"doc_id:{r['doc_id']}")
             tags.append(f"chunk:{r['chunk_index']}")
