@@ -253,6 +253,47 @@ def expand_query_synonyms(q: str) -> str:
 # 语义召回
 # ═══════════════════════════════════════════════════════════════════
 
+# ── 可见性过滤（【FIX-D3】searchable 门禁对语义检索生效）──────────
+# registry=1 只证明"SQLite 有行 + pg 有实存"，不反映户口状态。
+# status!='active' 或 searchable!=1 的 doc 即使 registry=1 也不得被语义召回
+# （BM25/SQL 路径本就有 searchable=1 AND status='active' 过滤，此处补齐向量路径）。
+_INVISIBLE_TTL = 30.0
+_invisible_cache = {"ts": 0.0, "ids": frozenset()}
+
+
+def _get_invisible_doc_ids() -> frozenset:
+    now = _time.monotonic()
+    if now - _invisible_cache["ts"] > _INVISIBLE_TTL:
+        ids = set()
+        try:
+            db = SessionLocal()
+            try:
+                rows = db.execute(text(
+                    "SELECT doc_id FROM documents WHERE status != 'active' OR searchable != 1"
+                )).fetchall()
+                ids = {r[0] for r in rows}
+            finally:
+                db.close()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("_get_invisible_doc_ids: query failed, 放行全部: %s", e)
+        _invisible_cache["ts"] = now
+        _invisible_cache["ids"] = frozenset(ids)
+    return _invisible_cache["ids"]
+
+
+def _filter_invisible(results: list) -> list:
+    """从召回结果中剔除户口不可见（superseded / searchable=0）的 doc chunk。"""
+    invisible = _get_invisible_doc_ids()
+    if not invisible:
+        return results
+    out = []
+    for r in results:
+        did = next((t[7:] for t in r.get("tags", []) if t.startswith("doc_id:")), None)
+        if did is None or did not in invisible:
+            out.append(r)
+    return out
+
+
 async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int = 4096,
                   max_chunks_per_doc: int = 8,
                   doc_ids: set = None) -> list:
@@ -320,9 +361,10 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
                         returned_doc_ids.append(t[7:])
                         break
             logger.warning("[RECALL-DEBUG] bank=%s merged=%d doc_ids=[%s]", bank, len(merged), ",".join(set(returned_doc_ids)))
-            return merged[:limit]
+            return _filter_invisible(merged)[:limit]
         else:
-            return await store.query(query_text=query[:1800], bank=hs_bank, top_k=limit)
+            _r = await store.query(query_text=query[:1800], bank=hs_bank, top_k=limit)
+            return _filter_invisible(_r)
 
     # 2. "all" or "kb" (legacy) → query all active Hindsight banks in parallel
     if bank in ("all", "kb") or not hs_bank:
@@ -378,7 +420,7 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
                         doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
                     seen.add(key)
                     merged.append(r)
-        return merged[:limit]
+        return _filter_invisible(merged)[:limit]
 
     # 3. Specific bank → use resolved Hindsight bank name
     # Try to pass doc_ids to Hindsight API if supported
@@ -420,7 +462,7 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
                 _dc_raw[_did] = _dc_raw.get(_did, 0) + 1
             _filtered.append(_r)
         results = _filtered
-    return results
+    return _filter_invisible(results)
 
 
 # ═══════════════════════════════════════════════════════════════════
