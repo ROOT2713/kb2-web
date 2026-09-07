@@ -430,7 +430,7 @@ async def _process_upload_task_impl(
 
     _update_upload_task(task_id, progress=0.35, stage="building_index")
     doc_id = str(uuid.uuid4())
-    from app.services.version_chain import detect_existing_doc, mark_superseded
+    from app.services.version_chain import detect_existing_doc, supersede_and_purge
     parent_map = {pc["parent_index"]: pc["parent"] for pc in pc_chunks}
     memory_items = []
     for i, pc in enumerate(pc_chunks):
@@ -462,7 +462,7 @@ async def _process_upload_task_impl(
                 dr2.concept_id = con_id
         exd = detect_existing_doc(db=db, title=doc_title, bank=bank, doc_type=doc_type, content_hash=norm_hash)
         if exd:
-            mark_superseded(db, old_doc_id=exd.doc_id, new_doc_id=doc_id, reason="new_version_upload")
+            await supersede_and_purge(db, old_doc_id=exd.doc_id, new_doc_id=doc_id, reason="new_version_upload")
             if dr2:
                 dr2.supersedes = exd.doc_id
         # ── Apply frontmatter fields to Document (only non-empty, non-override) ──

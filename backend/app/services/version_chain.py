@@ -5,7 +5,9 @@ P1-1: 当上传新版本文档时，自动标记旧版本为 superseded。
 
 设计原则：
 - 一个文档同一时间只有一个 active 版本
-- superseded 版本保留数据（不删除），但 status 改为 superseded
+- superseded 版本 SQLite 保留元数据（status='superseded' 退出 BM25/可见集）
+- pgvector 向量由 supersede_and_purge 双写删除（【FIX-D2】防旧版语义永生——
+  仅标记不删向量会使旧版碎片仍被语义检索召回）
 - 通过 superseded_by / supersedes 字段形成双向链
 """
 
@@ -122,6 +124,35 @@ def mark_superseded(
                 old_doc_id[:8], new_doc_id[:8], reason)
 
     return True
+
+
+async def supersede_and_purge(
+    db: Session,
+    old_doc_id: str,
+    new_doc_id: str,
+    reason: str = "new_version",
+) -> bool:
+    """标记 superseded + 双写删除旧文档 pgvector 向量（【FIX-D2】）。
+
+    仅 SQLite 标记 superseded 会让旧版向量在语义检索中"永生"——
+    registry=1 标记不随户口状态撤销，旧版碎片仍可被召回。
+    本函数在标记后同步清理旧文档 pg 向量。
+    调用方必须在 async 上下文；pg 删除失败仅告警，不阻断 supersede 本身。
+    """
+    from app.config import settings as _settings
+    ok = mark_superseded(db, old_doc_id=old_doc_id, new_doc_id=new_doc_id, reason=reason)
+    if ok and _settings.vector_backend == "pgvector":
+        from app.repositories.vector_repo import get_vector_store
+        old = db.query(Document).filter(Document.doc_id == old_doc_id).first()
+        hs_bank = old.hs_bank if (old and old.hs_bank) else "kb"
+        try:
+            store = get_vector_store()
+            await store.delete(old_doc_id, hs_bank)
+            logger.info("supersede_and_purge: purged pg vectors doc=%s bank=%s",
+                        old_doc_id[:8], hs_bank)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("supersede_and_purge: pg purge failed (supersede 仍生效): %s", e)
+    return ok
 
 
 def get_version_history(

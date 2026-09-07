@@ -177,6 +177,108 @@ class TestMarkSuperseded:
         assert result is False
 
 
+class TestSupersedeAndPurge:
+    """supersede_and_purge — D2 双写删除 pg 向量测试。"""
+
+    async def _mk_pair(self, db_session):
+        old = Document(doc_id="old-purge-001", title="旧版", bank="general",
+                       hs_bank="kb_general", status="active")
+        new = Document(doc_id="new-purge-001", title="新版", bank="general",
+                       hs_bank="kb_general", status="active")
+        db_session.add_all([old, new])
+        db_session.commit()
+        return old, new
+
+    @pytest.mark.asyncio
+    async def test_purge_called_on_pgvector(self, db_session, monkeypatch):
+        """pgvector 后端：标记 superseded 后调用 store.delete 清理旧 doc 向量。"""
+        # supersede_and_purge 内是函数级局部 import（from app.config import settings /
+        # from app.repositories.vector_repo import get_vector_store），
+        # 故 monkeypatch 必须打底层模块路径，patch 生效于调用时。
+        monkeypatch.setattr("app.config.settings.vector_backend", "pgvector")
+
+        class FakeStore:
+            def __init__(self):
+                self.deleted = []
+
+            async def delete(self, doc_id, bank):
+                self.deleted.append((doc_id, bank))
+                return True
+
+        fake = FakeStore()
+        monkeypatch.setattr(
+            "app.repositories.vector_repo.get_vector_store", lambda: fake,
+        )
+
+        from app.services.version_chain import supersede_and_purge
+        old, new = await self._mk_pair(db_session)
+        result = await supersede_and_purge(
+            db_session, old_doc_id="old-purge-001", new_doc_id="new-purge-001",
+            reason="test",
+        )
+        db_session.commit()
+
+        assert result is True
+        assert fake.deleted == [("old-purge-001", "kb_general")]
+        old = db_session.query(Document).filter(Document.doc_id == "old-purge-001").first()
+        assert old.status == "superseded"
+
+    @pytest.mark.asyncio
+    async def test_no_purge_when_not_pgvector(self, db_session, monkeypatch):
+        """非 pgvector 后端：不调用 store.delete。"""
+        monkeypatch.setattr("app.config.settings.vector_backend", "hindsight")
+
+        called = []
+
+        class FakeStore:
+            async def delete(self, doc_id, bank):
+                called.append((doc_id, bank))
+                return True
+
+        monkeypatch.setattr(
+            "app.repositories.vector_repo.get_vector_store", lambda: FakeStore(),
+        )
+
+        from app.services.version_chain import supersede_and_purge
+        old, new = await self._mk_pair(db_session)
+        result = await supersede_and_purge(
+            db_session, old_doc_id="old-purge-001", new_doc_id="new-purge-001",
+            reason="test",
+        )
+        db_session.commit()
+
+        assert result is True
+        assert called == []
+        old = db_session.query(Document).filter(Document.doc_id == "old-purge-001").first()
+        assert old.status == "superseded"
+
+    @pytest.mark.asyncio
+    async def test_purge_failure_does_not_block(self, db_session, monkeypatch):
+        """pg 删除失败仅告警，supersede 本身仍生效。"""
+        monkeypatch.setattr("app.config.settings.vector_backend", "pgvector")
+
+        class BoomStore:
+            async def delete(self, doc_id, bank):
+                raise RuntimeError("pg down")
+
+        monkeypatch.setattr(
+            "app.repositories.vector_repo.get_vector_store", lambda: BoomStore(),
+        )
+
+        from app.services.version_chain import supersede_and_purge
+        old, new = await self._mk_pair(db_session)
+        result = await supersede_and_purge(
+            db_session, old_doc_id="old-purge-001", new_doc_id="new-purge-001",
+            reason="test",
+        )
+        db_session.commit()
+
+        assert result is True
+        old = db_session.query(Document).filter(Document.doc_id == "old-purge-001").first()
+        assert old.status == "superseded"
+        assert old.superseded_by == "new-purge-001"
+
+
 class TestGetVersionHistory:
     """get_version_history 集成测试。"""
 

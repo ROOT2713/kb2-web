@@ -1407,7 +1407,7 @@ async def reparse_document(
 
 from app.services.version_chain import (
     detect_existing_doc,
-    mark_superseded,
+    supersede_and_purge,
     get_version_history,
 )
 
@@ -1428,7 +1428,7 @@ def get_versions(
 
 
 @router.post("/{doc_id}/supersede")
-def supersede_document(
+async def supersede_document(
     doc_id: str,
     new_doc_id: str = Query(..., description="替代此文档的新版本 doc_id"),
     reason: str = Query("new_version", description="supersede 原因"),
@@ -1438,8 +1438,9 @@ def supersede_document(
     """手动标记文档为 superseded。
 
     将 doc_id 标记为被 new_doc_id 替代，建立双向链接。
+    同时双写删除旧文档 pgvector 向量（D2 止血）。
     """
-    success = mark_superseded(db, old_doc_id=doc_id, new_doc_id=new_doc_id, reason=reason)
+    success = await supersede_and_purge(db, old_doc_id=doc_id, new_doc_id=new_doc_id, reason=reason)
     if not success:
         raise HTTPException(400, "Supersede failed — check doc_id and new_doc_id exist")
     db.commit()
