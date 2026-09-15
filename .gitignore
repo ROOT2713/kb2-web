@@ -61,4 +61,5 @@ frontend/tmp/
 
 # Backup files
 *.bak
+*.bak.*
 0909/

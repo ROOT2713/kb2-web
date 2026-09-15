@@ -22,6 +22,9 @@ MODEL_PRICES: dict[str, dict[str, float]] = {
     "deepseek-chat": {"input": 0.14, "output": 0.28},
     "deepseek-v4-pro": {"input": 0.14, "output": 0.28},
     "deepseek-v4-flash": {"input": 0.07, "output": 0.14},
+    # DeepSeek-V4.1-Flash 规范模型名（2026-09-16 起）。legacy 名 deepseek-v4-flash /
+    # deepseek-chat 由上游按 Flash 价转发，故三者同价。
+    "deepseek-flash": {"input": 0.07, "output": 0.14},
     "gpt-4o": {"input": 2.50, "output": 10.00},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
     "claude-sonnet-4": {"input": 3.00, "output": 15.00},
