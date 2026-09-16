@@ -333,9 +333,11 @@ class PgVectorStore:
         async with pool.acquire() as conn:
             if not append:
                 # 只在首次调用时删除旧chunks
+                # 【FIX-P2-G1】按 doc_id 全量删除（原 (doc_id, bank) 二元条件）：
+                # doc_id 是 UUID 全局唯一，换 bank 重传时旧 bank 行删不掉会成孤儿。
                 await conn.execute(
-                    "DELETE FROM vector_chunks WHERE doc_id = $1 AND bank = $2",
-                    doc_id, bank,
+                    "DELETE FROM vector_chunks WHERE doc_id = $1",
+                    doc_id,
                 )
             # Bulk insert
             if valid_rows:
@@ -431,12 +433,19 @@ class PgVectorStore:
 
     # ── delete ─────────────────────────────────────────────────
     async def delete(self, doc_id: str, bank: str) -> bool:
-        """DELETE FROM vector_chunks WHERE doc_id=$1 AND bank=$2."""
+        """【FIX-P2-G1】DELETE FROM vector_chunks WHERE doc_id=$1.
+
+        doc_id 是 UUID（全局唯一），bank 只是冗余属性。
+        旧实现按 (doc_id, bank) 二元条件删除 —— 文档换 bank 后旧 bank 的向量
+        删不掉，是孤儿向量的复发源（实测 53553d2a：hs_bank=kb_general，pg 残留
+        kb 3 条）。改为按 doc_id 全量删除。
+        bank 形参保留（兼容调用方 + 日志），不参与 WHERE。
+        """
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             result = await conn.execute(
-                "DELETE FROM vector_chunks WHERE doc_id = $1 AND bank = $2",
-                doc_id, bank,
+                "DELETE FROM vector_chunks WHERE doc_id = $1",
+                doc_id,
             )
         affected = result.replace("DELETE ", "")
         logger.info("PgVectorStore delete: doc_id=%s bank=%s affected=%s", doc_id, bank, affected)

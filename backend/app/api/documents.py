@@ -1059,11 +1059,38 @@ async def delete_document(
     if settings.vector_backend == "pgvector":
         hs_bank = doc_hs_bank or "kb"
         store = get_vector_store()
-        try:
-            await store.delete(doc_id, hs_bank)
-            logger.info("delete: pgvector removed %s from %s", doc_id[:8], hs_bank)
-        except Exception as e:
-            logger.warning("delete_document: pgvector delete failed: %s", e)
+        # 【FIX-P2-G2】pg 删除失败 → 短退避重试 2 次；仍失败抛 500 且不删 SQLite 户口。
+        # 旧实现仅 logger.warning 后照常 repo.delete(doc_id)：pg 向量残留而户口已删
+        # → 立即变孤儿（孤儿复发源之一）。宁可"删不掉可重试"，不可静默产孤儿。
+        ok = False
+        last_err = None
+        for attempt in range(3):  # 首次 + 2 次重试
+            try:
+                await store.delete(doc_id, hs_bank)
+                ok = True
+                logger.info(
+                    "delete: pgvector removed doc_id=%s bank=%s (attempt=%d)",
+                    doc_id[:8], hs_bank, attempt + 1,
+                )
+                break
+            except Exception as e:
+                last_err = e
+                logger.warning(
+                    "delete_document: pgvector delete attempt %d/3 failed: %s",
+                    attempt + 1, e,
+                )
+                if attempt < 2:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+        if not ok:
+            logger.error(
+                "delete_document: pgvector 删除失败 3 次 → 保留 SQLite 户口以便重试: doc_id=%s err=%s",
+                doc_id, last_err,
+            )
+            raise HTTPException(
+                500,
+                f"Vector cleanup failed for {doc_id[:8]}: {last_err}. "
+                "Document NOT deleted — retry to avoid orphan vectors.",
+            )
     else:
         if doc_hs_bank:
             search_banks = [doc_hs_bank]
