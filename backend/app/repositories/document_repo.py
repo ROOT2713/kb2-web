@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, List, Dict
 
-from sqlalchemy import select, delete as sa_delete, text as sa_text
+from sqlalchemy import select, text as sa_text
 from sqlalchemy.orm import Session
 
 from app.models.document import Document
@@ -260,14 +260,7 @@ class DocumentRepository:
             logger.error("Document delete failed (rolled back): doc_id=%s err=%s", doc_id, e)
             raise
 
-    def delete_by_ids(self, doc_ids: list[str]) -> int:
-        """Bulk delete documents by IDs. Returns count of deleted rows."""
-        if not doc_ids:
-            return 0
-        stmt = sa_delete(Document).where(Document.doc_id.in_(doc_ids))
-        result = self.db.execute(stmt)
-        self.db.commit()
-        count = result.rowcount
-        if count:
-            logger.info("Bulk deleted %d documents: %s", count, doc_ids)
-        return count
+    # 【P2-G5】此处原有 delete_by_ids() 批量删除，已删除（2026-09-16）。
+    # 原因：它只删 SQLite documents 行，完全不碰 pg vector_chunks → 启用即批量产孤儿。
+    # 批量删除必须走 delete() 逐条语义（或先经 get_vector_store().delete() 清向量），
+    # 不可再引入绕过向量清理的批量捷径。回归锁见 tests/unit/test_p2_mechanism.py。

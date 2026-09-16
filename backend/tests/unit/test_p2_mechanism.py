@@ -264,5 +264,34 @@ class TestReconcileLogic:
         assert cur.executed == [], "无 superseded 时不应查 pg"
 
 
+class TestG5NoBypassBulkDelete:
+    """G5 锁：document_repo 不得再出现绕过向量清理的批量删除捷径。
+
+    旧 delete_by_ids() 只删 SQLite documents 行、完全不碰 pg vector_chunks，
+    启用即批量产孤儿 → 已删除（2026-09-16）。本测试防其复活。
+    """
+
+    @staticmethod
+    def _src():
+        p = "/home/ubuntu/kb2-web/backend/app/repositories/document_repo.py"
+        with open(p, encoding="utf-8") as f:
+            return f.read()
+
+    def test_delete_by_ids_removed(self):
+        src = self._src()
+        assert "def delete_by_ids" not in src, \
+            "delete_by_ids 已删除（P2-G5），不得重新引入"
+
+    def test_no_bare_bulk_delete_stmt(self):
+        """批量 sa_delete(Document) 语句不得存在（绕过向量清理的形态）。"""
+        src = self._src()
+        assert "sa_delete(Document)" not in src, \
+            "禁止直接批量 sa_delete(Document)：必须先清 pg vector_chunks"
+
+    def test_absence_documented(self):
+        """留痕注释存在，避免后人重新引入重犯。"""
+        assert "【P2-G5】" in self._src()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
