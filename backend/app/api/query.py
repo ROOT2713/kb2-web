@@ -207,18 +207,29 @@ async def query(
                 _write_audit_log(request, q, cached["answer"], cached.get("sources", []), cache_hit=1)
                 logger.info("[CACHE] L1 exact hit for: %s", q[:50])
                 cache_hit = 1
+                # 【B-0917】多假设轻量标记：缓存命中时**无法**还原 3 视角内容
+                # （缓存表未存元数据，方案 C 才做完整还原）。但必须让前端知道
+                # 「已命中缓存、本次未执行对比」，否则对比面板静默不显示。
+                # 只在勾选多假设时加键 → 未勾选时响应结构与旧版完全一致。
+                _mh_cached = {"cached": True} if use_multi_hypothesis else None
                 return {
                     "answer": cached["answer"],
                     "sources": cached["sources"],
                     "cache_hit": "exact",
                     "session_id": session_id,
                     "suggestions": _build_persistent_suggestions(q, cached["sources"]),
+                    **({"multi_hypothesis": _mh_cached} if _mh_cached else {}),
                 }
             cached = await cache_get_semantic(q, bank, threshold=settings.cache_l2_threshold, scope=cache_scope)  # 【FIX-R2-2】
             if cached:
                 # 写入审计日志（缓存命中路径）
                 _write_audit_log(request, q, cached["answer"], cached.get("sources", []), cache_hit=1)
                 logger.info("[CACHE] L2 semantic hit for: %s", q[:50])
+                # 【B-0917】多假设轻量标记：缓存命中时**无法**还原 3 视角内容
+                # （缓存表未存元数据，方案 C 才做完整还原）。但必须让前端知道
+                # 「已命中缓存、本次未执行对比」，否则对比面板静默不显示。
+                # 只在勾选多假设时加键 → 未勾选时响应结构与旧版完全一致。
+                _mh_cached = {"cached": True} if use_multi_hypothesis else None
                 return {
                     "answer": cached["answer"],
                     "sources": cached["sources"],
@@ -226,6 +237,7 @@ async def query(
                     "similarity": cached.get("similarity"),
                     "session_id": session_id,
                     "suggestions": _build_persistent_suggestions(q, cached["sources"]),
+                    **({"multi_hypothesis": _mh_cached} if _mh_cached else {}),
                 }
         except Exception as e:
             logger.info("[CACHE] Lookup error: %s", e)

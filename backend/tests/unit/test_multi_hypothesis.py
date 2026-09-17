@@ -347,3 +347,103 @@ class TestMultiHypothesisEnabled:
         from app.api.query import multi_hypothesis_enabled as f
         assert f("true") is True     # formData.append('multi_hypothesis', 'true')
         assert f("") is False        # 缺省（未勾选）
+
+
+# ══════════════════════════════════════════════════════════════════
+# 6. 缓存命中路径的多假设标记（方案 B，行为测试 —— 走真端点）
+#    与上面「源码级锁」不同：这里真的 POST /api/query，断言响应体。
+# ══════════════════════════════════════════════════════════════════
+class TestCacheHitMarker:
+    """缓存命中时 multi_hypothesis 元数据的轻量标记行为。
+
+    背景：缓存命中路径只回固定字段（query.py:210-216 L1 / :222-229 L2），
+    多假设元数据在命中时丢失 → 前端对比面板静默不显示。
+    方案 B = 只加 {"cached": true}，不改表结构、不改写入路径。
+    """
+
+    _CACHED = {
+        "answer": "缓存里的答案" * 30,
+        "sources": [{"doc_id": "aaa", "title": "缓存来源"}],
+        "similarity": 0.95,
+    }
+
+    def _post(self, client, mh):
+        form = {"q": "等保测评 基本要求", "bank": "all"}
+        if mh is not None:
+            form["multi_hypothesis"] = mh
+        r = client.post("/api/query", data=form)
+        assert r.status_code == 200, f"HTTP {r.status_code}: {r.text[:300]}"
+        return r.json()
+
+    def test_l1_exact_hit_marks_cached_when_enabled(self, client, monkeypatch):
+        import app.api.query as qmod
+        monkeypatch.setattr(qmod, "cache_get_exact", lambda *a, **k: dict(self._CACHED))
+        monkeypatch.setattr(qmod, "_build_persistent_suggestions", lambda *a, **k: [])
+        monkeypatch.setattr(qmod, "_write_audit_log", lambda *a, **k: None)
+
+        body = self._post(client, "true")
+        assert body.get("cache_hit") == "exact", "应命中 L1 精确缓存"
+        assert "multi_hypothesis" in body, "勾选多假设时命中缓存必须带标记（方案 B）"
+        assert body["multi_hypothesis"] == {"cached": True}, \
+            f"标记形态应为 {{'cached': True}}，实际 {body['multi_hypothesis']!r}"
+
+    def test_l1_exact_hit_no_marker_when_disabled(self, client, monkeypatch):
+        """未勾选多假设时，命中缓存**不得**出现该键 —— 老客户端响应结构不变。"""
+        import app.api.query as qmod
+        monkeypatch.setattr(qmod, "cache_get_exact", lambda *a, **k: dict(self._CACHED))
+        monkeypatch.setattr(qmod, "_build_persistent_suggestions", lambda *a, **k: [])
+        monkeypatch.setattr(qmod, "_write_audit_log", lambda *a, **k: None)
+
+        body = self._post(client, "false")
+        assert body.get("cache_hit") == "exact"
+        assert "multi_hypothesis" not in body, \
+            f"未勾选时不应有该键，实际 {sorted(body.keys())}"
+
+    def test_l1_hit_whitelist_rejects_bogus_value(self, client, monkeypatch):
+        """白名单外的值（拼写变体/未知词/空串）不得启用 → 也就不该有标记。
+
+        注意：不要放 `" on"` 这类**带空白的真值** —— 它们经 .strip() 后是合法的，
+        期望应"启用"（见 test_l1_hit_padded_truthy_value_enables）。
+        """
+        import app.api.query as qmod
+        monkeypatch.setattr(qmod, "cache_get_exact", lambda *a, **k: dict(self._CACHED))
+        monkeypatch.setattr(qmod, "_build_persistent_suggestions", lambda *a, **k: [])
+        monkeypatch.setattr(qmod, "_write_audit_log", lambda *a, **k: None)
+
+        for bogus in ("multiHypothesis", "nope", "", "1.0", "multi_hypothesis"):
+            body = self._post(client, bogus)
+            assert "multi_hypothesis" not in body, \
+                f"值 {bogus!r} 应被白名单拒绝，但出现了标记"
+
+    def test_l1_hit_padded_truthy_value_enables(self, client, monkeypatch):
+        """带空白/大小写变体的真值必须仍启用（.strip()+lower() 的既定行为）。"""
+        import app.api.query as qmod
+        monkeypatch.setattr(qmod, "cache_get_exact", lambda *a, **k: dict(self._CACHED))
+        monkeypatch.setattr(qmod, "_build_persistent_suggestions", lambda *a, **k: [])
+        monkeypatch.setattr(qmod, "_write_audit_log", lambda *a, **k: None)
+
+        for truthy in (" true ", "TRUE", "  1  ", "Yes"):
+            body = self._post(client, truthy)
+            assert body.get("multi_hypothesis") == {"cached": True}, \
+                f"值 {truthy!r} 应被识别为启用，实际 {body.get('multi_hypothesis')!r}"
+
+    @pytest.mark.asyncio
+    async def test_l2_semantic_hit_marks_cached_when_enabled(self, client, monkeypatch):
+        """L2 语义命中路径同样要带标记（两条命中路径必须一致）。"""
+        import app.api.query as qmod
+
+        def _miss(*a, **k):
+            return None
+
+        async def _hit(*a, **k):
+            return dict(self._CACHED)
+
+        monkeypatch.setattr(qmod, "cache_get_exact", _miss)
+        monkeypatch.setattr(qmod, "cache_get_semantic", _hit)
+        monkeypatch.setattr(qmod, "_build_persistent_suggestions", lambda *a, **k: [])
+        monkeypatch.setattr(qmod, "_write_audit_log", lambda *a, **k: None)
+
+        body = self._post(client, "true")
+        assert body.get("cache_hit") == "semantic", "应命中 L2 语义缓存"
+        assert body.get("multi_hypothesis") == {"cached": True}, \
+            f"L2 命中也要带标记，实际 {body.get('multi_hypothesis')!r}"
