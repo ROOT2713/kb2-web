@@ -1425,6 +1425,7 @@ async def _generate_answer(
     title_map: dict,
     kg_context_text: str = "",
     ctx: dict = None,
+    multi_hypothesis: bool = False,  # 【P0-2】多假设对比开关
 ) -> dict:
     """
     生成LLM答案 — 构建上下文 + 组装prompt + LLM调用 + 后处理。
@@ -2004,11 +2005,39 @@ async def _generate_answer(
 
 请用中文回答，引用具体条款和数据，并标注信息来源。注意：**回答必须不少于200个汉字**（不足将被系统拦截，视为违规）。"""
 
+    # ── 【P0-2】多假设对比分支 ──
+    # 放在「单路 LLM 调用之前」而非之后：勾选时直接以多假设产出取代单路调用，
+    # 避免白跑一次单路生成（R5 交付包把分支放在 answer 之后，多烧一次调用）。
+    _mh_meta = None
+    _mh_done = False
     try:
-        answer = await chat([
-            {"role": "system", "content": bank_prompt},
-            {"role": "user", "content": prompt},
-        ], max_tokens=8000)
+        if multi_hypothesis:
+            from app.services.multi_hypothesis import multi_hypothesis_answer
+            try:
+                _mh = await multi_hypothesis_answer(
+                    query=q,
+                    context=context,
+                    bank_prompt=bank_prompt,
+                    history_context=history_context or "",
+                    _tier_hint=_tier_hint or "",
+                    user_prompt=prompt,  # 复用主链路 prompt，保留费率/对比/字数规则
+                )
+                answer = _mh["answer"]
+                _mh_meta = _mh.get("multi_hypothesis")
+                _mh_done = True
+                logger.info(
+                    "[MULTI-HYPOTHESIS] best=%s, %d hypotheses",
+                    (_mh_meta or {}).get("best_perspective", "?"),
+                    len((_mh_meta or {}).get("hypotheses", [])),
+                )
+            except Exception as _mh_err:
+                # 多假设失败不拖垮主链路 —— 回落单路生成
+                logger.warning("[MULTI-HYPOTHESIS] failed, fallback to single: %s", _mh_err)
+        if not _mh_done:
+            answer = await chat([
+                {"role": "system", "content": bank_prompt},
+                {"role": "user", "content": prompt},
+            ], max_tokens=8000)
         degraded = False  # 【R3-1】正常生成路径
     except ValueError as e:
         err_msg = str(e)
@@ -2059,6 +2088,7 @@ async def _generate_answer(
         "suggestions": suggestions,
         "kg_context_text": kg_context_text,
         "degraded": degraded,  # 【R3-1】LLM 故障降级标志（写缓存拦截用）
+        "multi_hypothesis": _mh_meta,  # 【P0-2】未开启/失败时为 None
     }
 
 

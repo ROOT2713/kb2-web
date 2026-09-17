@@ -91,6 +91,9 @@ async def query(
     rerank_mode: str = Form("default"),
     session_id: str = Form(""),
     categories: str = Form(""),
+    # 【P0-2】多假设对比开关：前端 services/query.ts:78 一直在发该字段，
+    # 此前因签名未声明被 FastAPI 静默忽略（不报错/不警告/不写日志）
+    multi_hypothesis: str = Form("false"),
     current_user: str = Depends(get_current_user),  # 【FIX-002】缓存用户隔离 scope（依赖缓存复用认证，零额外开销）
 ):
     """搜索知识库 → 召回 → DeepSeek 合成答案（支持多 bank）"""
@@ -116,7 +119,11 @@ async def query(
     use_rerank = rerank.lower() == "true" or (bank == "checklist")
     valid_modes = {"default", "multidim", "confidence", "freshness", "cross_encoder"}
     use_rerank_mode = rerank_mode if rerank_mode in valid_modes else "default"
-    cache_scope = f"{current_user}|rr={int(use_rerank)}:{use_rerank_mode}"
+    # 【P0-2】多假设开关：沿用本文件既有宽松解析约定（同 nocache / rerank）
+    use_multi_hypothesis = multi_hypothesis.lower() not in ("false", "0", "", "no")
+    # 【FIX-R2-2 同类】多假设产出与单路产出语义不同，必须进缓存隔离维度，
+    # 否则「勾选」与「未勾选」会互相命中对方的缓存答案
+    cache_scope = f"{current_user}|rr={int(use_rerank)}:{use_rerank_mode}|mh={int(use_multi_hypothesis)}"
 
     # ── 多轮域锁定：获取会话状态 ──
     session_doc_ids = None
@@ -471,6 +478,7 @@ async def query(
         title_map=ctx["title_map"],
         kg_context_text=kg_context_text,
         ctx=ctx,
+        multi_hypothesis=use_multi_hypothesis,  # 【P0-2】
     )
 
     answer = gen["answer"]
@@ -522,6 +530,9 @@ async def query(
         result["quality_check"] = validation_result
     if suggestions:
         result["suggestions"] = suggestions
+    # 【P0-2】多假设元数据透出（未开启时为 None → 键不存在，响应结构不变）
+    if gen.get("multi_hypothesis"):
+        result["multi_hypothesis"] = gen["multi_hypothesis"]
     if standard_contents:
         result["standard_contents"] = standard_contents
     if kg_context_list:

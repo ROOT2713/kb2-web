@@ -107,15 +107,30 @@ async def _generate_hypothesis(
     history_context: str = "",
     _tier_hint: str = "",
     temperature: float = 0.3,
+    user_prompt: Optional[str] = None,
 ) -> Dict:
     """Generate a single hypothesis answer from one perspective.
+
+    Args:
+        user_prompt: 主链路的完整 user prompt（含费率规则 / 对比强制 / 字数下限）。
+            传入时以它替代本模块的简版 prompt —— 避免多假设路径享受不到
+            主链路的 prompt 硬化成果；视角差异仍由 system prompt 承担。
 
     Returns:
         {"perspective": str, "answer": str}
     """
-    messages = _build_hypothesis_prompt(
-        perspective, query, context, bank_prompt, history_context, _tier_hint
-    )
+    if user_prompt:
+        perspective_prompt = HYPOTHESIS_PROMPTS.get(
+            perspective, HYPOTHESIS_PROMPTS["analytical"]
+        )
+        messages = [
+            {"role": "system", "content": f"{bank_prompt}\n\n{perspective_prompt}"},
+            {"role": "user", "content": user_prompt},
+        ]
+    else:
+        messages = _build_hypothesis_prompt(
+            perspective, query, context, bank_prompt, history_context, _tier_hint
+        )
 
     # Slightly different temperatures per perspective for diversity
     temp_map = {"conservative": 0.1, "analytical": 0.4, "structured": 0.3}
@@ -229,6 +244,7 @@ async def multi_hypothesis_answer(
     history_context: str = "",
     _tier_hint: str = "",
     perspectives: Optional[List[str]] = None,
+    user_prompt: Optional[str] = None,
 ) -> Dict:
     """Generate answer using multi-hypothesis comparison.
 
@@ -256,7 +272,10 @@ async def multi_hypothesis_answer(
 
     # Step 1: Generate all hypotheses in parallel
     tasks = [
-        _generate_hypothesis(p, query, context, bank_prompt, history_context, _tier_hint)
+        _generate_hypothesis(
+            p, query, context, bank_prompt, history_context, _tier_hint,
+            user_prompt=user_prompt,
+        )
         for p in perspectives
     ]
     hypotheses = await asyncio.gather(*tasks)
