@@ -367,6 +367,21 @@ class TestDeaiPostprocess:
         result = deai_postprocess(text)
         assert "\n\n\n" not in result
 
+    # ── 2026-09-17 回归：标点规则不得吃掉换行（表格表头必须独占一行）──
+    def test_punctuation_rule_keeps_newlines(self):
+        r"""`\s+` → `[ \t]+`：标点后的换行必须保留（原写法会把表格表头粘到上行）。"""
+        text = "省级 15.00 万元。\n\n| 地市 | 金额 |\n|---|---|\n| 东莞 | 9.60 |"
+        result = deai_postprocess(text)
+        assert "万元。\n\n| 地市" in result
+        assert "万元。|" not in result
+        assert result.count("\n") >= 4  # 4 行表格结构未被压平
+
+    def test_punctuation_rule_still_fixes_inline_space(self):
+        text = "测试 。 内容 ！ 结束"
+        result = deai_postprocess(text)
+        assert "。内容" in result
+        assert "！结束" in result
+
     # ── R3-5: 内部错误文案过滤 ──
     def test_keeps_normal_answer_unchanged(self):
         text = "根据《GB/T 21671-2008》，系统应满足下列要求。\n验收测试需覆盖全部功能点。"
