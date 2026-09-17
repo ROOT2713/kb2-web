@@ -37,6 +37,12 @@ from app.utils.text_cleaning import (
 from app.utils.tokenizer import extract_keyword_snippet
 from app.config import settings
 from app.services.fee_utils import filter_conflicting_fee_types
+from app.services.prompt_hardening import build_fee_hint as _build_fee_table_hint
+from app.services.answer_structurer import (
+    structure_answer as _structure_answer,
+    structure_stats as _structure_stats,
+    KIND_TABLE as _KIND_TABLE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1414,6 +1420,36 @@ def _clean_source_text(text: str) -> str:
     return text.strip()
 
 
+# ── 批次 B（R5 交付 B-后端/02）：答案结构可观测性 ─────────────────────
+def _structure_telemetry(answer: str) -> dict:
+    """把最终回答解析为结构化区块并汇总「表格修复标记」。
+
+    复用 `app.services.answer_structurer`（与前端 answerParser 同规则的容错解析器）：
+    它把 LLM 输出切成 conclusion / text / table / note 区块，并在表格缺分隔行、
+    分隔行列数不符、数据行列数不符、全角竖线时记 `repair_flags`。
+    这里只把它当**质量指标**用（哪种坏格式出现得多 → 指导 prompt 迭代），
+    不改变答案本身、不改响应契约。
+
+    纯函数、零 I/O；任何异常一律降级为 `{}`，绝不影响主链路。
+    """
+    try:
+        blocks = _structure_answer(answer or "")
+        stats = _structure_stats(blocks)
+        flags = sorted({
+            f
+            for b in blocks
+            if b.get("kind") == _KIND_TABLE
+            for f in (b.get("table") or {}).get("repair_flags", [])
+        })
+        out = dict(stats)
+        out["flags"] = flags
+        out["blocks"] = len(blocks)
+        return out
+    except Exception as _exc:  # pragma: no cover — 兜底不可省
+        logger.debug("[STRUCTURE] telemetry skipped: %s", _exc)
+        return {}
+
+
 async def _generate_answer(
     q: str,
     bank: str,
@@ -1922,7 +1958,11 @@ async def _generate_answer(
             "        - **各地市档位边界可能不同（省500/东莞400/佛山500），必须按各自费率表逐一判定**，"
             "不得用省表档位套用到地市。\n"
             "      - **禁止**只选一个地市回答忽略其他，"
-            "也禁止跳过省级框架直接用地市数据。\n"        )
+            "也禁止跳过省级框架直接用地市数据。\n"
+            # ── 批次 B（R5 交付 B-后端/02）：费用表格硬模板 + 输出前列数自检。
+            #    纯追加文本（以 "l." 编号承载），不改动上述任何既有规则。
+            + _build_fee_table_hint()
+        )
         logger.info("[FEE_RULES] Injected fee calculation rules (query contains fee keywords)")
 
     # ── 对 q 做安全处理（注入防护 + 长度限制）──
@@ -2085,6 +2125,17 @@ async def _generate_answer(
         validation_result = None
         suggestions = _build_persistent_suggestions(q, sources)
         logger.warning("quality-gate 后处理异常: %s", e)
+
+    # ── 批次 B（R5 交付 B-后端/02）：表格质量指标 ──
+    # 纯日志、无副作用：把最终回答过一遍结构解析，只在出现「坏表」修复标记时记一行，
+    # 作为 LLM 输出质量的闭环信号（哪种坏格式高发 → 指导 prompt/模板迭代）。
+    _st = _structure_telemetry(answer)
+    if _st.get("repaired"):
+        logger.info(
+            "[STRUCTURE] repaired=%d/%d tables, blocks=%d, flags=%s",
+            _st.get("repaired", 0), _st.get("table", 0),
+            _st.get("blocks", 0), ",".join(_st.get("flags", [])),
+        )
 
     return {
         "answer": answer,
