@@ -85,7 +85,7 @@
               <span v-if="src.score" class="source-score">{{ src.score }}</span>
             </span>
           </div>
-          <div v-if="src.text" class="source-text" v-html="highlightKeywords(cleanSourceText(src.text))"></div>
+          <div v-if="src.text" class="source-text" v-html="renderSourceText(src.text)"></div>
           <span v-else-if="src.chunk" class="source-chunk-info">{{ src.chunk }}</span>
           </div>
         </div>
@@ -116,7 +116,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { marked } from 'marked'
-import DOMPurify from 'dompurify'
+import { sanitizeHtml } from '@/utils/sanitize'
 import type { Source, QuerySuggestions } from '@/services/query'
 import api from '@/services/api'
 
@@ -163,9 +163,9 @@ const renderedHtml = computed(() => {
       .replace(/~~([^~]+)~~/g, '$1')
       .replace(/(?<!\$)\$([^$\n]+?)\$(?!\$)/g, '$1')
       .replace(/\$\$([\s\S]*?)\$\$/g, '$1')
-    return DOMPurify.sanitize(marked.parse(cleaned) as string)
+    return sanitizeHtml(marked.parse(cleaned) as string)
   } catch {
-    return DOMPurify.sanitize(props.content)
+    return sanitizeHtml(props.content)
   }
 })
 
@@ -214,6 +214,18 @@ function highlightKeywords(text: string): string {
   return text.replace(pattern, '<mark class="kw-highlight">$1</mark>')
 }
 
+/**
+ * 来源文本渲染链：清洗 → 关键词高亮 → **强制消毒**。
+ *
+ * 【顺序不可调换】highlightKeywords 会向字符串注入 `<mark class="kw-highlight">`，
+ * 它自带一个字面 `>`；若此前 cleanSourceText 有未闭合标签残留（其黑名单正则
+ * `<[^>]*>` 对无字面 `>` 的标签不匹配），这个 `>` 会把残留标签闭合掉并变成
+ * 真实元素（实测注入 img[onerror]）。因此消毒必须放在**最后一步**。
+ */
+function renderSourceText(raw: string): string {
+  return sanitizeHtml(highlightKeywords(cleanSourceText(raw)))
+}
+
 function formatSize(chars: number): string {
   if (chars < 1024) return `${chars}B`
   if (chars < 1024 * 1024) return `${(chars / 1024).toFixed(1)}KB`
@@ -249,9 +261,9 @@ async function loadStandardText(docId: string) {
 function renderStdText(text: string): string {
   if (!text) return ''
   try {
-    return DOMPurify.sanitize(marked.parse(text) as string)
+    return sanitizeHtml(marked.parse(text) as string)
   } catch {
-    return DOMPurify.sanitize(text.replace(/\n/g, '<br>'))
+    return sanitizeHtml(text.replace(/\n/g, '<br>'))
   }
 }
 </script>
