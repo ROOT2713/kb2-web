@@ -413,6 +413,9 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 5. **`/proc/PID/environ` 是 DB 路径权威** —— 读 `.env` 的 `DB_PATH` 做验证是假验证。
 6. **`.gitignore` 说「不入仓」≠「不重要」** —— `frontend/dist` 不入版本库，但它是**运行时依赖**（kb2-web 后端静态托管，非 dev server）。判断「某改动能否回退」之前，先确认它是不是运行时依赖：曾把 build 后的 `dist/index.html` 用 `git checkout` 回退，而 `vite build` 的 `emptyOutDir` 已清空重建 assets ⇒ 回退的 index.html 引用旧 hash 文件 ⇒ **JS 404 前端白屏**，而 `is-active` / `/api/banks` 401 / journalctl 全部正常。前端改动验收链：`改 src` → `vitest` → `vue-tsc 净增 0` → `vite build` → **服务返回的 index.html 引用的每个 `/assets/*` 均 200**。
 7. **突变测试必须先自证** —— 「测试没变红」既可能是测试没牙齿，也可能是**核验脚本自己坏了**。本轮反向核验 6 项连锁假阴性，根因是还原逻辑 `str.replace("", X, 1)`（空串替换不是无操作，会把旧内容插到文件开头）写坏文件 + 判定漏了 vitest 的第三种形态 `Tests  no tests`。判据必须包含「基线全绿 + 突变后确有收集/断言失败」，否则假阴性会被读成「加固无效」。
+8. **后处理会改坏 Markdown 结构，prompt 硬化单独不够** —— `deai_postprocess` 用 `\s+`（含换行）删标点后空白 ⇒ 表格表头被粘到上一行 ⇒ 整张表退化。**教训：给 LLM 加了「照抄硬模板」还不够，链路上任何一步正则都可能把它改坏；改 prompt 类资产时必须同时审后处理链。** 判据 = 结构解析器的 `repair_flags` 在端到端跑完后必须为零（本轮正是它先报 `no_separator` 才定位到该缺陷）。
+9. **「落地」≠「生效」≠「被消费」** —— 新模块放进 `app/services/` 只是落地；接进主链路才是生效；有消费方才是被消费（本轮 `answer_blocks` **有意不下发**，因为前端缺 `answerParser.ts` 无消费方）。三者要分开汇报，别用「已完成」一词糊过去。
+
 
 ---
 
@@ -420,14 +423,16 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 
 | 指标 | 数值 |
 |------|------|
-| 后端测试 | **471 passed / 62 skipped**（`pytest tests/unit`，21.6s 实测）；全量收集 539 tests |
+| 后端测试 | **528 passed / 62 skipped**（`pytest tests/unit`，21.5s 实测）—— 批次 B 新增 57（交付包 44 + 接线锁 3 + 接线/回归 10）；改动前基线 471 |
 | **前端测试** | **26 passed**（`vitest run`，`frontend/src/utils/sanitize.spec.ts`）—— 前端首个测试文件；含**反向核验（突变测试）9/9 全捕获** |
 | **前端渲染链安全** | **XSS 收口 + 加固**（`68acba6` + `4cff1b2`）—— 3 条 `v-html` 链（回答正文/来源文本/规范原文）统一收敛至 `utils/sanitize.ts` 的 `sanitizeHtml()`；修复前 5/8 载荷可注入真实元素 + `onerror`，修复后 0/8。加固后 `FORBID_TAGS` **12 → 21 项**（表单家族口径统一 + `svg`/`math` mXSS 面），来源链新增 `forbidMedia` 开关（禁 `img`/`video`/`audio`/`source`/`track`）；独立探针 **6/8 → 0/8 可利用**、**真退化 0** |
 | 多假设对比 | **已接线生效**（`d40d269`）—— 前端 `multi_hypothesis` 开关此前被 FastAPI 静默忽略；含缓存隔离（`mh=`/`cat=`）+ 全失败回落单路 |
+| **表格硬化与结构可观测** | **批次 B 已落地 + 已接线**（`8c23998`）—— `answer_structurer.py`（331 行，回答容错解析为区块 + 表格 `repair_flags`）与 `prompt_hardening.py`（120 行，费用表格硬模板 + 输出前列数自检，追加 **779 字符**）落地；接线两处：`_fee_rules` 末尾追加 + `_generate_answer` 返回前 `_structure_telemetry`（坏表记一行 `[STRUCTURE]` 日志，纯指标、不改响应契约）。验证：交付 44 测试 + 3 接线锁全绿，全量 **528 passed**（零回归），反向核验 **9/9**，端到端探针费用 prompt 6312 字符含硬模板 / 非费用不含，单变量 A/B **Δ=779**。⚠️ **需重启 kb2-web 才在进程内生效** |
+| **deai 后处理换行缺陷（本轮发现并修复）** | `496386b` —— `deai_postprocess` 第 3 条规则用 `\s+`（含换行）删标点后空白 ⇒ 「…万元。⏎⏎\| 表头 \|」被粘成一行 ⇒ **表头不再是独立管道行 ⇒ Markdown 表格整张退化**（用户可见：费用回答的表格/表头消失）。改为 `[ \t]+`；修复前后处理输出与输入 diff 由非空变**空**，7 类 Markdown 结构回归探针 diff 全为空 |
 | 数据治理 0904 | **P0 + P1 + P2 全闭环**（`8313906` / `b6e3116` / `75ce26a` / `5a1f85d` / `20a0ef7` / `bd1d693`）；孤儿向量 15,531 → **0** |
 | R3 第三轮外部审计 | **P1/P2 全闭环**（`f0a2b8a`）+ **P3 全闭环**（`a6c1003`+`e31e5cd`）；R3-13 重定性已并入 0904 治理闭环 |
 | R2 第二轮外部审计 | **17 项全闭环**（`d77a802`） |
-| 代码状态 | HEAD `4cff1b2`，已推送 origin/main；kb2-web 生效（MainPID 3881052 @ 12:17:47，方案 B 已加载；本批为**纯前端**改动 ⇒ 无需重启）；前端产物 `vite build` 已上线（`/` 200 + 引用的每个 `/assets/*` 均 200）；`frontend/dist` 已移出 git 跟踪（`36dfa9b`，**仍是运行时依赖**） |
+| 代码状态 | HEAD `8c23998`，已推送 origin/main；前端产物 `vite build` 已上线（`/` 200 + 引用的每个 `/assets/*` 均 200）；`frontend/dist` 已移出 git 跟踪（`36dfa9b`，**仍是运行时依赖**）。⚠️ 批次 B 的后端改动（`8c23998`）**仅在磁盘与远端，运行中进程（MainPID 3881052 @ 12:17:47）尚未加载 —— 需重启 kb2-web 才生效**（重启是独立授权点） |
 | 数据规模 | SQLite `documents` 598（active 221 / superseded 377）；pg `vector_chunks` 22,609（registry 100%）；`wiki_entries` 62 |
 | 库空间 | 1530 MB（HNSW 索引 131 MB）；Hindsight 服务 `inactive` + `disabled` |
 | 缓存 | hit_count 累加 + scope 隔离（含 rerank 维度）+ (bank,scope) 分区 LRU + 全局总量上限 2000（R3-7） |
