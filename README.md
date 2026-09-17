@@ -369,7 +369,65 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 
 ---
 
-## 📊 当前状态（2026-09-05 更新）
+## 🗄️ 数据治理整改记录（2026-09-04 ~ 2026-09-17）
+
+### 问题定性（三层漂移）
+
+| 层 | 漂移现象 | 根因 |
+|----|---------|------|
+| **可见性层**（D3） | 旧版 superseded 文档的向量仍可被语义检索命中（"旧版永生"） | 语义检索路径未施加 searchable 门禁，仅 SQLite 侧过滤 |
+| **所有权层**（D2） | 孤儿向量（pg 有 / SQLite 无）大量堆积 | supersede 只删 SQLite 不删 pgvector；删除失败被静默吞掉 |
+| **机制层**（P2） | 同类漂移只能靠事后人工 SQL 清理 | 无复发拦截、无常态对账、无孤儿 TTL |
+
+### 整改方案（三段式）
+
+按「**先止血 → 再补正主 → 最后清碎片**」顺序推进：
+
+1. **P0 止血** — `registry` 自动打标（`vector_repo.py`）+ 检索 SQL 硬过滤（`metadata->>'registry' = '1'`），让不可见文档在检索层 100% 隔离
+2. **P1 治本** — 碎片合并（`p1_batch_recover.py` / `p1_execute_plan.py` / `p1_merge_fragments.py`），修复 `parent_chunks` 覆盖
+3. **P2 机制化** — 5 个缺口闭环：G1 删除漏 bank 维度 / G2 删除失败静默 / G3 无对账 / G4 无孤儿 TTL / G5 死代码 `delete_by_ids`
+
+### 整改后状态（运行时验证）
+
+| 指标 | 治理前 | 治理后 | 验证方式 |
+|------|-------|-------|---------|
+| pg `vector_chunks` 行数 | 38,143 | **22,609** | `SELECT COUNT(*)` |
+| distinct `doc_id` | 13,574 | **221** | `COUNT(DISTINCT doc_id)` |
+| pg 孤儿（SQLite 无对应） | 15,531 | **0** | `p2_reconcile.py` 四类检查 |
+| `registry` 打标覆盖率 | — | **100%**（22,609/22,609） | `metadata->>'registry'='1'` |
+| HNSW 索引 `idx_vc_embedding` | 397.7 MB | **131 MB** | `REINDEX INDEX CONCURRENTLY` 实测 **99.0s** |
+| 库总大小 | 1796.8 MB | **1530 MB** | `pg_database_size` |
+| SQLite `documents` | 598（active 221 / superseded 377） | 不变 | 治理只动向量侧 |
+| 后端单测 | — | **425 passed / 62 skipped** | `pytest tests/unit`（22.88s 实测） |
+| 泄漏检查 | — | 4 组查询多轮**零泄漏** | sources 全部 active 且 searchable=1 |
+
+### 关键教训
+
+1. **检索结果非确定性** —— 同查询多跑可出不同结果（分数等距 0.08 是排名映射，非相似度）。因此**不能靠"比对序列"验证**，必须用**顺序无关的不变量**，即「泄漏检查」：所有 sources 必须 `active` 且 `searchable=1`。
+2. **pgvector 0.6.0 的 HNSW 不回收死节点** —— `VACUUM` 无效。删除后想真正回收空间，唯一手段是 `REINDEX INDEX CONCURRENTLY`（在线、无锁、实测 99.0s，397.7 → 131 MB）。
+3. **删除必须双写且不可静默** —— 只删一侧 = 制造孤儿；失败静默 = 孤儿无声堆积（P2-G2 已修复为抛 500）。
+4. **判"活路径还在"必须实调一次**，不能读代码推断。
+5. **`/proc/PID/environ` 是 DB 路径权威** —— 读 `.env` 的 `DB_PATH` 做验证是假验证。
+
+---
+
+## 📊 当前状态（2026-09-17 更新）
+
+| 指标 | 数值 |
+|------|------|
+| 后端测试 | **425 passed / 62 skipped**（`pytest tests/unit`，22.88s 实测）；全量收集 539 tests |
+| 数据治理 0904 | **P0 + P1 + P2 全闭环**（`8313906` / `b6e3116` / `75ce26a` / `5a1f85d` / `20a0ef7` / `bd1d693`）；孤儿向量 15,531 → **0** |
+| R3 第三轮外部审计 | **P1/P2 全闭环**（`f0a2b8a`）+ **P3 全闭环**（`a6c1003`+`e31e5cd`）；R3-13 重定性已并入 0904 治理闭环 |
+| R2 第二轮外部审计 | **17 项全闭环**（`d77a802`） |
+| 代码状态 | HEAD `bd1d693`，已推送 origin/main；服务生效（MainPID 3677240） |
+| 数据规模 | SQLite `documents` 598（active 221 / superseded 377）；pg `vector_chunks` 22,609（registry 100%）；`wiki_entries` 62 |
+| 库空间 | 1530 MB（HNSW 索引 131 MB）；Hindsight 服务 `inactive` + `disabled` |
+| 缓存 | hit_count 累加 + scope 隔离（含 rerank 维度）+ (bank,scope) 分区 LRU + 全局总量上限 2000（R3-7） |
+| 权限 | JWT 三重守卫 + require_role fail-closed + admin 同名 DB 用户落角色校验（.env 配置账号即超管） |
+| 健壮性 | chat() 总预算 96s（R3-2）+ 上传/派生任务统一限流（R3-3）+ answer 出口错误文案过滤（R3-5）+ 500 带 request_id |
+| 检索质量 | 48 题黄金集 R@1 **21/39 vs 审计基线 14/39 = +17.9pp**（R3-12 排序收窄后） |
+
+### 历史状态（2026-09-05 存档）
 
 | 指标 | 数值 |
 |------|------|
