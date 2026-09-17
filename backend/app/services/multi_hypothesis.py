@@ -138,10 +138,16 @@ async def _generate_hypothesis(
 
     try:
         answer = await llm_chat(messages, temperature=temp, max_tokens=8000)
-        return {"perspective": perspective, "answer": answer}
+        return {"perspective": perspective, "answer": answer, "failed": False}
     except Exception as e:
         logger.warning("Hypothesis '%s' failed: %s", perspective, e)
-        return {"perspective": perspective, "answer": f"（{perspective} 视角生成失败: {e}）"}
+        # 【显式失败标志】不靠字符串比对判定失败（R3-1 同类教训：常量漂移会让
+        # 字符串比对静默失效）。该占位串仅用于可观测性，不会被 judge 采纳。
+        return {
+            "perspective": perspective,
+            "answer": f"（{perspective} 视角生成失败: {e}）",
+            "failed": True,
+        }
 
 
 async def _judge_hypotheses(
@@ -260,7 +266,8 @@ async def multi_hypothesis_answer(
         {
             "answer": str,           # The selected best answer
             "multi_hypothesis": {     # Metadata
-                "hypotheses": [{perspective, answer}, ...],
+                "hypotheses": [{perspective, answer, failed}, ...],
+                "failed_count": int, "judged_count": int,
                 "best_perspective": str,
                 "scores": [...],
                 "reasoning": str,
@@ -280,13 +287,26 @@ async def multi_hypothesis_answer(
     ]
     hypotheses = await asyncio.gather(*tasks)
 
-    # Step 2: Judge and select
-    judge_result = await _judge_hypotheses(query, context, hypotheses)
+    # Step 2: 只让 judge 评审「真正生成成功」的候选。
+    # 失败的视角返回的是占位串而非异常 —— 若一并送审，judge 可能「择优」选中
+    # 占位串，它就会被当作正常答案（degraded=False）写进缓存 24h。
+    successful = [h for h in hypotheses if not h.get("failed")]
+    if not successful:
+        # 全部失败 → 交给调用方回落单路生成（那里有重试与降级打标）
+        raise RuntimeError(
+            f"all {len(hypotheses)} hypotheses failed: "
+            + ", ".join(h['perspective'] for h in hypotheses)
+        )
+
+    # Step 3: Judge and select
+    judge_result = await _judge_hypotheses(query, context, successful)
 
     return {
         "answer": judge_result["best_answer"],
         "multi_hypothesis": {
             "hypotheses": hypotheses,
+            "failed_count": len(hypotheses) - len(successful),
+            "judged_count": len(successful),
             "best_perspective": judge_result["best_perspective"],
             "scores": judge_result["all_scores"],
             "reasoning": judge_result["reasoning"],

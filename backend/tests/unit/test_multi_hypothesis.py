@@ -95,6 +95,76 @@ class TestGenerateAnswerBranch:
         assert out["multi_hypothesis"] is None
 
     @pytest.mark.asyncio
+    async def test_all_hypotheses_failed_falls_back_to_single(self):
+        """3 视角全部生成失败时，不得把「生成失败」占位串当答案。
+
+        `_generate_hypothesis` 在异常时**返回占位串而非抛出**，judge 会「择优」选中它；
+        此时若 degraded=False，该占位串会被写进缓存 24h（R3-1 同类风险）。
+        正确行为：整体判为失败 → 回落单路生成。
+        """
+        async def boom(*args, **kwargs):
+            raise RuntimeError("模拟上游 LLM 全面故障")
+
+        with patch.object(mh, "llm_chat", boom):
+            out = await _call_engine(True)
+
+        assert "视角生成失败" not in out["answer"], "占位串不得作为最终答案"
+        assert out["answer"] == "单路答案内容" * 20, "全失败必须回落单路"
+        assert out["multi_hypothesis"] is None
+
+    @pytest.mark.asyncio
+    async def test_multi_returning_empty_answer_falls_back_to_single(self):
+        """多假设返回空/None 答案 → 按失败处理回落单路（防空串入缓存并返回用户）。"""
+        for empty in ("", None):
+            fake_mh = AsyncMock(return_value={"answer": empty, "multi_hypothesis": {"x": 1}})
+            with patch("app.services.multi_hypothesis.multi_hypothesis_answer", fake_mh):
+                out = await _call_engine(True)
+            assert out["answer"] == "单路答案内容" * 20, f"空答案({empty!r})必须回落单路"
+            assert out["multi_hypothesis"] is None
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_is_not_degraded_and_judges_only_successful(self):
+        """部分视角失败 → 判官只看成功候选；元数据标注 failed_count；答案非占位串。"""
+        async def fake_gen(perspective, query, context, bank_prompt,
+                           history_context="", _tier_hint="", user_prompt=None):
+            if perspective == "structured":
+                return {"perspective": perspective, "answer": "（structured 视角生成失败: boom）",
+                        "failed": True}
+            return {"perspective": perspective, "answer": f"真答案-{perspective}", "failed": False}
+
+        judged = {}
+
+        async def fake_judge(query, context, hypotheses):
+            judged["count"] = len(hypotheses)
+            judged["perspectives"] = [h["perspective"] for h in hypotheses]
+            return {"best_perspective": "analytical", "best_answer": "真答案-analytical",
+                    "all_scores": [], "reasoning": "ok"}
+
+        with patch.object(mh, "_generate_hypothesis", fake_gen), \
+             patch.object(mh, "_judge_hypotheses", fake_judge):
+            out = await mh.multi_hypothesis_answer(
+                query="Q", context="CTX", bank_prompt="BANK", user_prompt="FULL"
+            )
+
+        assert judged["count"] == 2, "失败的视角不得送审（否则占位串可能被择优选中）"
+        assert "structured" not in judged["perspectives"]
+        assert out["answer"] == "真答案-analytical"
+        assert out["multi_hypothesis"]["failed_count"] == 1
+        assert out["multi_hypothesis"]["judged_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_all_failed_raises_so_caller_can_fall_back(self):
+        """全部视角失败 → multi_hypothesis_answer 必须抛错（而非返回占位串）。"""
+        async def fake_gen(*a, **kw):
+            return {"perspective": "x", "answer": "（x 视角生成失败: boom）", "failed": True}
+
+        with patch.object(mh, "_generate_hypothesis", fake_gen):
+            with pytest.raises(RuntimeError, match="hypotheses failed"):
+                await mh.multi_hypothesis_answer(
+                    query="Q", context="CTX", bank_prompt="BANK", user_prompt="FULL"
+                )
+
+    @pytest.mark.asyncio
     async def test_return_contract_keeps_degraded_and_kg_context(self):
         """R5 包内补丁的返回值漏掉了 kg_context_text / degraded —— 会静默回退 R3-1 降级拦截。
 
@@ -191,16 +261,28 @@ class TestHypothesisPromptReuse:
 # ══════════════════════════════════════════════════════════════════
 class TestApiWiringLocks:
     def test_query_declares_multi_hypothesis_form_param(self):
+        """形参必须声明，且**真的被下游消费**（只声明不消费 = 上一版的静默忽略）。"""
         src = _QUERY_PY.read_text(encoding="utf-8")
         assert 'multi_hypothesis: str = Form(' in src, \
             "query() 必须声明 multi_hypothesis 形参，否则 FastAPI 再次静默忽略"
-        assert '_use_multi_hypothesis' not in src or 'use_multi_hypothesis' in src
+        assert "= multi_hypothesis_enabled(multi_hypothesis)" in src, \
+            "必须经白名单解析成 use_multi_hypothesis"
+        assert "multi_hypothesis=use_multi_hypothesis,  # 【P0-2】" in src, \
+            "解析结果必须传给 _generate_answer（否则声明了也没用）"
+        assert 'result["multi_hypothesis"] = gen["multi_hypothesis"]' in src, \
+            "元数据必须透出到响应"
 
     def test_cache_scope_isolates_multi_hypothesis(self):
         """多假设产出与单路产出语义不同 → 必须进缓存隔离维度（防互相串答案）。"""
         src = _QUERY_PY.read_text(encoding="utf-8")
         assert "mh={int(use_multi_hypothesis)}" in src, \
             "cache_scope 必须含 mh= 维度，否则勾选/未勾选会互吃缓存"
+
+    def test_cache_scope_isolates_categories(self):
+        """categories 参与检索过滤 → 必须进缓存隔离维度（同 FIX-R2-2 缺陷类）。"""
+        src = _QUERY_PY.read_text(encoding="utf-8")
+        assert "|cat={_cat_key}" in src, \
+            "cache_scope 必须含 cat= 维度，否则换分类会命中旧缓存"
 
     def test_engine_return_does_not_drop_degraded(self):
         """R5 包内 snippet 的返回值漏了 degraded/kg_context_text —— 锁死防照抄。"""
@@ -209,3 +291,59 @@ class TestApiWiringLocks:
         window = src[max(0, idx - 500):idx]
         assert '"degraded": degraded' in window, "multi_hypothesis 返回值邻近处必须保留 degraded"
         assert '"kg_context_text": kg_context_text' in window
+
+
+# ══════════════════════════════════════════════════════════════════
+# 4. categories 缓存维度归一化（FIX-0917-CAT）
+# ══════════════════════════════════════════════════════════════════
+class TestCategoriesCacheKey:
+    def test_order_and_case_are_semantically_equivalent(self):
+        """顺序/大小写不同 = 同一语义 → 必须映射到同一 key（否则白白 miss）。"""
+        from app.api.query import categories_cache_key as f
+        assert f("daily,news") == f("news,daily")
+        assert f("Daily, NEWS ") == f("daily,news")
+
+    def test_whitespace_and_duplicates_collapse(self):
+        from app.api.query import categories_cache_key as f
+        assert f(" daily , daily ,news ") == "daily,news"
+
+    def test_empty_and_all_preserved_distinctly(self):
+        """空串（= 排除 isolated）与 "all"（= 不过滤）语义不同，key 必须不同。"""
+        from app.api.query import categories_cache_key as f
+        assert f("") == ""
+        assert f("all") == "all"
+        assert f("") != f("all")
+
+    def test_pipe_is_stripped_to_prevent_scope_forgery(self):
+        """用户输入不得伪造 scope 分隔符 "|" 造成维度碰撞。"""
+        from app.api.query import categories_cache_key as f
+        assert "|" not in f("a|mh=1")
+        assert "|" not in f("x|cat=y")
+
+    def test_different_categories_produce_different_keys(self):
+        from app.api.query import categories_cache_key as f
+        assert f("daily") != f("news")
+        assert f("daily,news") != f("daily")
+
+
+# ══════════════════════════════════════════════════════════════════
+# 5. multi_hypothesis 表单解析（严格白名单 —— 代价不对称，CC 审查建议收紧）
+# ══════════════════════════════════════════════════════════════════
+class TestMultiHypothesisEnabled:
+    @pytest.mark.parametrize("raw", ["true", "TRUE", " true ", "True", "1", "yes", "on"])
+    def test_truthy_values_enable(self, raw):
+        from app.api.query import multi_hypothesis_enabled as f
+        assert f(raw) is True, f"{raw!r} 应启用多假设"
+
+    @pytest.mark.parametrize("raw", ["", "false", "False", " false ", "0", "no", "off",
+                                     "FALSE", "2", "maybe", "yesno", None])
+    def test_non_whitelist_values_disable(self, raw):
+        """未识别值必须按关闭处理 —— 误启用代价是 3× LLM 成本 + 最长 2× 墙钟。"""
+        from app.api.query import multi_hypothesis_enabled as f
+        assert f(raw) is False, f"{raw!r} 应关闭多假设"
+
+    def test_frontend_contract_value_enabled(self):
+        """前端 services/query.ts:78 只发 'true' 或缺省 —— 两者行为须明确。"""
+        from app.api.query import multi_hypothesis_enabled as f
+        assert f("true") is True     # formData.append('multi_hypothesis', 'true')
+        assert f("") is False        # 缺省（未勾选）

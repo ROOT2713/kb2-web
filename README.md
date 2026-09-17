@@ -415,7 +415,8 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 
 | 指标 | 数值 |
 |------|------|
-| 后端测试 | **425 passed / 62 skipped**（`pytest tests/unit`，22.88s 实测）；全量收集 539 tests |
+| 后端测试 | **466 passed / 62 skipped**（`pytest tests/unit`，21.6s 实测）；全量收集 539 tests |
+| 多假设对比 | **已接线生效**（`d40d269`）—— 前端 `multi_hypothesis` 开关此前被 FastAPI 静默忽略；含缓存隔离（`mh=`/`cat=`）+ 全失败回落单路 |
 | 数据治理 0904 | **P0 + P1 + P2 全闭环**（`8313906` / `b6e3116` / `75ce26a` / `5a1f85d` / `20a0ef7` / `bd1d693`）；孤儿向量 15,531 → **0** |
 | R3 第三轮外部审计 | **P1/P2 全闭环**（`f0a2b8a`）+ **P3 全闭环**（`a6c1003`+`e31e5cd`）；R3-13 重定性已并入 0904 治理闭环 |
 | R2 第二轮外部审计 | **17 项全闭环**（`d77a802`） |

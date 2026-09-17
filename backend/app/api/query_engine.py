@@ -2022,7 +2022,12 @@ async def _generate_answer(
                     _tier_hint=_tier_hint or "",
                     user_prompt=prompt,  # 复用主链路 prompt，保留费率/对比/字数规则
                 )
-                answer = _mh["answer"]
+                # 防御：多假设返回空/None 答案时按失败处理并回落单路，
+                # 绝不让空串成为最终答案（否则会被写入缓存并返回给用户）
+                _mh_answer = (_mh or {}).get("answer")
+                if not _mh_answer:
+                    raise RuntimeError("multi-hypothesis returned empty answer")
+                answer = _mh_answer
                 _mh_meta = _mh.get("multi_hypothesis")
                 _mh_done = True
                 logger.info(

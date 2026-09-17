@@ -78,6 +78,35 @@ if not logger.handlers:
     _sh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     logger.addHandler(_sh)
 
+def multi_hypothesis_enabled(raw: str) -> bool:
+    """解析 multi_hypothesis 表单值 —— 仅显式真值启用（严格白名单）。
+
+    刻意不用同文件 `nocache` 的宽松 not-in 约定，而用 `rerank` 的严格约定：
+    多假设把 1 次生成放大为「3 次并发生成 + 1 次判官」，成本约 3×、墙钟最长约 2×。
+    因此「未识别值」必须按关闭处理，不能因空格/大小写异常（如 " false "）
+    静默多烧 LLM 调用（CC 审查建议，代价不对称）。
+
+    前端契约：services/query.ts:78 只发 "true" 或缺省。
+    """
+    return (raw or "").strip().lower() in ("true", "1", "yes", "on")
+
+
+def categories_cache_key(categories: str) -> str:
+    """把 categories 表单值归一化为缓存隔离维度用字符串。
+
+    归一化规则（顺序/大小写/空白差异视为同一语义，应共用缓存）：
+      · 按 "," 拆分 → 去空白 → 小写 → 去重 → 排序 → 重新拼接
+      · 剔除 "|"（scope 分隔符，防用户输入伪造分隔符造成维度碰撞）
+      · 空串保持空串（语义 = 排除 isolated 分类），"all" 原样保留
+
+    【FIX-0917-CAT】categories 参与检索过滤（query_engine.py:477-505）并影响置信
+    门控（同文件 :2198-2206），必须进缓存隔离维度；否则同 q+bank 仅换分类会命中
+    旧缓存、分类过滤被静默忽略（与 R2 审计「E2 全 cache_hit=exact」同一缺陷类）。
+    """
+    parts = {x.strip().lower() for x in (categories or "").split(",") if x.strip()}
+    return ",".join(sorted(parts)).replace("|", "/")
+
+
 router = APIRouter()
 
 @router.post("")
@@ -119,11 +148,24 @@ async def query(
     use_rerank = rerank.lower() == "true" or (bank == "checklist")
     valid_modes = {"default", "multidim", "confidence", "freshness", "cross_encoder"}
     use_rerank_mode = rerank_mode if rerank_mode in valid_modes else "default"
-    # 【P0-2】多假设开关：沿用本文件既有宽松解析约定（同 nocache / rerank）
-    use_multi_hypothesis = multi_hypothesis.lower() not in ("false", "0", "", "no")
-    # 【FIX-R2-2 同类】多假设产出与单路产出语义不同，必须进缓存隔离维度，
+    # 【P0-2】多假设开关：严格白名单（同 rerank 的严格约定）——
+    # 未识别值按关闭处理，避免静默放大 3× 生成成本
+    use_multi_hypothesis = multi_hypothesis_enabled(multi_hypothesis)
+    # 【P0-2】多假设产出与单路产出语义不同，必须进缓存隔离维度，
     # 否则「勾选」与「未勾选」会互相命中对方的缓存答案
-    cache_scope = f"{current_user}|rr={int(use_rerank)}:{use_rerank_mode}|mh={int(use_multi_hypothesis)}"
+    #
+    # 【FIX-0917-CAT】categories 也必须进隔离维度：它参与检索过滤
+    #   （query_engine.py:477-505 按 category 过滤 all_results）并且影响置信门控
+    #   （同文件 :2198-2206 指定分类时跳过 L2 coverage）。此前它不在 key/scope 中，
+    #   导致同 q+bank 仅换分类会命中旧缓存、分类过滤被静默忽略 ——
+    #   与 R2 审计「E2 全 cache_hit=exact」属同一缺陷类。
+    #   归一化：小写去空白 + 排序去重（顺序/大小写不同视为同一语义，应共用缓存）；
+    #   剔除 "|" 以防用户输入伪造 scope 分隔符。
+    _cat_key = categories_cache_key(categories)
+    cache_scope = (
+        f"{current_user}|rr={int(use_rerank)}:{use_rerank_mode}"
+        f"|mh={int(use_multi_hypothesis)}|cat={_cat_key}"
+    )
 
     # ── 多轮域锁定：获取会话状态 ──
     session_doc_ids = None
