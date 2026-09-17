@@ -221,9 +221,14 @@ function highlightKeywords(text: string): string {
  * 它自带一个字面 `>`；若此前 cleanSourceText 有未闭合标签残留（其黑名单正则
  * `<[^>]*>` 对无字面 `>` 的标签不匹配），这个 `>` 会把残留标签闭合掉并变成
  * 真实元素（实测注入 img[onerror]）。因此消毒必须放在**最后一步**。
+ *
+ * 【forbidMedia: true 的理由】本链的正常闭合标签本就被 cleanSourceText 删掉
+ * （见该函数注释），故额外禁 img/video/audio/source/track **零功能损失**，
+ * 却能消除「未闭合媒体标签 + 关键词」组合下的远程资源探测面。
+ * 回答正文链不能加此项 —— Markdown 的 `![alt](url)` 需要正常显示图片。
  */
 function renderSourceText(raw: string): string {
-  return sanitizeHtml(highlightKeywords(cleanSourceText(raw)))
+  return sanitizeHtml(highlightKeywords(cleanSourceText(raw)), { forbidMedia: true })
 }
 
 function formatSize(chars: number): string {

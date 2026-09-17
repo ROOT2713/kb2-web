@@ -93,16 +93,73 @@ describe('sanitizeHtml：载荷锁（on* 必须被剥离）', () => {
     })
   }
 
-  it('容器标签被剥离（DOM 断言，非字符串包含）', () => {
+  it('可执行/可嵌入容器被剥离（DOM 断言，非字符串包含）', () => {
     // DOM 断言：直接看解析后的标签名，避免"被转义也算通过"的假阳性
-    const formHtml = '<form action="//evil"><input name=a></form>'
-    expect(tagNames(sanitizeHtml('<script>alert(1)</script>'))).not.toContain('script')
-    expect(tagNames(sanitizeHtml('<iframe src="//evil"></iframe>'))).not.toContain('iframe')
-    expect(tagNames(sanitizeHtml(formHtml))).not.toContain('form')
-    expect(tagNames(sanitizeHtml(formHtml))).not.toContain('input')
-    expect(tagNames(sanitizeHtml('<button>x</button>'))).not.toContain('button')
-    expect(tagNames(sanitizeHtml('<textarea>x</textarea>'))).not.toContain('textarea')
+    for (const tag of ['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'base']) {
+      expect(tagNames(sanitizeHtml(`<${tag}></${tag}>`)), `标签 ${tag} 应被剥离`).not.toContain(tag)
+    }
     // 反向：承重项若被移除，本用例必须变红（见 /tmp/reverse_check_sanitize.py M3）
+  })
+
+  it('表单家族口径统一 — 全家族剥离（DOM 断言）', () => {
+    // 2026-09-17 加固③：此前只禁 form/input/button/textarea 四个，
+    // 其余表单元素（select/option/fieldset/...）由 DOMPurify 默认放行 ⇒ 口径不一。
+    // 现全家族禁掉 —— 回答正文来自 Markdown、来源文本是纯文本，永不产生表单元素，
+    // 故零功能损失，同时消除「钓鱼表单 / 输入劫持」面。
+    const html =
+      '<form action="//evil">' +
+      '<select name=s><optgroup label=g><option>a</option></optgroup></select>' +
+      '<datalist><option>b</option></datalist>' +
+      '<fieldset><legend>l</legend><output>o</output></fieldset>' +
+      '<input name=i><button>btn</button><textarea>t</textarea>' +
+      '</form>'
+    const tags = tagNames(sanitizeHtml(html))
+    for (const t of [
+      'form', 'select', 'optgroup', 'option', 'datalist',
+      'fieldset', 'legend', 'output', 'input', 'button', 'textarea',
+    ]) {
+      expect(tags, `标签 ${t} 应被剥离`).not.toContain(t)
+    }
+  })
+
+  it('SVG / MathML 剥离（mXSS 面）', () => {
+    // 2026-09-17 加固①：svg/math 是 mXSS（mutation XSS）历史重灾区 ——
+    // 命名空间切换会让「消毒后的结构」被浏览器重新解析成可执行内容，
+    // DOMPurify 自身多个 CVE 源于此。Markdown 不产出这两个命名空间，零功能损失。
+    const svgPayload = '<svg onload=alert(1)><circle r=1></svg>'
+    const mathPayload = '<math onerror=alert(1)><mi>x</mi></math>'
+    expect(tagNames(sanitizeHtml(svgPayload))).not.toContain('svg')
+    expect(tagNames(sanitizeHtml('<svg><script>alert(1)</script></svg>'))).not.toContain('svg')
+    expect(tagNames(sanitizeHtml(mathPayload))).not.toContain('math')
+    expect(eventAttrs(sanitizeHtml(svgPayload))).toEqual([])
+    expect(eventAttrs(sanitizeHtml(mathPayload))).toEqual([])
+  })
+
+  it('来源链禁媒体标签，回答正文链保留（forbidMedia 开关）', () => {
+    // 2026-09-17 加固②：来源链额外禁 img/video/audio/source/track。
+    // 实测该链的正常闭合媒体标签本就被 cleanSourceText 删掉 ⇒ 零功能损失；
+    // 收益 = 消除「未闭合媒体标签 + 关键词」组合下的远程资源探测面。
+    const img = '<img src="/static/fig1.png" alt="图">'
+    expect(tagNames(sanitizeHtml(img, { forbidMedia: true }))).not.toContain('img')
+    // 回答体链必须保留：Markdown 的 ![alt](url) 要正常显示
+    expect(tagNames(sanitizeHtml(img))).toContain('img')
+
+    const video = '<video controls><source src="/v.mp4"><track src="/t.vtt"></video>'
+    const mediaTags = tagNames(sanitizeHtml(video, { forbidMedia: true }))
+    for (const t of ['video', 'source', 'track', 'audio']) {
+      expect(mediaTags, `来源链应剥离 ${t}`).not.toContain(t)
+    }
+  })
+
+  it('a[target=_blank] 的 target 被默认剥离（tabnabbing 已由 DOMPurify 默认覆盖）', () => {
+    // 2026-09-17 加固④ 的实测结论：CC 建议"给 target=_blank 强制加 rel"，
+    // 但实测 DOMPurify 默认就**完全剥离 target**（该项目为防 tabnabbing
+    // 特意未把 target 放进默认 ALLOWED_ATTR）⇒ 无 window.opener 暴露面
+    // ⇒ 加 afterSanitizeAttributes hook 是永不触发的死代码。
+    // 本用例守护该结论：若将来有人把 target 加进 ALLOWED_ATTR，本用例变红提醒补 rel。
+    const out = sanitizeHtml('<a href="https://x.com" target="_blank">外链</a>')
+    expect(out).not.toContain('target')
+    expect(out).toContain('href="https://x.com"') // 链接本身不误伤
   })
 
   it('移除 javascript: 协议链接', () => {
@@ -157,6 +214,11 @@ describe('ResultCard 组件级：真实渲染链最终 DOM 不得出现 on*', ()
         [...el.attributes].map((a) => a.name.toLowerCase()),
       )
       expect(attrs.filter((n) => n.startsWith('on'))).toEqual([])
+      // 加固② 真实链路锁：来源链额外禁媒体标签 ⇒ 最终 DOM 不应出现媒体元素
+      // （不是断言"字符串里没有 <img"，而是断言解析后确实无该元素）
+      for (const t of ['img', 'video', 'audio', 'source', 'track']) {
+        expect(node!.querySelectorAll(t).length, `来源链最终 DOM 不应含 ${t}`).toBe(0)
+      }
     })
   }
 
@@ -172,5 +234,31 @@ describe('ResultCard 组件级：真实渲染链最终 DOM 不得出现 on*', ()
     const mark = wrapper.element.querySelector('.source-text mark.kw-highlight')
     expect(mark).not.toBeNull()
     expect(mark!.textContent).toBe('等保')
+  })
+
+  it('未闭合远程 img + 关键词：真实链路下既不注入事件、也不残留媒体元素', () => {
+    // 这是加固②要收的具体面：此前（消毒前）该组合会保留 src ⇒ 发起探测请求；
+    // 加固后 forbidMedia 把它整段剥离，同时关键词高亮不受影响。
+    const wrapper = mount(ResultCard, {
+      props: {
+        content: '正常回答',
+        sources: [
+          { doc: 'd', doc_id: 'doc-1', text: '<img src=https://evil.example/pixel.png 等保测评' },
+        ],
+        queryKeywords: ['等保测评'],
+      },
+      global: { stubs: { 'router-link': true } },
+    })
+    const node = wrapper.element.querySelector('.source-text')
+    expect(node).not.toBeNull()
+    expect(node!.querySelectorAll('img').length).toBe(0)
+    expect(node!.outerHTML).not.toContain('evil.example')
+    // 内容零丢失：关键词文本仍在
+    expect(node!.textContent).toContain('等保测评')
+    // 【为何此处不断言 mark 高亮（实测结论，勿"修好"）】
+    // 未闭合标签的属性区会**吞掉**随后插入的 <mark class="kw-highlight"> 起始标签 ——
+    // 终止 img 的那个 `>` 正是 mark 自己的。故该形态下高亮标记本就不产生，
+    // 最终输出恰为纯文本「等保测评」（安全结果反而更干净）。
+    // 高亮功能由上方「关键词高亮在组件内仍然生效」用例以正常文本形态单独守护。
   })
 })
