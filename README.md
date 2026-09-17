@@ -423,16 +423,16 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 
 | 指标 | 数值 |
 |------|------|
-| 后端测试 | **528 passed / 62 skipped**（`pytest tests/unit`，21.5s 实测）—— 批次 B 新增 57（交付包 44 + 接线锁 3 + 接线/回归 10）；改动前基线 471 |
+| 后端测试 | **531 passed / 62 skipped**（`pytest tests/unit`，22.1s 实测）—— 批次 B 新增 60（交付包 44 + 接线锁 3 + 接线/回归 13）；改动前基线 471 |
 | **前端测试** | **26 passed**（`vitest run`，`frontend/src/utils/sanitize.spec.ts`）—— 前端首个测试文件；含**反向核验（突变测试）9/9 全捕获** |
 | **前端渲染链安全** | **XSS 收口 + 加固**（`68acba6` + `4cff1b2`）—— 3 条 `v-html` 链（回答正文/来源文本/规范原文）统一收敛至 `utils/sanitize.ts` 的 `sanitizeHtml()`；修复前 5/8 载荷可注入真实元素 + `onerror`，修复后 0/8。加固后 `FORBID_TAGS` **12 → 21 项**（表单家族口径统一 + `svg`/`math` mXSS 面），来源链新增 `forbidMedia` 开关（禁 `img`/`video`/`audio`/`source`/`track`）；独立探针 **6/8 → 0/8 可利用**、**真退化 0** |
 | 多假设对比 | **已接线生效**（`d40d269`）—— 前端 `multi_hypothesis` 开关此前被 FastAPI 静默忽略；含缓存隔离（`mh=`/`cat=`）+ 全失败回落单路 |
-| **表格硬化与结构可观测** | **批次 B 已落地 + 已接线**（`8c23998`）—— `answer_structurer.py`（331 行，回答容错解析为区块 + 表格 `repair_flags`）与 `prompt_hardening.py`（120 行，费用表格硬模板 + 输出前列数自检，追加 **779 字符**）落地；接线两处：`_fee_rules` 末尾追加 + `_generate_answer` 返回前 `_structure_telemetry`（坏表记一行 `[STRUCTURE]` 日志，纯指标、不改响应契约）。验证：交付 44 测试 + 3 接线锁全绿，全量 **528 passed**（零回归），反向核验 **9/9**，端到端探针费用 prompt 6312 字符含硬模板 / 非费用不含，单变量 A/B **Δ=779**。⚠️ **需重启 kb2-web 才在进程内生效** |
-| **deai 后处理换行缺陷（本轮发现并修复）** | `496386b` —— `deai_postprocess` 第 3 条规则用 `\s+`（含换行）删标点后空白 ⇒ 「…万元。⏎⏎\| 表头 \|」被粘成一行 ⇒ **表头不再是独立管道行 ⇒ Markdown 表格整张退化**（用户可见：费用回答的表格/表头消失）。改为 `[ \t]+`；修复前后处理输出与输入 diff 由非空变**空**，7 类 Markdown 结构回归探针 diff 全为空 |
+| **表格硬化与结构可观测** | **批次 B 已落地 + 已接线 + 已生效**（`8c23998` + `52aac15`）—— `answer_structurer.py`（331 行，回答容错解析为区块 + 表格 `repair_flags`）与 `prompt_hardening.py`（120 行，费用表格硬模板 + 输出前列数自检，追加 **779 字符**）落地；接线两处：`_fee_rules` 末尾追加 + `_generate_answer` 返回前 `_structure_telemetry`（坏表记一行 `[STRUCTURE]` 日志，纯指标、不改响应契约）。验证：交付 44 测试 + 3 接线锁全绿，全量 **528 passed**（零回归），反向核验 **9/9**，端到端探针费用 prompt 6312 字符含硬模板 / 非费用不含，单变量 A/B **Δ=779**。CC 审查 **PASS_WITH_WARNING**（0 阻塞），其 2 条建议已落地（`52aac15`）。**已重启生效**（13:50:54，MainPID 3920594）：真实费用查询返回硬化模板 5 列表头 + 5 格对齐分隔行 + 0 处标点粘连，日志 `[FEE_RULES]` 有 / `[STRUCTURE]` 无 |
+| **deai 后处理换行缺陷（本轮发现并修复）** | `496386b` + `52aac15` —— `deai_postprocess` 第 3 条规则用 `\s+`（含换行）删标点后空白 ⇒ 「…万元。⏎⏎\| 表头 \|」被粘成一行 ⇒ **表头不再是独立管道行 ⇒ Markdown 表格整张退化**（用户可见：费用回答的表格/表头消失）。改为 `[^\S\r\n]+`（先用 `[ \t]+`，CC 指出会漏掉 U+3000 全角空格 ⇒ 再收窄，见 `52aac15`）；修复前后处理输出与输入 diff 由非空变**空**，7 类 Markdown 结构回归探针 diff 全为空 |
 | 数据治理 0904 | **P0 + P1 + P2 全闭环**（`8313906` / `b6e3116` / `75ce26a` / `5a1f85d` / `20a0ef7` / `bd1d693`）；孤儿向量 15,531 → **0** |
 | R3 第三轮外部审计 | **P1/P2 全闭环**（`f0a2b8a`）+ **P3 全闭环**（`a6c1003`+`e31e5cd`）；R3-13 重定性已并入 0904 治理闭环 |
 | R2 第二轮外部审计 | **17 项全闭环**（`d77a802`） |
-| 代码状态 | HEAD `8c23998`，已推送 origin/main；前端产物 `vite build` 已上线（`/` 200 + 引用的每个 `/assets/*` 均 200）；`frontend/dist` 已移出 git 跟踪（`36dfa9b`，**仍是运行时依赖**）。⚠️ 批次 B 的后端改动（`8c23998`）**仅在磁盘与远端，运行中进程（MainPID 3881052 @ 12:17:47）尚未加载 —— 需重启 kb2-web 才生效**（重启是独立授权点） |
+| 代码状态 | HEAD `52aac15`，已推送 origin/main；**kb2-web 已重启生效**（MainPID 3920594 @ 13:50:54，`Application startup complete`）—— 后端改动三层验证通过（磁盘 / 进程加载 / 运行时实测）；前端产物 `vite build` 已上线（`/` 200 + 引用的每个 `/assets/*` 均 200）；`frontend/dist` 已移出 git 跟踪（`36dfa9b`，**仍是运行时依赖**） |
 | 数据规模 | SQLite `documents` 598（active 221 / superseded 377）；pg `vector_chunks` 22,609（registry 100%）；`wiki_entries` 62 |
 | 库空间 | 1530 MB（HNSW 索引 131 MB）；Hindsight 服务 `inactive` + `disabled` |
 | 缓存 | hit_count 累加 + scope 隔离（含 rerank 维度）+ (bank,scope) 分区 LRU + 全局总量上限 2000（R3-7） |
