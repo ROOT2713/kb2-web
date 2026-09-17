@@ -145,6 +145,33 @@ async def test_wiring_emits_structure_log_on_bad_table(monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
+async def test_wiring_injects_fee_template_into_fee_prompt(monkeypatch):
+    """CC 建议 4：不靠源码子串锁，真跑一遍断言费用 prompt 含硬化片段（接线有牙齿）。"""
+    from app.services.prompt_hardening import build_fee_hint
+
+    hint = build_fee_hint()
+    assert hint.strip(), "硬化片段为空，本测试失去意义"
+    _res, rec = await _run_generate(
+        monkeypatch, GOOD_TABLE_ANSWER, "东莞市500万元项目的验收测评费是多少？"
+    )
+    assert rec.prompts, "LLM 未被调用，说明测试没走到生成阶段"
+    assert hint in rec.prompts[0], "费用查询 prompt 未注入硬化片段 —— 接线失效"
+
+
+@pytest.mark.asyncio
+async def test_wiring_skips_fee_template_for_non_fee_query(monkeypatch):
+    """反向核验：非费用查询不得注入硬化片段（费用门控成立，避免污染通用回答）。"""
+    from app.services.prompt_hardening import build_fee_hint
+
+    hint = build_fee_hint()
+    _res, rec = await _run_generate(
+        monkeypatch, GOOD_TABLE_ANSWER, "知识库支持上传哪些文件格式？"
+    )
+    assert rec.prompts, "LLM 未被调用"
+    assert hint not in rec.prompts[0], "非费用查询被注入了费用表格硬化片段"
+
+
+@pytest.mark.asyncio
 async def test_wiring_silent_on_clean_table(monkeypatch, caplog):
     with caplog.at_level(logging.INFO, logger="app.api.query_engine"):
         await _run_generate(

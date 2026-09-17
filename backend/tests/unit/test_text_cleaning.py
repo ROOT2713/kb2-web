@@ -376,6 +376,12 @@ class TestDeaiPostprocess:
         assert "万元。|" not in result
         assert result.count("\n") >= 4  # 4 行表格结构未被压平
 
+    def test_punctuation_rule_strips_fullwidth_space(self):
+        """CC 建议 1：`[ \\t]+` 会漏掉 U+3000 全角空格；`[^\\S\\r\\n]+` 应剥离它。"""
+        assert deai_postprocess("结论。\u3000下一句") == "结论。下一句"
+        out = deai_postprocess("金额如下：\u3000\u3000见表。")
+        assert "\u3000" not in out, repr(out)
+
     def test_punctuation_rule_still_fixes_inline_space(self):
         text = "测试 。 内容 ！ 结束"
         result = deai_postprocess(text)
