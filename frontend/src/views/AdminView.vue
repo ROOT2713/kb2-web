@@ -28,7 +28,12 @@
         <div class="health-row"><span>状态</span><span class="badge">{{ health.status }}</span></div>
         <div class="health-row"><span>数据库</span><span>{{ health.db }}</span></div>
         <div class="health-row"><span>版本</span><span>{{ health.version }}</span></div>
-        <div class="health-row"><span>Hindsight</span><span>{{ health.hindsight }}</span></div>
+        <!-- 【C4】字段名对齐后端：vector_store（原读 hindsight → 恒 undefined，整行空白）；
+             并补上后端一直在返、前端从未读的 mineru -->
+        <div class="health-row">
+          <span>向量库</span><span class="badge">{{ health.vector_store }}</span>
+        </div>
+        <div class="health-row"><span>MinerU</span><span>{{ fmtMineru(health.mineru) }}</span></div>
       </div>
     </section>
 
@@ -169,6 +174,14 @@ import {
   type RagEvalResponse,
   type AdminCosts,
 } from '@/services/admin'
+
+/** 【C4】mineru 既可能是 get_mineru_stats() 的 dict，也可能是 "unavailable" 字符串 */
+function fmtMineru(v: Record<string, unknown> | string | undefined): string {
+  if (v == null) return '—'
+  if (typeof v === 'string') return v
+  const parts = Object.entries(v).map(([k, val]) => `${k}=${val}`)
+  return parts.length ? parts.join('  ') : '—'
+}
 
 const stats = ref<AdminStats | null>(null)
 const health = ref<AdminHealth | null>(null)

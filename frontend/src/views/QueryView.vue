@@ -33,7 +33,7 @@
         </label>
         <label class="option-label">
           <select v-model="categoryFilter" class="cat-filter" @change="handleQuery">
-            <option value="">排除日常/资讯</option>
+            <option :value="EXCLUDE_DAILY_CATEGORIES">排除日常/资讯</option>
             <option value="all">全部（含日常/资讯）</option>
             <option value="daily,news">仅日常+资讯</option>
             <option v-for="c in categories" :key="c.key" :value="c.key">
@@ -73,6 +73,16 @@
         @click="handleClearCache"
       >
         {{ queryStore.clearingCache ? '清除中...' : '🗑️ 清除缓存' }}
+      </button>
+      <!-- 【C1】显式开新会话。仅在已有 session 时出现（全新对话无需重置） -->
+      <button
+        v-if="queryStore.sessionId"
+        type="button"
+        class="btn-clear-cache"
+        title="开始新一轮独立对话，不再沿用上轮文档范围"
+        @click="handleNewSession"
+      >
+        ↻ 新会话
       </button>
     </div>
 
@@ -137,6 +147,7 @@ import { useQueryStore } from '@/stores/query'
 import { useBanksStore } from '@/stores/banks'
 import api from '@/services/api'
 import { getCategories } from '@/services/admin'
+import { EXCLUDE_DAILY_CATEGORIES, toCategoriesParam } from '@/services/query'
 import ResultCard from '@/components/ResultCard.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import Toast from '@/components/Toast.vue'
@@ -150,7 +161,11 @@ const selectedBank = computed({
   get: () => banksStore.selectedBank,
   set: (val: string) => banksStore.selectBank(val),
 })
-const categoryFilter = ref('')
+/**
+ * 【C7】默认值取哨兵，与首个 `<option>` 一致 ——
+ * 不再借用空串（空串在下游语义是「不传该字段」，两者混用正是本项缺陷）
+ */
+const categoryFilter = ref(EXCLUDE_DAILY_CATEGORIES)
 const categories = ref<{key: string, label: string, isolated: boolean}[]>([])
 
 /** SourceCard: 从当前查询文本提取关键词用于高亮 */
@@ -212,7 +227,7 @@ function handleQuery() {
     rerank_mode: rerankMode.value,
     multiHypothesis: useMultiHypothesis.value,
     nocache: forceRefresh.value,
-    categories: categoryFilter.value,
+    categories: toCategoriesParam(categoryFilter.value),
   })
 }
 
@@ -234,7 +249,7 @@ function handleSuggestionSearch(nextQuery: string) {
     rerank: useRerank.value,
     rerank_mode: rerankMode.value,
     nocache: forceRefresh.value,
-    categories: categoryFilter.value,
+    categories: toCategoriesParam(categoryFilter.value),
   })
 }
 
@@ -247,7 +262,7 @@ function handleRefreshFromCache() {
     rerank_mode: rerankMode.value,
     multiHypothesis: useMultiHypothesis.value,
     nocache: true,
-    categories: categoryFilter.value,
+    categories: toCategoriesParam(categoryFilter.value),
   })
 }
 
@@ -259,6 +274,17 @@ async function handleClearCache() {
 }
 
 function abortQuery() {
+  // 【C5】真取消：中断 HTTP 连接。
+  // 此前只调 queryStore.clear() 清本地状态 —— 后端仍在跑满检索 + LLM 全链路，
+  // **计费照常发生**，UI 却显示「已取消」。
+  queryStore.abortQuery()
+  stopQueryTimer()
+}
+
+/** 【C1】开新一轮独立对话：清掉 session_id，不再沿用上一轮的文档白名单 */
+function handleNewSession() {
+  queryStore.abortQuery()
+  queryStore.resetSession()
   queryStore.clear()
   stopQueryTimer()
 }
