@@ -90,10 +90,24 @@ export async function getCosts(period: string = 'today'): Promise<AdminCosts> {
   return data
 }
 
+/**
+ * 分类项。
+ *
+ * ⚠️ 两个来源端点的**载荷不同**，字段因此不能都声明为必有：
+ *   · `/admin/categories`（admin.py:503）→ `{key, label, isolated}`
+ *   · `/banks/categories` （banks.py:162-166，主路径）→ `{key, label, count}`
+ * 实测（2026-09-17，:3027）：主路径单条分类键为 `['count','key','label']`，**不含 `isolated`**。
+ * 故 `isolated` 标可选 —— 否则类型在说谎，正是本批修复的那类「静默字段错位」
+ * （未来有人按 `isolated` 过滤 daily/news 会再次悄悄坏掉）。
+ * 谁要这个语义，必须显式处理「主路径拿不到」的情形，而不是以为它一定有值。
+ */
 export interface CategoryItem {
   key: string
   label: string
-  isolated: boolean
+  /** 仅 `/admin/categories` 提供：是否为默认排除的隔离分类（daily/news） */
+  isolated?: boolean
+  /** 仅 `/banks/categories` 提供：该分类下的文档数 */
+  count?: number
 }
 
 export interface CategoryTreeNode {
@@ -137,8 +151,10 @@ function flattenBanksTree(payload: unknown): CategoryItem[] {
  * ⚠️ 两个端点的响应结构不同，不能只换 URL：
  *   · `/admin/categories` → `CategoryTreeNode[]`          裸数组
  *   · `/banks/categories` → `{ super_categories: [...] }` 包一层
- * 只有前者失败时才回退（管理员场景仍可用）；两条都失败则**向上抛**
- * —— 不再被这一层吞掉，让调用方能区分「空」与「失败」。
+ *
+ * 回退条件 = **请求失败 _或_ 解包得到空列表**（空列表同样视为「这条路的载荷不可用」，
+ * 不能把空当结果返回）；两条都失败则**向上抛** —— 不再被这一层吞掉，
+ * 让调用方能区分「空」与「失败」。
  */
 export async function getCategories(): Promise<CategoryItem[]> {
   try {

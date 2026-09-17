@@ -6,7 +6,8 @@ export interface BankItem {
   count: number
   searchable: number
   description: string
-  hindsight?: string
+  /** 后端 `banks.py:230/236` 返回该 bank 的 hindsight 映射；未配置时为 `null`（实测） */
+  hindsight?: string | null
 }
 
 export interface BanksResponse {

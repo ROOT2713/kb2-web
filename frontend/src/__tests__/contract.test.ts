@@ -64,8 +64,11 @@ function mockCategories() {
   })
 }
 
-/** 统一挂载选项：ResultCard 内有 router-link，测试环境无 router ⇒ 打桩消警告 */
-const MOUNT_OPTS = { global: { stubs: { 'router-link': true } } } as MountingOptions<unknown>
+/** 统一挂载选项：ResultCard 内有 RouterLink，测试环境无 router ⇒ 打桩消警告
+ *  （kebab 与 Pascal 两种写法都要给，stub 匹配按模板里的实际写法） */
+const MOUNT_OPTS = {
+  global: { stubs: { RouterLink: true, 'router-link': true } },
+} as MountingOptions<unknown>
 
 beforeEach(() => {
   postMock.mockReset()
@@ -309,6 +312,33 @@ describe('C6 getCategories 走 viewer 端点', () => {
     const list = await getCategories()
     expect(getMock.mock.calls[1][0]).toBe('/admin/categories')
     expect(list).toHaveLength(1)
+  })
+
+  it('主路径载荷不含 isolated 时，不得凭空造一个值（类型可选化的回归锁）', async () => {
+    getMock.mockResolvedValue({
+      data: {
+        super_categories: [
+          { name: '费用类', categories: [{ key: 'fee', label: '费率', count: 12 }] },
+        ],
+      },
+    })
+    const list = await getCategories()
+    expect(list).toHaveLength(1)
+    expect(list[0]).toEqual({ key: 'fee', label: '费率', count: 12 })
+    // 关键：不能因为旧类型声称必有 isolated 就补一个 undefined/false
+    expect('isolated' in list[0]).toBe(false)
+  })
+
+  it('回退到 admin 端点时 isolated 有真实值（该端点确实提供）', async () => {
+    getMock
+      .mockRejectedValueOnce(new Error('403'))
+      .mockResolvedValueOnce({
+        data: [
+          { name: '日常/资讯', categories: [{ key: 'daily', label: '日常', isolated: true }] },
+        ],
+      })
+    const list = await getCategories()
+    expect(list[0].isolated).toBe(true)
   })
 
   it('两条路都失败时向上抛（调用方可区分「空」与「失败」）', async () => {

@@ -146,7 +146,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useQueryStore } from '@/stores/query'
 import { useBanksStore } from '@/stores/banks'
 import api from '@/services/api'
-import { getCategories } from '@/services/admin'
+import { getCategories, type CategoryItem } from '@/services/admin'
 import { EXCLUDE_DAILY_CATEGORIES, toCategoriesParam } from '@/services/query'
 import ResultCard from '@/components/ResultCard.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -166,7 +166,8 @@ const selectedBank = computed({
  * 不再借用空串（空串在下游语义是「不传该字段」，两者混用正是本项缺陷）
  */
 const categoryFilter = ref(EXCLUDE_DAILY_CATEGORIES)
-const categories = ref<{key: string, label: string, isolated: boolean}[]>([])
+// 用共享的 CategoryItem，不再抄一份内联类型（内联副本必然与 service 层漂移）
+const categories = ref<CategoryItem[]>([])
 
 /** SourceCard: 从当前查询文本提取关键词用于高亮 */
 const searchKeywords = computed(() => {
