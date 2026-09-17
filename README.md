@@ -170,6 +170,9 @@ kb2-web/
 # 后端测试
 cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python -m pytest -q
 
+# 前端测试（vitest + jsdom）
+cd frontend && npx vitest run
+
 # 前端构建
 cd frontend && npm run build
 
@@ -415,12 +418,14 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 
 | 指标 | 数值 |
 |------|------|
-| 后端测试 | **466 passed / 62 skipped**（`pytest tests/unit`，21.6s 实测）；全量收集 539 tests |
+| 后端测试 | **471 passed / 62 skipped**（`pytest tests/unit`，21.6s 实测）；全量收集 539 tests |
+| **前端测试** | **21 passed**（`vitest run`，`frontend/src/utils/sanitize.spec.ts`）—— 前端首个测试文件 |
+| **前端渲染链安全** | **XSS 收口**（`68acba6`）—— 3 条 `v-html` 链（回答正文/来源文本/规范原文）统一收敛至 `utils/sanitize.ts` 的 `sanitizeHtml()`；修复前 5/8 载荷可注入真实元素 + `onerror`，修复后 0/8 |
 | 多假设对比 | **已接线生效**（`d40d269`）—— 前端 `multi_hypothesis` 开关此前被 FastAPI 静默忽略；含缓存隔离（`mh=`/`cat=`）+ 全失败回落单路 |
 | 数据治理 0904 | **P0 + P1 + P2 全闭环**（`8313906` / `b6e3116` / `75ce26a` / `5a1f85d` / `20a0ef7` / `bd1d693`）；孤儿向量 15,531 → **0** |
 | R3 第三轮外部审计 | **P1/P2 全闭环**（`f0a2b8a`）+ **P3 全闭环**（`a6c1003`+`e31e5cd`）；R3-13 重定性已并入 0904 治理闭环 |
 | R2 第二轮外部审计 | **17 项全闭环**（`d77a802`） |
-| 代码状态 | HEAD `bd1d693`，已推送 origin/main；服务生效（MainPID 3677240） |
+| 代码状态 | HEAD `68acba6`，已推送 origin/main；kb2-web 生效（MainPID 3881052，方案 B 已加载）；前端产物 `vite build` 已上线 |
 | 数据规模 | SQLite `documents` 598（active 221 / superseded 377）；pg `vector_chunks` 22,609（registry 100%）；`wiki_entries` 62 |
 | 库空间 | 1530 MB（HNSW 索引 131 MB）；Hindsight 服务 `inactive` + `disabled` |
 | 缓存 | hit_count 累加 + scope 隔离（含 rerank 维度）+ (bank,scope) 分区 LRU + 全局总量上限 2000（R3-7） |
