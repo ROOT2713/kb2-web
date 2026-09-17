@@ -411,6 +411,8 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 3. **删除必须双写且不可静默** —— 只删一侧 = 制造孤儿；失败静默 = 孤儿无声堆积（P2-G2 已修复为抛 500）。
 4. **判"活路径还在"必须实调一次**，不能读代码推断。
 5. **`/proc/PID/environ` 是 DB 路径权威** —— 读 `.env` 的 `DB_PATH` 做验证是假验证。
+6. **`.gitignore` 说「不入仓」≠「不重要」** —— `frontend/dist` 不入版本库，但它是**运行时依赖**（kb2-web 后端静态托管，非 dev server）。判断「某改动能否回退」之前，先确认它是不是运行时依赖：曾把 build 后的 `dist/index.html` 用 `git checkout` 回退，而 `vite build` 的 `emptyOutDir` 已清空重建 assets ⇒ 回退的 index.html 引用旧 hash 文件 ⇒ **JS 404 前端白屏**，而 `is-active` / `/api/banks` 401 / journalctl 全部正常。前端改动验收链：`改 src` → `vitest` → `vue-tsc 净增 0` → `vite build` → **服务返回的 index.html 引用的每个 `/assets/*` 均 200**。
+7. **突变测试必须先自证** —— 「测试没变红」既可能是测试没牙齿，也可能是**核验脚本自己坏了**。本轮反向核验 6 项连锁假阴性，根因是还原逻辑 `str.replace("", X, 1)`（空串替换不是无操作，会把旧内容插到文件开头）写坏文件 + 判定漏了 vitest 的第三种形态 `Tests  no tests`。判据必须包含「基线全绿 + 突变后确有收集/断言失败」，否则假阴性会被读成「加固无效」。
 
 ---
 
@@ -419,13 +421,13 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 | 指标 | 数值 |
 |------|------|
 | 后端测试 | **471 passed / 62 skipped**（`pytest tests/unit`，21.6s 实测）；全量收集 539 tests |
-| **前端测试** | **21 passed**（`vitest run`，`frontend/src/utils/sanitize.spec.ts`）—— 前端首个测试文件 |
-| **前端渲染链安全** | **XSS 收口**（`68acba6`）—— 3 条 `v-html` 链（回答正文/来源文本/规范原文）统一收敛至 `utils/sanitize.ts` 的 `sanitizeHtml()`；修复前 5/8 载荷可注入真实元素 + `onerror`，修复后 0/8 |
+| **前端测试** | **26 passed**（`vitest run`，`frontend/src/utils/sanitize.spec.ts`）—— 前端首个测试文件；含**反向核验（突变测试）9/9 全捕获** |
+| **前端渲染链安全** | **XSS 收口 + 加固**（`68acba6` + `4cff1b2`）—— 3 条 `v-html` 链（回答正文/来源文本/规范原文）统一收敛至 `utils/sanitize.ts` 的 `sanitizeHtml()`；修复前 5/8 载荷可注入真实元素 + `onerror`，修复后 0/8。加固后 `FORBID_TAGS` **12 → 21 项**（表单家族口径统一 + `svg`/`math` mXSS 面），来源链新增 `forbidMedia` 开关（禁 `img`/`video`/`audio`/`source`/`track`）；独立探针 **6/8 → 0/8 可利用**、**真退化 0** |
 | 多假设对比 | **已接线生效**（`d40d269`）—— 前端 `multi_hypothesis` 开关此前被 FastAPI 静默忽略；含缓存隔离（`mh=`/`cat=`）+ 全失败回落单路 |
 | 数据治理 0904 | **P0 + P1 + P2 全闭环**（`8313906` / `b6e3116` / `75ce26a` / `5a1f85d` / `20a0ef7` / `bd1d693`）；孤儿向量 15,531 → **0** |
 | R3 第三轮外部审计 | **P1/P2 全闭环**（`f0a2b8a`）+ **P3 全闭环**（`a6c1003`+`e31e5cd`）；R3-13 重定性已并入 0904 治理闭环 |
 | R2 第二轮外部审计 | **17 项全闭环**（`d77a802`） |
-| 代码状态 | HEAD `68acba6`，已推送 origin/main；kb2-web 生效（MainPID 3881052，方案 B 已加载）；前端产物 `vite build` 已上线 |
+| 代码状态 | HEAD `4cff1b2`，已推送 origin/main；kb2-web 生效（MainPID 3881052 @ 12:17:47，方案 B 已加载；本批为**纯前端**改动 ⇒ 无需重启）；前端产物 `vite build` 已上线（`/` 200 + 引用的每个 `/assets/*` 均 200）；`frontend/dist` 已移出 git 跟踪（`36dfa9b`，**仍是运行时依赖**） |
 | 数据规模 | SQLite `documents` 598（active 221 / superseded 377）；pg `vector_chunks` 22,609（registry 100%）；`wiki_entries` 62 |
 | 库空间 | 1530 MB（HNSW 索引 131 MB）；Hindsight 服务 `inactive` + `disabled` |
 | 缓存 | hit_count 累加 + scope 隔离（含 rerank 维度）+ (bank,scope) 分区 LRU + 全局总量上限 2000（R3-7） |
