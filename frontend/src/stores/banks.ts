@@ -6,6 +6,7 @@ import {
   deleteBank as apiDeleteBank,
   type BankItem,
 } from '@/services/banks'
+import { getErrorMessage } from '@/utils/error'
 
 export const useBanksStore = defineStore('banks', () => {
   const banks = ref<BankItem[]>([])
@@ -20,7 +21,7 @@ export const useBanksStore = defineStore('banks', () => {
       const data = await apiListBanks()
       banks.value = data.banks
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : '加载知识库失败'
+      error.value = getErrorMessage(e, '加载知识库失败')
     } finally {
       loading.value = false
     }
@@ -36,7 +37,7 @@ export const useBanksStore = defineStore('banks', () => {
       await apiCreateBank(payload)
       await fetchBanks()
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : '创建知识库失败'
+      error.value = getErrorMessage(e, '创建知识库失败')
       throw e
     }
   }
@@ -46,7 +47,7 @@ export const useBanksStore = defineStore('banks', () => {
       await apiDeleteBank(bankKey, confirm)
       await fetchBanks()
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : '删除知识库失败'
+      error.value = getErrorMessage(e, '删除知识库失败')
       throw e
     }
   }

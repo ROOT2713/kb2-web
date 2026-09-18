@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { login as apiLogin } from '@/services/auth'
+import { getErrorMessage } from '@/utils/error'
 
 const TOKEN_KEY = 'kb2_token'
 const ROLE_KEY = 'kb2_role'
@@ -42,8 +43,8 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.setItem(TOKEN_KEY, data.access_token)
       localStorage.setItem(ROLE_KEY, data.role)
       return true
-    } catch (e: any) {
-      error.value = e.response?.data?.detail || '登录失败，请重试'
+    } catch (e: unknown) {
+      error.value = getErrorMessage(e, '登录失败，请重试')
       return false
     } finally {
       loading.value = false

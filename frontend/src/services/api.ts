@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { getErrorMessage } from '@/utils/error'
 
 const api = axios.create({
   baseURL: '/api',
@@ -26,11 +27,7 @@ api.interceptors.response.use(
         window.location.href = '/login?redirect=' + encodeURIComponent(currentPath)
       }
     }
-    const message =
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      '请求失败'
+    const message = getErrorMessage(error, '请求失败')
     console.error('[API Error]', message)
     return Promise.reject(error)
   },

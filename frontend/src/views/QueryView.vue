@@ -145,7 +145,6 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useQueryStore } from '@/stores/query'
 import { useBanksStore } from '@/stores/banks'
-import api from '@/services/api'
 import { getCategories, type CategoryItem } from '@/services/admin'
 import { EXCLUDE_DAILY_CATEGORIES, toCategoriesParam } from '@/services/query'
 import ResultCard from '@/components/ResultCard.vue'
@@ -201,7 +200,7 @@ watch(() => queryStore.loading, (loading) => {
 })
 
 // Watch sidebar bank selection: when user clicks sidebar, auto-execute query
-watch(() => banksStore.selectedBank, (newBank) => {
+watch(() => banksStore.selectedBank, () => {
   if (queryText.value.trim()) {
     handleQuery()
   }

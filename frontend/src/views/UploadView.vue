@@ -50,13 +50,13 @@
             :title="webkitRelativePath(f)"
           >
             {{ webkitRelativePath(f) }}
-            <span class="file-size-inline">{{ formatSize(f.size) }}</span>
+            <span class="file-size-inline">{{ formatFileSize(f.size) }}</span>
           </span>
           <span v-if="selectedFiles.length > 10" class="file-more">
             …共 {{ selectedFiles.length }} 个文件
           </span>
         </div>
-        <span class="file-total-size">总大小 {{ formatSize(totalSize) }}</span>
+        <span class="file-total-size">总大小 {{ formatFileSize(totalSize) }}</span>
       </div>
 
       <div class="form-row">
@@ -164,6 +164,8 @@ import api from '@/services/api'
 import Toast from '@/components/Toast.vue'
 import { getCategories } from '@/services/admin'
 import type { CategoryItem } from '@/services/admin'
+import { formatFileSize } from '@/utils/format'
+import { isAbortError } from '@/utils/error'
 
 const banksStore = useBanksStore()
 
@@ -312,12 +314,6 @@ function handleFolderSelect(e: Event) {
   input.value = ''
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
 // ── 计算文件 SHA-256（与后端 hashlib.sha256 一致，用于 precheck 精确匹配） ──
 async function sha256OfFile(file: File): Promise<string> {
   const buf = await file.arrayBuffer()
@@ -384,7 +380,7 @@ async function handleUpload() {
 
   // ── 预检：识别已存在的文档 ──
   let originalFiles = selectedFiles.value.slice()
-  let skippedDup: PrecheckItem[] = []
+  const skippedDup: PrecheckItem[] = []
   try {
     const precheck = await runPrecheck(originalFiles, uploadBank.value)
     const fileByName = new Map(originalFiles.map(f => [f.name, f]))
@@ -426,7 +422,7 @@ async function handleUpload() {
     console.warn('precheck failed, falling back to direct upload:', e)
     // 区分超时/网络错误/其他异常，给出具体文案
     const err = e as Error
-    const isTimeout = err?.name === 'AbortError' || err?.name === 'CanceledError'
+    const isTimeout = isAbortError(e)
     const isNetwork = err instanceof TypeError && (err.message || '').includes('NetworkError')
     if (isTimeout) {
       uploadPhase.value = `预检超时（30s），跳过预检直接上传 ${originalFiles.length} 个文件...`

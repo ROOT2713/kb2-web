@@ -9,6 +9,7 @@ import {
   type DocumentItem,
 } from '@/services/documents'
 import { getCategories as apiGetCategories, type CategoryItem } from '@/services/admin'
+import { getErrorMessage } from '@/utils/error'
 
 export const useDocumentsStore = defineStore('documents', () => {
   const documents = ref<DocumentItem[]>([])
@@ -23,7 +24,7 @@ export const useDocumentsStore = defineStore('documents', () => {
       const data = await apiListDocuments(bank)
       documents.value = data.documents
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : '加载文档失败'
+      error.value = getErrorMessage(e, '加载文档失败')
     } finally {
       loading.value = false
     }
@@ -42,7 +43,7 @@ export const useDocumentsStore = defineStore('documents', () => {
       await apiDeleteDocument(docId)
       documents.value = documents.value.filter((d) => d.id !== docId)
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : '删除失败'
+      error.value = getErrorMessage(e, '删除失败')
       throw e
     }
   }
@@ -51,7 +52,7 @@ export const useDocumentsStore = defineStore('documents', () => {
     try {
       return await apiReparseDocument(docId)
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : '重新解析失败'
+      error.value = getErrorMessage(e, '重新解析失败')
       throw e
     }
   }

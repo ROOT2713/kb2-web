@@ -95,6 +95,7 @@ import { useAuthStore } from '@/stores/auth'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import Toast from '@/components/Toast.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import { getErrorMessage } from '@/utils/error'
 
 const route = useRoute()
 const router = useRouter()
@@ -125,7 +126,7 @@ async function loadDetail() {
   try {
     docDetail.value = await getDocument(docId)
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '加载失败'
+    error.value = getErrorMessage(e, '加载失败')
   } finally {
     loading.value = false
   }

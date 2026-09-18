@@ -8,6 +8,7 @@ import {
   type Source,
   type QuerySuggestions,
 } from '@/services/query'
+import { getErrorMessage, isAbortError } from '@/utils/error'
 
 interface StandardContent {
   title: string
@@ -70,12 +71,6 @@ export const useQueryStore = defineStore('query', () => {
     } catch {
       /* 隐私模式下 sessionStorage 可能不可用，静默降级 */
     }
-  }
-
-  /** 【C5】主动取消不是错误 —— axios 取消后 name 为 CanceledError/AbortError */
-  function isAbortError(e: unknown): boolean {
-    const name = (e as { name?: string } | null | undefined)?.name
-    return name === 'CanceledError' || name === 'AbortError'
   }
 
   /** 【C5】中断进行中的查询。controller.abort() 让 axios 立刻断连。 */
@@ -160,7 +155,7 @@ export const useQueryStore = defineStore('query', () => {
     } catch (e: unknown) {
       // 【C5】主动取消不是错误，不弹红色提示
       if (isAbortError(e)) return
-      error.value = e instanceof Error ? e.message : '查询失败'
+      error.value = getErrorMessage(e, '查询失败')
       suggestions.value = null
       standardContents.value = []
     } finally {
@@ -187,7 +182,7 @@ export const useQueryStore = defineStore('query', () => {
       sources.value = []
     } catch (e: unknown) {
       if (isAbortError(e)) return
-      error.value = e instanceof Error ? e.message : '联网搜索失败'
+      error.value = getErrorMessage(e, '联网搜索失败')
     } finally {
       if (controller?.signal === signal) {
         webSearching.value = false
@@ -217,7 +212,7 @@ export const useQueryStore = defineStore('query', () => {
       error.value = ''
       return result
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : '清除缓存失败'
+      error.value = getErrorMessage(e, '清除缓存失败')
       return null
     } finally {
       clearingCache.value = false

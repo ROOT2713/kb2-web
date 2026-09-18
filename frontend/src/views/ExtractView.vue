@@ -112,6 +112,7 @@ import { ref, onMounted } from 'vue'
 import { extractByTopic, type ExtractResult } from '@/services/articles'
 import { listBanks } from '@/services/banks'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import { getErrorMessage } from '@/utils/error'
 
 const topic = ref('')
 const selectedBank = ref('all')
@@ -166,7 +167,7 @@ async function handleExtract() {
       summarize.value,
     )
   } catch (e) {
-    error.value = '提取失败: ' + (e instanceof Error ? e.message : '未知错误')
+    error.value = '提取失败: ' + getErrorMessage(e, '未知错误')
   } finally {
     loading.value = false
   }
@@ -187,7 +188,7 @@ async function goToPage(page: number) {
       summarize.value,
     )
   } catch (e) {
-    error.value = '加载失败: ' + (e instanceof Error ? e.message : '未知错误')
+    error.value = '加载失败: ' + getErrorMessage(e, '未知错误')
   } finally {
     loading.value = false
   }

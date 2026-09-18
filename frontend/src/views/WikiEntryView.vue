@@ -35,7 +35,7 @@
         <div class="entry-summary">{{ entry.summary || '暂无摘要' }}</div>
         <div class="entry-meta">
           <span class="meta-status" :class="entry.status">{{ statusLabel(entry.status) }}</span>
-          <span class="meta-date">{{ entry.updated_at?.slice(0,10) }}</span>
+          <span class="meta-date">{{ formatDate(entry.updated_at) }}</span>
         </div>
       </div>
     </div>
@@ -147,6 +147,7 @@ import { ref, onMounted } from 'vue'
 import api from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import { formatDate } from '@/utils/format'
 
 const authStore = useAuthStore()
 

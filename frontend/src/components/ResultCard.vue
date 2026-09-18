@@ -13,6 +13,7 @@
         🔄 强制刷新
       </button>
     </div>
+    <!-- eslint-disable-next-line vue/no-v-html -- renderedHtml 已由 utils/markdown.ts 强制消毒 -->
     <div class="result-body" v-html="renderedHtml"></div>
     <div v-if="suggestions" class="suggestion-panel">
       <div class="suggestion-title">{{ suggestionTitle }}</div>
@@ -85,6 +86,7 @@
               <span v-if="src.score" class="source-score">{{ src.score }}</span>
             </span>
           </div>
+          <!-- eslint-disable-next-line vue/no-v-html -- renderSourceText 内部强制消毒（顺序不可调换） -->
           <div v-if="src.text" class="source-text" v-html="renderSourceText(src.text)"></div>
           <span v-else-if="src.chunk" class="source-chunk-info">{{ src.chunk }}</span>
           </div>
@@ -101,11 +103,12 @@
         >
           <span class="standard-arrow">{{ expandedStds.has(std.doc_id) ? '▾' : '▸' }}</span>
           <span class="standard-name">{{ std.title }}</span>
-          <span class="standard-meta">{{ formatSize(std.total_chars) }} · {{ std.sections_count }}章节</span>
+          <span class="standard-meta">{{ formatCharCount(std.total_chars) }} · {{ std.sections_count }}章节</span>
         </button>
         <div v-if="expandedStds.has(std.doc_id)" class="standard-body">
           <div v-if="loadingStds.has(std.doc_id)" class="standard-loading">加载中...</div>
-          <div v-else-if="stdTexts[std.doc_id]" class="standard-text" v-html="renderStdText(stdTexts[std.doc_id])"></div>
+          <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown 内部强制消毒 -->
+          <div v-else-if="stdTexts[std.doc_id]" class="standard-text" v-html="renderMarkdown(stdTexts[std.doc_id])"></div>
           <div v-else class="standard-empty">暂无内容</div>
         </div>
       </div>
@@ -115,8 +118,9 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { marked } from 'marked'
 import { sanitizeHtml } from '@/utils/sanitize'
+import { renderMarkdown, stripMarkdownArtifacts } from '@/utils/markdown'
+import { formatCharCount } from '@/utils/format'
 import type { Source, QuerySuggestions } from '@/services/query'
 import api from '@/services/api'
 
@@ -156,18 +160,8 @@ const expandedStds = ref<Set<string>>(new Set())
 const loadingStds = ref<Set<string>>(new Set())
 const stdTexts = ref<Record<string, string>>({})
 
-const renderedHtml = computed(() => {
-  if (!props.content) return ''
-  try {
-    const cleaned = props.content
-      .replace(/~~([^~]+)~~/g, '$1')
-      .replace(/(?<!\$)\$([^$\n]+?)\$(?!\$)/g, '$1')
-      .replace(/\$\$([\s\S]*?)\$\$/g, '$1')
-    return sanitizeHtml(marked.parse(cleaned) as string)
-  } catch {
-    return sanitizeHtml(props.content)
-  }
-})
+/** 回答正文链：剥离 MinerU/LaTeX 残留 → 渲染 → **强制消毒**（顺序由 utils 固定） */
+const renderedHtml = computed(() => renderMarkdown(stripMarkdownArtifacts(props.content)))
 
 const suggestionTitle = computed(() => {
   const s = props.suggestions
@@ -190,15 +184,14 @@ const dedupedSources = computed(() => {
 
 /** 清洗来源文本：剥离 [文档:xxx][章节:xxx] 前缀、HTML 实体、strikethrough 和 LaTeX */
 function cleanSourceText(raw: string): string {
-  return raw
+  const stripped = raw
     .replace(/^\[文档:[^\]]+\](?:\[章节:[^\]]+\])?\s*/g, '')
     .replace(/&nbsp;/g, ' ')
     .replace(/&lt;/g, '<')
     .replace(/&amp;/g, '&')
     .replace(/<[^>]*>/g, '')
-    .replace(/~~([^~]+)~~/g, '$1')   /* MinerU strikethrough → plain text */
-    .replace(/(?<!\$)\$([^$\n]+?)\$(?!\$)/g, '$1')  /* inline $...$ → plain */
-    .replace(/\$\$([\s\S]*?)\$\$/g, '$1')             /* display $$...$$ → plain */
+  /* MinerU strikethrough / 行内 $..$ / 块级 $$..$$ —— 与回答正文链共用同一份规则 */
+  return stripMarkdownArtifacts(stripped)
     .replace(/~([^~]+)~/g, '$1')        /* single tilde strikethrough variant */
     .trim()
     .substring(0, 500)
@@ -231,12 +224,6 @@ function renderSourceText(raw: string): string {
   return sanitizeHtml(highlightKeywords(cleanSourceText(raw)), { forbidMedia: true })
 }
 
-function formatSize(chars: number): string {
-  if (chars < 1024) return `${chars}B`
-  if (chars < 1024 * 1024) return `${(chars / 1024).toFixed(1)}KB`
-  return `${(chars / (1024 * 1024)).toFixed(1)}MB`
-}
-
 function toggleStandard(docId: string) {
   if (expandedStds.value.has(docId)) {
     expandedStds.value.delete(docId)
@@ -260,15 +247,6 @@ async function loadStandardText(docId: string) {
     stdTexts.value[docId] = '加载失败，请重试'
   } finally {
     loadingStds.value.delete(docId)
-  }
-}
-
-function renderStdText(text: string): string {
-  if (!text) return ''
-  try {
-    return sanitizeHtml(marked.parse(text) as string)
-  } catch {
-    return sanitizeHtml(text.replace(/\n/g, '<br>'))
   }
 }
 </script>

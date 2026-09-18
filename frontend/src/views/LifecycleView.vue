@@ -110,6 +110,7 @@ import {
   type StaleSummary,
   type StaleDoc,
 } from '@/services/lifecycle'
+import { getErrorMessage } from '@/utils/error'
 
 const loading = ref(false)
 const loadingDetect = ref(false)
@@ -124,7 +125,7 @@ async function loadSummary() {
   try {
     summary.value = await getStaleSummary()
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '加载统计失败'
+    error.value = getErrorMessage(e, '加载统计失败')
   } finally {
     loading.value = false
   }
@@ -138,7 +139,7 @@ async function runDetection() {
     staleDocs.value = result.stale_docs || []
     summary.value = await getStaleSummary()
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '检测失败'
+    error.value = getErrorMessage(e, '检测失败')
   } finally {
     loadingDetect.value = false
   }
@@ -152,7 +153,7 @@ async function handleConfirm(docId: string) {
     staleDocs.value = staleDocs.value.filter(d => d.doc_id !== docId)
     summary.value = await getStaleSummary()
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '确认失败'
+    error.value = getErrorMessage(e, '确认失败')
   } finally {
     actionLoading.value = null
   }
@@ -166,7 +167,7 @@ async function handleRestore(docId: string) {
     staleDocs.value = staleDocs.value.filter(d => d.doc_id !== docId)
     summary.value = await getStaleSummary()
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '恢复失败'
+    error.value = getErrorMessage(e, '恢复失败')
   } finally {
     actionLoading.value = null
   }
