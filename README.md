@@ -414,8 +414,8 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 6. **`.gitignore` 说「不入仓」≠「不重要」** —— `frontend/dist` 不入版本库，但它是**运行时依赖**（kb2-web 后端静态托管，非 dev server）。判断「某改动能否回退」之前，先确认它是不是运行时依赖：曾把 build 后的 `dist/index.html` 用 `git checkout` 回退，而 `vite build` 的 `emptyOutDir` 已清空重建 assets ⇒ 回退的 index.html 引用旧 hash 文件 ⇒ **JS 404 前端白屏**，而 `is-active` / `/api/banks` 401 / journalctl 全部正常。前端改动验收链：`改 src` → `vitest` → `vue-tsc 净增 0` → `vite build` → **服务返回的 index.html 引用的每个 `/assets/*` 均 200**。
 7. **测试判据必须收敛到具体节点** —— 批次 D 首轮反向核验 12/13，M11（渲染退回旧字段）未捕获：C4 的原断言是「全页 text 包含 `ok`」，而 `health.status` 恰好也返回 `'ok'`，**无关字段把断言顺带满足了**（退回旧字段时渲染空串，`not.toContain('undefined')` 也拦不住）。改为**逐行断言**（定位含「向量库」的 `.health-row`，断言其值为唯一值）后即捕获。⇒ 全页 `contains` 是弱判据；组件级测试还要给足数据（分类列表为空时 `<option>` 不存在，jsdom 会把 `select.value` 置回 `''`，会被误读成修复未生效）。
 8. **突变测试必须先自证** —— 「测试没变红」既可能是测试没牙齿，也可能是**核验脚本自己坏了**。本轮反向核验 6 项连锁假阴性，根因是还原逻辑 `str.replace("", X, 1)`（空串替换不是无操作，会把旧内容插到文件开头）写坏文件 + 判定漏了 vitest 的第三种形态 `Tests  no tests`。判据必须包含「基线全绿 + 突变后确有收集/断言失败」，否则假阴性会被读成「加固无效」。
-8. **后处理会改坏 Markdown 结构，prompt 硬化单独不够** —— `deai_postprocess` 用 `\s+`（含换行）删标点后空白 ⇒ 表格表头被粘到上一行 ⇒ 整张表退化。**教训：给 LLM 加了「照抄硬模板」还不够，链路上任何一步正则都可能把它改坏；改 prompt 类资产时必须同时审后处理链。** 判据 = 结构解析器的 `repair_flags` 在端到端跑完后必须为零（本轮正是它先报 `no_separator` 才定位到该缺陷）。
-9. **「落地」≠「生效」≠「被消费」** —— 新模块放进 `app/services/` 只是落地；接进主链路才是生效；有消费方才是被消费（本轮 `answer_blocks` **有意不下发**，因为前端缺 `answerParser.ts` 无消费方）。三者要分开汇报，别用「已完成」一词糊过去。
+9. **后处理会改坏 Markdown 结构，prompt 硬化单独不够** —— `deai_postprocess` 用 `\s+`（含换行）删标点后空白 ⇒ 表格表头被粘到上一行 ⇒ 整张表退化。**教训：给 LLM 加了「照抄硬模板」还不够，链路上任何一步正则都可能把它改坏；改 prompt 类资产时必须同时审后处理链。** 判据 = 结构解析器的 `repair_flags` 在端到端跑完后必须为零（本轮正是它先报 `no_separator` 才定位到该缺陷）。
+10. **「落地」≠「生效」≠「被消费」** —— 新模块放进 `app/services/` 只是落地；接进主链路才是生效；有消费方才是被消费（本轮 `answer_blocks` **有意不下发**，因为前端缺 `answerParser.ts` 无消费方）。三者要分开汇报，别用「已完成」一词糊过去。
 
 
 ---
