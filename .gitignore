@@ -55,6 +55,9 @@ backend/_cron_stale_*.py
 # Test artifacts
 backend/tests/errors/
 backend/tests/unit/errors/
+# 检索回归「当前」快照：每次 pytest 运行原地覆盖，属运行时产物，不入库。
+# 受版本控制的基线固化在 backend/tests/regression_snapshots.baseline/。
+backend/tests/regression_snapshots/
 
 # Frontend build cache
 frontend/tmp/

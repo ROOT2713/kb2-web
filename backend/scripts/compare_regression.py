@@ -2,14 +2,16 @@
 kb2-web 回归对比工具 — 比较两次运行（如：改造前 vs 改造后）的黄金查询结果。
 
 用法：
-  # 首次：运行测试生成基线快照
-  pytest -s --run-integration tests/unit/test_regression_retrieval.py
-  
-  # 改造后：再次运行，生成新快照（建议备份 baseline 目录）
-  mv regression_snapshots regression_snapshots.baseline
+  # 首次：运行测试生成基线快照（写入 tests/regression_snapshots/）
   pytest -s --run-integration tests/unit/test_regression_retrieval.py
 
-  # 对比
+  # 基线确认后，把基线目录改名固化（受版本控制，勿被运行覆盖）
+  mv tests/regression_snapshots tests/regression_snapshots.baseline
+
+  # 改造后：再次运行测试，生成新的「当前」快照
+  pytest -s --run-integration tests/unit/test_regression_retrieval.py
+
+  # 对比（读不到基线时以非 0 退出，不再静默跳过）
   python scripts/compare_regression.py
 """
 
@@ -57,9 +59,15 @@ def compute_metrics(baseline: dict, current: dict) -> dict:
     }
 
 
-def main(baseline_dir: str = "regression_snapshots.baseline",
-         current_dir: str = "regression_snapshots"):
-    """Compare baseline vs current snapshots and report regressions."""
+def main(baseline_dir: str = "tests/regression_snapshots.baseline",
+         current_dir: str = "tests/regression_snapshots"):
+    """Compare baseline vs current snapshots and report regressions.
+
+    路径基准：以 backend/ 为根（Path(__file__).parent.parent），与
+    tests/unit/test_regression_retrieval.py 的 SNAPSHOT_DIR 口径一致。
+    【修复】读不到基线时必须非 0 退出 —— 旧版 print「跳过对比」+ return 0
+    会让 CI/调用方把「未执行」误判为「对比通过」。
+    """
 
     base_dir = Path(__file__).parent.parent / baseline_dir
     curr_dir = Path(__file__).parent.parent / current_dir
@@ -68,14 +76,17 @@ def main(baseline_dir: str = "regression_snapshots.baseline",
     current = load_snapshots(curr_dir)
 
     if not baseline:
-        print(f"[对比] 未找到基线快照（{base_dir}），跳过对比。")
-        print("  首次运行：pytest -s --run-integration ...")
-        return
+        print(f"[对比] 未找到基线快照（{base_dir}）。")
+        print("  基线应受版本控制固化于此；若确实尚无基线，请先运行：")
+        print("    pytest -s --run-integration tests/unit/test_regression_retrieval.py")
+        print("    mv tests/regression_snapshots tests/regression_snapshots.baseline")
+        sys.exit(2)  # 硬失败：未执行 ≠ 通过
 
     if not current:
         print(f"[对比] 未找到当前快照（{curr_dir}）。")
-        print("  请先运行测试生成当前快照。")
-        return
+        print("  请先运行测试生成当前快照：")
+        print("    pytest -s --run-integration tests/unit/test_regression_retrieval.py")
+        sys.exit(3)  # 硬失败：未执行 ≠ 通过
 
     all_ids = sorted(set(baseline.keys()) | set(current.keys()))
     regressions = []

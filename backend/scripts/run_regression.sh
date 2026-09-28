@@ -69,7 +69,7 @@ case "$MODE" in
 
     echo ""
     echo ">>> Step 2: 全量回归 + 基线快照（需要产线 DB + Hindsight + 3027）"
-    SNAPSHOT_DIR="$BACKEND_DIR/regression_snapshots"
+    SNAPSHOT_DIR="$BACKEND_DIR/tests/regression_snapshots"
     mkdir -p "$SNAPSHOT_DIR"
     python3 -m pytest tests/unit/test_regression_retrieval.py -v --tb=short \
       --run-integration -k "TestGoldenQuery" || true
@@ -80,7 +80,8 @@ case "$MODE" in
     done
 
     echo ""
-    echo ">>> 基线快照已保存到: $SNAPSHOT_DIR"
+    echo ">>> 当前快照已保存到: $SNAPSHOT_DIR"
+    echo "    若要固化为基线: mv tests/regression_snapshots tests/regression_snapshots.baseline"
     echo "    改造后: $0 compare"
     echo ""
     python3 scripts/wrong_answers.py report
@@ -117,7 +118,8 @@ case "$MODE" in
     echo "    scripts/run_regression.sh     — 运行器"
     echo ""
     echo "  错题: tests/errors/errors.json"
-    echo "  快照: regression_snapshots/"
+    echo "  基线快照: tests/regression_snapshots.baseline/（受版本控制，勿覆盖）"
+    echo "  当前快照: tests/regression_snapshots/（每次运行覆盖）"
     ;;
 
   *)

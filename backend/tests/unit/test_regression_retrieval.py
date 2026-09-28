@@ -173,6 +173,11 @@ class TestGoldenQueryRegression:
     """
 
     SNAPSHOT_DIR = Path(__file__).parent.parent / "regression_snapshots"
+    # 注：以 tests/ 为根（backend/tests/regression_snapshots/）。
+    # 基线固化于 tests/regression_snapshots.baseline/（受版本控制）。
+    # compare_regression.py 的 baseline_dir/current_dir 默认值与此口径一致。
+    # 【约定】本测试每次运行都会**原地覆盖** SNAPSHOT_DIR 内的 JSON，
+    # 故固化基线必须另存到 .baseline 目录，绝不可让基线留在本目录内。
 
     @pytest.fixture(autouse=True)
     def _setup(self):
