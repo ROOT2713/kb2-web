@@ -288,3 +288,66 @@ class TestA5NoBlackholeFallbackInDerivation:
             "documents.py 仍存在 hs_bank 派生的裸 'kb' 兜底：\n"
             + "\n".join(f"  L{n}: {t}" for n, t in hits)
         )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# A6. 第 8 处口径：DocumentRepository.save() 的双默认值
+#     document_repo.py:43-44 → ``bank="general", hs_bank="kb_general"``
+#     调用方漏传 hs_bank 时静默写入 kb_general（**在 industry 检索范围内**）；
+#     且 bank 与 hs_bank 无一致性校验，可写入自相矛盾的物理归属。
+#     当前实现 → 本组全部 FAIL（预期）
+# ═══════════════════════════════════════════════════════════════════
+
+class TestA6SaveDefaultsFailFast:
+
+    def test_save_without_hs_bank_must_not_silently_default(self, db_session):
+        """save() 不显式传 hs_bank 时，不得静默兜底成 kb_general。
+
+        要求：hs_bank 变为必传（缺失即抛错），或由 bank 经 resolve_hs_bank 派生。
+        当前实现有默认值 ``hs_bank="kb_general"``（document_repo.py:44）→ 静默落库 → RED。
+
+        先做健全性前置：证明 save() 在参数齐全时确实可用 ——
+        否则「抛异常」可能来自无关原因，造成假绿。
+        """
+        from app.repositories.document_repo import DocumentRepository
+
+        repo = DocumentRepository(db_session)
+
+        # ── 健全性前置：参数齐全时必须成功（排除无关异常导致的假绿）──
+        repo.save(doc_id="a6-sanity", title="A6 健全性", bank="general", hs_bank="kb_general")
+        assert repo.get("a6-sanity") is not None, "save() 在参数齐全时都失败 → 本测试基线无效"
+
+        # ── 被测行为 ──
+        try:
+            repo.save(doc_id="a6-no-hs", title="A6 未传 hs_bank")
+        except Exception:
+            return  # ✅ fail-fast，符合要求
+        doc = repo.get("a6-no-hs")
+        pytest.fail(
+            f"save() 未传 hs_bank 仍成功落库（hs_bank={doc.hs_bank!r}）—— "
+            f"document_repo.py:44 的双默认值静默生效"
+        )
+
+    def test_save_mismatched_bank_and_hs_bank_must_raise(self, db_session):
+        """save() 显式传值时，bank 与 hs_bank 必须经 resolve_hs_bank 校验一致。
+
+        ``bank='personal'``（小红书隔离库）却传 ``hs_bank='kb_general'``
+        属自相矛盾的物理归属 → 必须抛错，不得静默写入。
+        """
+        from app.repositories.document_repo import DocumentRepository
+
+        repo = DocumentRepository(db_session)
+        try:
+            repo.save(
+                doc_id="a6-mismatch",
+                title="A6 bank/hs_bank 矛盾",
+                bank="personal",
+                hs_bank="kb_general",
+            )
+        except Exception:
+            return  # ✅ 校验生效，符合要求
+        doc = repo.get("a6-mismatch")
+        pytest.fail(
+            f"save(bank='personal', hs_bank='kb_general') 未报错，静默写入 "
+            f"(bank={doc.bank!r}, hs_bank={doc.hs_bank!r}) —— 缺 resolve_hs_bank 一致性校验"
+        )
