@@ -46,3 +46,41 @@ class UploadTask(Base):
         ).delete(synchronize_session=False)
         db_session.commit()
         return deleted
+
+    @classmethod
+    def cleanup_stale_inflight(cls, db_session, max_age_hours: int = 24) -> int:
+        """把长期卡在非终态的 pending/processing 任务标记为 failed。
+
+        2026-09-29 修复（清理作业盲区）：cleanup_old_tasks() 只删**终态**
+        （done/failed）行，对非终态（pending/processing）**零覆盖**。后果：
+        worker 在代码上线前就崩了、服务在处理中被杀、或任务入队后从未被
+        取走 —— 这些行会**永久滞留**：/tasks 轮询永远显示"进行中"，
+        真实积压被掩盖成正常排队。
+
+        实证：18 行自 2026-09-18 08:28 滞留 11 天
+        （15 pending 停在 queued 0.000 + 3 processing 停在 parsing 0.050）。
+
+        Args:
+            db_session: SQLAlchemy session.
+            max_age_hours: 超过该时长仍未进入终态即判定为死任务。
+
+        Returns:
+            被标记为 failed 的行数。
+        """
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=max_age_hours)
+        n = db_session.query(cls).filter(
+            cls.status.in_(["pending", "processing"]),
+            cls.updated_at < cutoff,
+        ).update(
+            {
+                "status": "failed",
+                "error_message": (f"stale: 超过 {max_age_hours}h 未进入终态，"
+                                  f"由清理作业自动标记失败（{now:%Y-%m-%d %H:%M:%S}Z）"),
+                "updated_at": now,
+            },
+            synchronize_session=False,
+        )
+        db_session.commit()
+        return n
