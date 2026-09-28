@@ -3,27 +3,27 @@
   "id": "Q10",
   "timestamp": null,
   "top10_doc_ids": [
-    ":6cecf1de-86b5-43a5-bfa0-8ba07d355da7",
-    ":e73dca61-d625-494e-ab86-a80d5fcb1c4b",
-    ":704396f1-d7cc-496a-a562-0391f6b5b52a",
-    ":704396f1-d7cc-496a-a562-0391f6b5b52a",
-    ":704396f1-d7cc-496a-a562-0391f6b5b52a",
-    ":6cecf1de-86b5-43a5-bfa0-8ba07d355da7",
-    ":6cecf1de-86b5-43a5-bfa0-8ba07d355da7",
-    ":efaa74ab-7ea5-41df-888b-a7216611c313",
-    ":0658da61-2c47-4915-bb89-a3084906349b",
-    ":08d2bb4d-770c-4bc1-8600-627e3ae4d444"
+    "e73236f2-77c1-479b-8744-eab5154a206a",
+    "e73236f2-77c1-479b-8744-eab5154a206a",
+    "e73236f2-77c1-479b-8744-eab5154a206a",
+    "efaa74ab-7ea5-41df-888b-a7216611c313",
+    "21682635-7de8-474b-a7c6-6a22c2796d61",
+    "0658da61-2c47-4915-bb89-a3084906349b",
+    "e73236f2-77c1-479b-8744-eab5154a206a",
+    "0658da61-2c47-4915-bb89-a3084906349b",
+    "0658da61-2c47-4915-bb89-a3084906349b",
+    "0a6d7a6a-925b-46c1-bde9-144eeec22da8"
   ],
   "top10_titles": [
-    "MeMo:解决大规模知识库问答的新思路",
-    "Hermes 重磅新功能:MoA(Mixture of Agents)",
-    "AI大模型知识:RAG最底层的语义检索逻辑!",
-    "AI大模型知识:RAG最底层的语义检索逻辑!",
-    "AI大模型知识:RAG最底层的语义检索逻辑!",
-    "MeMo:解决大规模知识库问答的新思路",
-    "MeMo:解决大规模知识库问答的新思路",
+    "腾讯开源 WeKnora 深度分析（小红书 AI研习社）",
+    "腾讯开源 WeKnora 深度分析（小红书 AI研习社）",
+    "腾讯开源 WeKnora 深度分析（小红书 AI研习社）",
     "xhs_llm_wiki_enterprise",
+    "广州市政务信息化建设开发类项目方案编写规范（2026）",
     "xhs_opendataloader_pdf",
-    "kb_web_report(1)"
+    "腾讯开源 WeKnora 深度分析（小红书 AI研习社）",
+    "xhs_opendataloader_pdf",
+    "xhs_opendataloader_pdf",
+    "xhs_wanakong_beishu"
   ]
 }

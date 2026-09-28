@@ -3,27 +3,27 @@
   "id": "Q11",
   "timestamp": null,
   "top10_doc_ids": [
-    ":d08512b5-379c-442a-949d-f2cf186cd512",
-    ":d08512b5-379c-442a-949d-f2cf186cd512",
-    ":d08512b5-379c-442a-949d-f2cf186cd512",
-    ":e73dca61-d625-494e-ab86-a80d5fcb1c4b",
-    ":74d8ecc0-e819-45b4-b4d7-95343004d6d0",
-    ":797f03b9-43cc-444e-a09f-3c299ca080e2",
-    ":797f03b9-43cc-444e-a09f-3c299ca080e2",
-    ":c7174e2b-6b03-4295-b407-5d8548186ef5",
-    ":3d943692-08d4-4386-91e4-109df2e03b8b",
-    ":0f545705-7795-44a9-975c-7e9c454c1a34"
+    "68453179-0068-42c7-9393-56df627d4bac",
+    "e73236f2-77c1-479b-8744-eab5154a206a",
+    "d2613fa9-ea1e-4fb7-988e-55164bf1ebc2",
+    "e73236f2-77c1-479b-8744-eab5154a206a",
+    "21682635-7de8-474b-a7c6-6a22c2796d61",
+    "dc3af823-29ec-4626-aad4-2b5392e86013",
+    "539143fa-1c57-46b6-a206-90865fd6ee5b",
+    "0a6d7a6a-925b-46c1-bde9-144eeec22da8",
+    "0658da61-2c47-4915-bb89-a3084906349b",
+    "539143fa-1c57-46b6-a206-90865fd6ee5b"
   ],
   "top10_titles": [
-    "俄罗斯网安巨头Positive Technologies开源AI渗透项目 PentAGI",
-    "俄罗斯网安巨头Positive Technologies开源AI渗透项目 PentAGI",
-    "俄罗斯网安巨头Positive Technologies开源AI渗透项目 PentAGI",
-    "Hermes 重磅新功能:MoA(Mixture of Agents)",
-    "howto|提升自媒体表达能力 🍊橘斯斯 sisi",
-    "我的 AI 工作流,一年顶三年⚡",
-    "我的 AI 工作流,一年顶三年⚡",
-    "AI做PPT谁最好?8大AI PPT工具横评",
     "Anthropic Production AI Agents Workshop深度分析",
-    "Linkly AI(聆客AI)- 为 AI Agents 设计的本地文档搜索引擎"
+    "腾讯开源 WeKnora 深度分析（小红书 AI研习社）",
+    "xhs_langgraph_agent_practice",
+    "腾讯开源 WeKnora 深度分析（小红书 AI研习社）",
+    "广州市政务信息化建设开发类项目方案编写规范（2026）",
+    "xhs_ian_xiaohei_custom_ip",
+    "xhs_intelligence_baseline_gpus",
+    "xhs_wanakong_beishu",
+    "xhs_opendataloader_pdf",
+    "xhs_intelligence_baseline_gpus"
   ]
 }

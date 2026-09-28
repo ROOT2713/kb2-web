@@ -180,8 +180,30 @@ class TestGoldenQueryRegression:
     # 故固化基线必须另存到 .baseline 目录，绝不可让基线留在本目录内。
 
     @pytest.fixture(autouse=True)
-    def _setup(self):
+    def _setup(self, monkeypatch):
         self.SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        # ── 关键：把 retrieval 的 SessionLocal 指回**真实库** ──
+        # conftest.py:48-49 会把 app.models.database.SessionLocal 换成内存测试库，
+        # 而 retrieval.py:24「import 时」就绑定了这个名字（`from ... import SessionLocal`），
+        # 之后 monkeypatch 模块属性也不会改变它。
+        # 后果：_get_invisible_doc_ids()（retrieval.py:264-281）读到**空的测试库**
+        # → 不可见集合为空 → _filter_invisible 退化为空操作
+        # → superseded / stale / searchable=0 的文档重新出现在召回结果里。
+        # 实测（2026-09-29）：未修复时新快照混入 2 篇 status=stale 文档
+        # （6cecf1de…、e73dca61…）；用真实库直接调 recall() 则 26 条结果 0 泄漏。
+        # 本类本就要访问 production DB（见类 docstring），故此处指回真实库才是**保真**。
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from app.config import settings
+        from app.services import retrieval as _retrieval
+
+        _real_engine = create_engine(settings.db_url, connect_args={"timeout": 30})
+        monkeypatch.setattr(
+            _retrieval,
+            "SessionLocal",
+            sessionmaker(bind=_real_engine, autocommit=False, autoflush=False),
+        )
 
     @pytest.mark.parametrize(
         "q",
@@ -243,13 +265,21 @@ class TestGoldenQueryRegression:
             "top10_titles": [],
         }
         for r in final[:10]:
-            did = None
-            title = ""
+            # doc_id 有两种载体：
+            #   dense 结果 → tags 里的 "doc_id:<uuid>" 标签
+            #   bm25  结果 → 顶层字段 r["doc_id"]（tags 只有 title）
+            # rrf_merge 用 _make_key(r, is_bm25) 归并，遇到同键时
+            # `chunk_data[key] = r` 会被**后写的 bm25 形态覆盖**，
+            # 因此最终结果里有相当一部分只有字段、没有标签。
+            # 旧实现只读标签 → 快照 top10_doc_ids 大面积 null
+            # （实测 2026-09-29：22 份快照仅 1 个非空 doc_id）。
+            did = r.get("doc_id")
+            title = r.get("title") or ""
             for t in r.get("tags", []):
-                if t.startswith("doc_id:"):
-                    did = t[6:]
-                if t.startswith("title:"):
-                    title = t[6:]
+                if did is None and t.startswith("doc_id:"):
+                    did = t[7:]  # len("doc_id:") == 7；旧值 6 会多留一个前导冒号
+                if not title and t.startswith("title:"):
+                    title = t[6:]  # len("title:") == 6
             snapshot["top10_doc_ids"].append(did)
             snapshot["top10_titles"].append(title)
 
