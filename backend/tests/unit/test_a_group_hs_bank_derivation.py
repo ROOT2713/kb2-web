@@ -33,6 +33,48 @@ from app.services.retrieval import BANKS, LEGACY_BANK_TO_HS
 
 DOCUMENTS_PY = Path(__file__).resolve().parents[2] / "app" / "api" / "documents.py"
 
+
+@pytest.fixture()
+def db_session():
+    """本文件专用**独立**内存库（覆盖 conftest 的同名 fixture）。
+
+    为什么必须独立：本文件的用例会真实 ``commit()`` ——
+    ``_mk_doc()`` 显式 commit；``DocumentRepository.save()`` 内部 commit；
+    ``PATCH /{doc_id}/bank``、``reparse`` 端点同样 commit。
+    而 conftest 的 ``db_session`` 靠「外层事务 rollback」隔离，commit 一旦发生
+    rollback 便无法撤销，残留行会进入**全测试会话共享的 in-memory 引擎**
+    （conftest 的 ``_create_tables`` 是 session 级，表只建一次）。
+
+    实证（2026-09-29）：全量跑时本文件在字母序上先于
+    ``test_quality_gates.py``，残留的 ``doc-a1-*`` / ``a6-*`` 行被
+    ``TestCheckAllDocuments::test_batch_check`` 计入，使
+    ``assert total_checked == 3`` 报 ``assert 10 == 3``。
+    排除本文件后全量 531 passed / 0 failed，单跑 quality_gates 12 passed
+    —— 即本文件是唯一污染源。
+
+    改用独立引擎后，本文件无论怎么 commit 都不影响其它用例。
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.models.database import Base
+
+    # 导入模型以注册到 Base.metadata
+    import app.models.document  # noqa: F401
+    import app.models.concept  # noqa: F401
+
+    eng = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=eng)
+    s = sessionmaker(bind=eng, autocommit=False, autoflush=False)()
+    yield s
+    s.close()
+    eng.dispose()
+
 # 4 个具体业务键 → 应派生的物理库（不含聚合键 all）
 BUSINESS_KEY_TO_HS = {
     "industry": "kb_industry",
