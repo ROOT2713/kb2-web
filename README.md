@@ -439,8 +439,8 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 | **N1** | 高 | **三条 kb2 治理定时任务自 2026-07-04 03:00 起 100% 失败（87 次 / 0 成功）**。根因：wrapper 用裸 `python3`，cron 最小 PATH 解析到 `/usr/bin/python3`（3.12，**无 sqlalchemy**），而服务实跑的是 venv `3.11.15` + `sqlalchemy 2.0.50`。失败输出被 `>> log 2>&1` 吞掉，无人可见 | 三个 wrapper 改 **venv 绝对路径** + `START/OK/FAIL` 心跳行；gov-tree 两个日志重定向落盘 | `6745f6a` | 2026-09-29 **首次通电**：03:08:57 / 04:00:02 / 05:00:01 三次 rc=0（§3） |
 | **N2** | 高 | **回归基线实证不可用**——对拍链路此前只验证「文件在 git 里」，从未实跑。实跑暴露**三个独立缺陷叠加**（§2.1），22 份快照的关键字段 95% 为 `null`，无法区分「检索变好」还是「变坏」 | 三缺陷逐个修复 + 重生成 + 冻结 | `9dd2645`（+ 路径对齐 `954453a`、隔离 `3155300`） | `compare 100.0% (125/125)`、**回归项 0/22**、exit 0；非空 doc_id **220/220**；连跑两次 **Jaccard=1.00** |
 | **N3** | 高 | **bank 解析静默兜底（`or "kb"` 黑洞）**——写路径存在 **9 处各自派生** `hs_bank`，普遍带 `... or "kb"`；而 `"kb"` 在读侧是**全库并行哨兵**（`recall()` 中 `bank in ("all","kb")` 才走并行全库）。后果：内容写进「kb」库后，**任何定向 bank 查询都命中不到**，而上传返回成功 | 新增**唯一解析入口** `app/services/bank_resolver.py`（legacy 映射 / `kb_` 透传 / 业务键查配置，未知键 **422 fail-fast**）；**6 处写路径收口**（`upload` 主路径与 `/batch`、`fetch-standard`、`refetch`、`PATCH /bank` 改为 bank+hs_bank **同写**、`reparse` 把解析**提前到删除之前**）；`save()` 删除 `hs_bank="kb_general"` 善意默认值改必传 + 自洽校验 | `9610829` + `49d77b1` | A 组契约 **43 red → 43 passed**；运行时 `bank=no_such_bank` → **HTTP 422** 且 `upload_tasks` **零新增**（旧代码返 200 并静默落黑洞） |
-| **N4** | 高 | **90 天自净空（单向棘轮）**——`status='stale'` 是**终结态且退出检索**（`_filter_invisible` 排除 `status!='active'`），系统**有「退出」无「复验/回归」**。按 active 131 口径：30 天后 44 篇(33%)、60 天后 85 篇(63%)、**90 天后 127 篇(94%)** 将退出检索 | 落**只读「到期预警」脚本**（复用服务端**同一套** `_check_staleness` 规则，杜绝两套规则漂移；watchdog 模式：无事项即静默）+ 每周一 cron；执行段复用既有 `POST /api/admin/stale/restore/{id}` | `dd9a7bd` | 2026-09-29 04:00 **实测开火**：`checked=134, stale=3`，三篇全部 `verification_expired (91d)`（§2.2）；`env -i` 最小环境实测通过（规避 F0 同款 PATH 陷阱） |
-| **N5** | 中 | **上传清理盲区 + 18 个僵尸任务**——`cleanup_old_tasks()` 只删**终态**（done/failed），对 **pending/processing 零覆盖**。18 行自 2026-09-18 08:28 滞留 **11 天**（15 pending 停在 `queued 0.000` / 3 processing 停在 `parsing 0.050`，同一批次），而 05:00 作业每天 `deleted=0` 报「成功」⇒ 真实积压被伪装成正常排队，`/tasks` 轮询永远显示「进行中」 | 新增 `UploadTask.cleanup_stale_inflight(max_age_hours=24)`（标记 failed 并写 `error_message` 留痕）；清理作业改**两段式**（先标非终态 → 再删终态超期）并同时输出两个计数 | `45e7238` | 首跑 `inflight_marked_failed=18` / 二跑 `=0`（**幂等**）；非终态残留 **0**；`documents` 未受影响（605/131）；全量单测 574 passed |
+| **N4** | 高 | **90 天自净空（单向棘轮）**——`status='stale'` 是**终结态且退出检索**（`_filter_invisible` 排除 `status!='active'`），系统**有「退出」无「复验/回归」**。按 active 132 口径：**30 天内 44 篇(33%)、60 天内 89 篇(67%)、90 天内 132 篇(100%)** 将退出检索 | 落**只读「到期预警」脚本**（复用服务端**同一套** `_check_staleness` 规则，杜绝两套规则漂移；watchdog 模式：无事项即静默）+ 每周一 cron；执行段复用既有 `POST /api/admin/stale/restore/{id}` | `dd9a7bd` | 2026-09-29 04:00 **实测开火**：`checked=134, stale=3`，三篇全部 `verification_expired (91d)`（§2.2）；`env -i` 最小环境实测通过（规避 F0 同款 PATH 陷阱） |
+| **N5** | 中 | **上传清理盲区 + 18 个僵尸任务**——`cleanup_old_tasks()` 只删**终态**（done/failed），对 **pending/processing 零覆盖**。18 行自 2026-09-18 08:28 滞留 **11 天**（15 pending 停在 `queued 0.000` / 3 processing 停在 `parsing 0.050`，同一批次），而 05:00 作业每天 `deleted=0` 报「成功」⇒ 真实积压被伪装成正常排队，`/tasks` 轮询永远显示「进行中」 | 新增 `UploadTask.cleanup_stale_inflight(max_age_hours=24)`（标记 failed 并写 `error_message` 留痕）；清理作业改**两段式**（先标非终态 → 再删终态超期）并同时输出两个计数 | `45e7238` | 首跑 `inflight_marked_failed=18` / 二跑 `=0`（**幂等**）；非终态残留 **0**；`documents` 未受影响（当时 605/131；**当日重传 1 篇真缺失后为 606/132**）；全量单测 574 passed |
 | **N6** | 中 | **kb2-wiki 反复僵死**——`serve.py` = 单线程 `http.server.HTTPServer` + handler **无 `timeout`**。向**已断开**客户端写大文件时 `socket.sendall` **永久阻塞** ⇒ 唯一服务线程卡死 ⇒ 单线程服务器不再 `accept`，而 systemd 仍显示 **active**。实测频率**每 2–4 天一次**（保活日志 09-16/19/21/25），每日 04:30 保活只救一次 ⇒ 每次最长 **~24h 不可用盲窗** | ① `ThreadingHTTPServer`（爆炸半径隔离）② `H.timeout=30`（停滞连接强制回收）③ `handle_error` 覆盖：客户端断开降为单行日志（旧版异常逃逸会打整段 traceback，**本次排障时曾被误读为崩溃**） | `de939cd` | **复现原故障形态**验证：3 条半截请求占住 handler 时正常请求仍 **200（0.03s）**、进程线程数 4；停滞连接在 **30.0s** 被服务端关闭（与 `timeout=30` 精确一致）；journal Traceback **= 0** |
 | **N7** | 低 | 测试垃圾文档 `kb_web_report(1)` 长期在库，出现在 `bank=all` 检索结果中 | 走**官方 DELETE 端点**删除（未改代码） | 纯数据操作 | 三层核验：SQLite 404 / pg 向量残留 **0** / `bank='kb'` 黑洞 **0**。⚠️ 顺带坐实：该端点 `doc_hs_bank or "kb"` 在 `hs_bank` 为空时**删不到向量却返回成功**（§4-3） |
 
@@ -455,7 +455,8 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 ### 2.2 90 天自净空（N4 定量与实测）
 
 - **规则**：`stale_detection` 规则 2 =「最后验证超过 90 天即置 stale」，而 stale **退出检索**（`_filter_invisible` 排除 `status!='active'`；BM25 索引亦带 `searchable=1 AND status='active'`）。
-- **定量**（2026-09-29，active 131）：**30 天后 44 篇(33%)、60 天后 85 篇(63%)、90 天后 127 篇(94%)** 退出检索。92 篇历史 stale 中 **89 篇**为「曾验证 + 创建 > 90 天」、3 篇「从未验证」。
+- **定量**（2026-09-29，active **132**，按 `_check_staleness` 真实规则**逐篇计算退出日**）：**30 天内 44 篇(33%)、60 天内 89 篇(67%)、90 天内 132 篇(100%)**。⚠️ 90 天档 100% 是**结构性**的——`verified_at` 最早的文档，其到期日必然落在 90 天内，系统**不存在「安全区」**；真正的近端压力看 **30/60 天**两档。
+- **构成**（stale 95 篇）：**92 篇 `verification_expired`**（验证过期）+ **3 篇 `never_verified`**（从未验证）。当前 active 中 **8 篇无 `verified_at`**（走规则 1，按 `created_at` 计）**124 篇有**（走规则 2）。**已过期却仍为 active 的 0 篇** —— 反向印证 04:00 作业真的在清。
 - **实测开火**（2026-09-29 04:00 作业日志）：
   `Marked 3 documents as stale (max_days=90)` / `checked=134, stale=3`
   - `d2c14c7d` 广东省市场监督管理局…CMA 检验检测报告（industry_docs）`verification_expired (91d since last verify)`
@@ -464,11 +465,30 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
   —— 与整改前的预判**完全一致**，证明 F0 修复后作业已真实运行。
 - **定性**：**这是闭环缺失，不是知识老化**。系统只有「退出」没有「复验/回归」，故本质是**单向棘轮**；预警脚本只补上「感知」段，**复验流程仍缺**（§4-8）。
 
+### 2.3 僵尸任务归位：判定「是否已入库」的正确方法（**四轮收敛 18 → 2 → 4 → 1**）
+
+N5 清理出的 18 个僵尸任务，**先要回答「这些内容到底入库了没有」**，否则会把已入库的重复重传、或把真缺失的漏掉。四轮判定的收敛过程本身就是一条方法学：
+
+| 轮次 | 方法 | 结论 | 为什么错 |
+|------|------|------|---------|
+| ① | 文件名 vs `documents.title` **精确匹配** | 18 篇全「缺失」 | 入库后标题被**规范化重写**（去标准号、加「（文本版）」「（2023年·）」，或直接用正文标题），精确匹配必然全灭 |
+| ② | 标题**双向包含** + 标准号/书名号锚点 | 2 篇缺失 | 召回提高了，但**仍漏**——原文件名带「广州市政务服务数据管理局关于…」长前缀、或正文标题**不含标准号**（`GB/T 39786-2021` 在库里只叫《信息安全技术信息系统密码应用基本要求》） |
+| ③ | 关键词反查（`title LIKE '%补充%'` / `'%39786%'` 等） | 4 篇缺失 | 反向查询又救回 2 篇，但**无法穷举**关键词，且 `hainan_acceptance_report` 这类英文名查不到 |
+| ④ | **`documents.filename` 反查**（入库时记录的原件名） | **1 篇缺失** | ✅ **决定性**：`filename` 是入库时**原样保留**的原件名，与上传任务同一命名空间，**一对一直查** |
+
+**最终结果**：18 篇中 **17 篇已在库（全部 `active`）**，**真正缺失 1 篇** → 已重传。
+
+- 重传对象：《广东省省级政务信息化验收测评服务项目管理指引（试行）》解读（原件 5.6 MB 在 `kb-web/uploads`，从未成功入库）
+- 入库：`doc_id 122a2db5`，`bank=industry_docs` / `hs_bank=kb_industry`（与同桶兄弟文档一致），`chunks=24`、`quality=98`、`content_hash` **唯一**（无重复）
+- 三层验证：① `searchable=1` / `status=active` / `chunk_count=24` ② `parent_chunks` 24 行 ③ 端到端检索两问**均命中**（第 10 位 / 第 4 位）；pg 侧 24 行、`registry=1`、`bank=kb_industry`
+
+📌 **教训（已写入 §5-4）**：本表第 ① 行若直接汇报，就是**虚报「18 篇未入库」**，并会导致 17 篇的**无谓重传**（重复入库 → 触发 supersede 链 → 检索面污染）。判「某内容是否在库」**首选 `documents.filename`**，不要用标题匹配。
+
 ### 3. 三层验证证据（磁盘 → 进程加载 → 运行时生效）
 
 | 层 | 内容 | 证据 |
 |----|------|------|
-| **① 磁盘** | 语法 / 导入 / 规则自洽 | `pytest tests/unit` **574 passed / 62 skipped / 0 failed**（20.7s）；`bank_resolver` 9 例边界 + 7 例 fail-fast；整应用导入**无循环依赖**；`serve.py` 属性自检 `ThreadingHTTPServer` / `timeout=30`；存量行 `(bank, hs_bank)` 自洽性扫描：**active 131 全部自洽 / 不自洽 0** |
+| **① 磁盘** | 语法 / 导入 / 规则自洽 | `pytest tests/unit` **574 passed / 62 skipped / 0 failed**（20.7s）；`bank_resolver` 9 例边界 + 7 例 fail-fast；整应用导入**无循环依赖**；`serve.py` 属性自检 `ThreadingHTTPServer` / `timeout=30`；存量行 `(bank, hs_bank)` 自洽性扫描：**active 132 全部自洽 / 不自洽 0** |
 | **② 进程加载** | 新 PID + 启动日志 | kb2-web `MainPID 3920594 → 4141181`，`Application startup complete`，Traceback/ImportError/SyntaxError **= 0**；kb2-wiki `PID → 58995` |
 | **③ 运行时生效** | 真实请求（**不是**只测 200） | 查询：`bank=general` → 3 条、`bank=all` → 12 条（响应键 `sources`）；`bank=no_such_bank` → **422** + `upload_tasks` 零新增；kb2-wiki：3 条卡死连接占用下正常请求仍 **200**、停滞连接 **30.0s** 回收 |
 
@@ -486,14 +506,14 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 | 8 | 流程 | **stale 无复验回归路径**（N4 的根因） | 预警只解决「看得见」，未解决「能回来」；90 天自净空仍会持续发生 | 半解（感知段已补） |
 | 9 | 运维 | kb2-wiki 保活**每天仅一次** | 根修后卡死概率大降，但检测窗口仍有 **~24h**；可考虑加密保活或加 socket 级守护 | 待定 |
 
-**口径说明（避免误读）**：`README` 历史存档中的「544 篇 active」为 **2026-09-05** 口径；当前权威口径（2026-09-29）为 `documents` **605 总 / 131 active / 95 stale / 379 superseded**，「可检索」= **active 且 `searchable=1`**。另：`metadata.bank`（业务键）与列 `bank`（物理库名）是**设计分层**，二者不一致 93% **不是缺陷**（勿据此判"数据不一致"）；`kb_general` 出现在 `industry` 范围内属**设计意图**（`hindsight_banks` 是列表，industry 跨 6 库 / all 跨 8 库）。
+**口径说明（避免误读）**：`README` 历史存档中的「544 篇 active」为 **2026-09-05** 口径；当前权威口径（2026-09-29）为 `documents` **606 总 / 132 active / 95 stale / 379 superseded**，「可检索」= **active 且 `searchable=1`**。跨存储：pg 覆盖 227 个 doc_id = 606 − 379（superseded），**孤儿 0**；`status='superseded'` 的 379 篇在 pg **无向量属预期隔离态**，**不得据此判「向量缺失」**。另：`metadata.bank`（业务键）与列 `bank`（物理库名）是**设计分层**，二者不一致 93% **不是缺陷**（勿据此判"数据不一致"）；`kb_general` 出现在 `industry` 范围内属**设计意图**（`hindsight_banks` 是列表，industry 跨 6 库 / all 跨 8 库）。
 
 ### 5. 关键教训（本轮沉淀）
 
 1. **「部署 / 提交 / rc=0」都不等于「生效」** —— 三条 cron 死了 87 天（`rc≠0` 被 `>> log 2>&1` 吞掉且无人查看）；清理作业每天报 `deleted=0`「成功」却从未覆盖非终态。**判据必须是目标数据的实际变化**，不是进程退出码。
 2. **「文件在 git 里」≠「流程可跑」** —— 对拍脚本入库被当作「链路可用」，实跑才发现它**静默空转**、且基线关键字段 95% 为 `null`。任何门禁 / 对拍 / 回归资产，必须**实跑一次**并检查**输出语义**（非空率）。
 3. **fail-fast 不能写在异步路径上** —— 把「非法入参 → 4xx」的校验放进 `asyncio.create_task()` 的 worker，**单元测试会全绿**，但客户端拿到的是 **200**（端点先建任务再立即返回），失败只能靠轮询发现且已留下任务记录。**修法 = 双保险**：同步侧在**参数归一化之后、任何副作用之前**预校验（干净 4xx + 零副作用）+ worker 内保留同一道校验兜住绕过 HTTP 的调用方；并按「同一语义的端点集合」扫描（本次 `/api/upload` 与 `/api/upload/batch` 必须同改）。
-4. **「字段匹配失败」≠「不存在」** —— 18 个僵尸任务的文件名与库内 `title` 精确匹配**全部失败**，但模糊核查后 **16 个已以别的标题在库**（如 `GB/T 28448-2019` → `cabb944d` active），真正未入库仅 **2** 个。若直接汇报「18 篇未入库」即属**虚报**，并会导致无谓重传。
+4. **「字段匹配失败」≠「不存在」** —— 18 个僵尸任务的文件名与库内 `title` 精确匹配**全部失败**，四轮收敛后（18 → 2 → 4 → **1**）实际只有 **1 篇**真缺失，其余 **17 篇早已 `active` 在库**。若按第 ① 轮直接汇报「18 篇未入库」即属**虚报**，并会导致 17 篇的无谓重传（重复入库 → 触发 supersede 链 → 污染检索面）。**正确方法：查 `documents.filename`（入库时原样保留的原件名）**，它与上传任务同一命名空间，可一对一直查；标题会被规范化重写，**不可作为判据**。详见 §2.3。
 5. **单线程服务 + 无超时 = 单点僵死** —— 一个客户端的半开连接足以拖垮整个服务，而 systemd 仍报 `active`。可观测性必须覆盖**「端口在听但不应答」**这一形态（本次靠 curl 超时 + `Recv-Q` 积压才发现）。
 6. **预期噪音会污染诊断** —— 客户端断开异常打整段 traceback 到 journal，本次排障时**被误读为崩溃**。降噪时要区分「预期事件」与「真故障」：前者降为单行，后者仍打完整堆栈。
 
@@ -506,7 +526,7 @@ cd backend && /home/ubuntu/.hermes/hermes-agent/venv/bin/python scripts/kb2_66te
 | 后端测试 | **574 passed / 62 skipped / 0 failed**（`pytest tests/unit`，20.7s 实测）—— 较 09-17 的 531 增 **43**，全部来自 A 组 bank 派生契约 `test_a_group_hs_bank_derivation.py`（修复前 **43 红**，即 N3 的验收靶） |
 | **回归基线** | **有效且已冻结**（`9dd2645`）—— 修复三个独立缺陷后 `compare 100.0% (125/125)`、**回归项 0/22**、exit 0；非空 doc_id **220/220**、连跑两次 **Jaccard=1.00** |
 | 代码状态 | HEAD **`45e7238`**，已推送 `origin/main`；**kb2-web 已重启生效**（`MainPID 4141181`，`Application startup complete`）；kb2-wiki 修复 `de939cd`（**本地仓库，无远端**） |
-| 数据规模 | SQLite `documents` **605 总 / 131 active / 95 stale / 379 superseded**；pg `vector_chunks` 22,799（`registry` 100%、孤儿 0）；对外**可检索口径 = active 且 `searchable=1`** |
+| 数据规模 | SQLite `documents` **606 总 / 132 active / 95 stale / 379 superseded**；pg `vector_chunks` **22,605**（`registry` 100%、**孤儿 0**；覆盖 **227** 个 doc_id，恰 = 606 − 379 ⇒ superseded 无向量属**预期隔离态**，非缺失）；对外**可检索口径 = active 且 `searchable=1`** |
 | 上传任务 | `upload_tasks` **done=47 / failed=21 / 非终态残留 0**（本轮清理 18 个滞留 11 天的僵尸任务，见 N5） |
 | 治理定时任务 | 三条 kb2 治理 cron（**3am 置信度重算 / 4am stale 检测 / 5am 上传清理**）**首次通电成功**，无失败（N1）；gov-tree 备份恢复正常（03:00，652K，保留 7 天）；新增 ① 每周一 09:00 到期预警 cron |
 | 服务 | kb2-web `:3027` · kb2-wiki `:3006` · hermes-wiki `:3004` · tianzhi `:3037` 全部 **200** |
