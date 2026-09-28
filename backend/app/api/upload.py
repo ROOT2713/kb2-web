@@ -37,7 +37,8 @@ from app.services.chunking import (
 )
 from app.services.parsing import parse_document
 from app.services.quality import assess_quality, profile_document
-from app.services.retrieval import LEGACY_BANK_TO_HS, get_bank_config, recall
+from app.services.retrieval import recall
+from app.services.bank_resolver import BankResolutionError, resolve_hs_bank
 from app.services.quality_gates import check_document as qg_check_doc
 from app.utils.text_cleaning import clean_pipeline, filename_to_title
 
@@ -268,22 +269,18 @@ async def _process_upload_task_impl(
             parsed_pub_date = date(int(p[0]), int(p[1]), int(p[2]))
         except (ValueError, IndexError):
             pass
-    # 【审计盲区修复】写入口径归一化：前端可能传 legacy bank key
-    # （standards/industry_docs/general/咨询/kb_xhs 等历史 documents.bank 值），
-    # 不在 BANKS 配置时 get_bank_config 回退 all → hs_bank='kb' 黑洞。
-    # 按存量库实证主值（bank→hs_bank 交叉分布）直映射到 hindsight 库；
-    # kb_ 前缀已是 hindsight 名直接透传；其余走 BANKS 配置取 hindsight。
-    # 【CC-R2 L1】映射表已上移 retrieval.LEGACY_BANK_TO_HS 与读路径共用。
-    if bank.startswith("kb_"):
-        hs_bank = bank  # 已是 hindsight bank 名，直接透传
-    elif bank in LEGACY_BANK_TO_HS:
-        hs_bank = LEGACY_BANK_TO_HS[bank]
-        logger.info("[upload] bank=%r legacy 映射 → hs_bank=%r", bank, hs_bank)
-    else:
-        bank_cfg = get_bank_config(bank)
-        hs_bank = bank_cfg.get("hindsight") or "kb"
-        if hs_bank == "kb":
-            logger.warning("[upload] bank=%r 无法解析 hindsight 目标,将写入 hs_bank='kb' 兜底(不可定向检索)", bank)
+    # 【F2 收口】唯一解析入口：legacy 键映射 / kb_ 透传 / 业务键查配置
+    # 全部下沉到 app.services.bank_resolver.resolve_hs_bank()。
+    # 原实现在此自行派生，末尾 `or "kb"` 会把未知键静默写进读侧全库哨兵
+    # —— 内容在**任何定向 bank 查询**中都命中不到，而上传却返回成功。
+    # 现在未知键 → 422 fail-fast（宁可拒绝，不可静默投错桶）。
+    try:
+        hs_bank = resolve_hs_bank(bank)
+    except BankResolutionError as e:
+        logger.error("[upload] bank=%r 无法解析物理库，拒绝落库：%s", bank, e)
+        raise HTTPException(422, f"Invalid bank {bank!r}: {e}") from e
+    if hs_bank != bank:
+        logger.info("[upload] bank=%r → hs_bank=%r", bank, hs_bank)
 
     try:
         text = await parse_document(filename, content)

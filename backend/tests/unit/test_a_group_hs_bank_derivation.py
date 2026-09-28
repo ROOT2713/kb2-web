@@ -60,9 +60,15 @@ def db_session():
 
     from app.models.database import Base
 
-    # 导入模型以注册到 Base.metadata
-    import app.models.document  # noqa: F401
+    # 导入**全部**模型以注册到 Base.metadata（缺 users 会让 require_role 认证失败：
+    # sqlite3.OperationalError: no such table: users）——对齐 app.models.database.init_db()
+    import app.models.audit  # noqa: F401
+    import app.models.cache  # noqa: F401
     import app.models.concept  # noqa: F401
+    import app.models.document  # noqa: F401
+    import app.models.synonym  # noqa: F401
+    import app.models.upload_task  # noqa: F401
+    import app.models.user  # noqa: F401
 
     eng = create_engine(
         "sqlite://",

@@ -41,7 +41,7 @@ class DocumentRepository:
         content_hash: str = "",
         doc_type: str = "generic",
         bank: str = "general",
-        hs_bank: str = "kb_general",
+        hs_bank: str = None,
         source: str = "manual",
         published_date=None,
         geo_scope: str = None,
@@ -49,7 +49,20 @@ class DocumentRepository:
         coverage_pct: float = 0.0,
         original_text_length: int = 0,
     ) -> Document:
-        """Insert or replace document metadata (matches v1 save_meta)."""
+        """Insert or replace document metadata (matches v1 save_meta).
+
+        【F2 收口】hs_bank 不再有默认值 ``"kb_general"``：
+        旧默认值在调用方漏传时**静默**把内容写进 kb_general ——
+        而 kb_general 位于 industry 的检索范围内（retrieval.py BANKS），
+        属「内容投错桶」，且调用方拿不到任何信号。
+        现在 hs_bank 必须显式提供，且与 bank 经 resolve_hs_bank 自洽，
+        否则抛 BankResolutionError（→ 上层转 4xx）。
+        """
+        # 先校验（早失败：不要在写库之后才发现不自洽）
+        from app.services.bank_resolver import validate_bank_pair
+
+        validate_bank_pair(bank, hs_bank)
+
         doc = self.get(doc_id)
         if doc:
             # Update existing

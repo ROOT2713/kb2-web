@@ -42,6 +42,7 @@ from app.services.parsing import parse_document, mineru_parse_pdf
 from app.services.chunking import heading_chunk, parent_child_chunk
 from app.services.quality import assess_quality, profile_document
 from app.services.cache_service import invalidate_for_doc, invalidate_bm25_cache, invalidate_query_cache_by_bank
+from app.services.bank_resolver import BankResolutionError, resolve_hs_bank
 from app.utils.text_cleaning import filename_to_title, clean_watermarks
 from app.middleware.jwt_auth import require_role  # 【FIX-R2-12】删 require_admin 死 import（HTTP Basic 遗留，0 调用点）
 
@@ -268,17 +269,22 @@ async def list_documents(bank: str = Query("all"), db: Session = Depends(get_db)
 async def fetch_standard(
     _admin: bool = Depends(require_role("admin")),
     std_no: str = Form(...),
-    bank: str = Form("kb"),
+    bank: str = Form("general"),  # 【F2】原默认 "kb" 不是合法键（会落黑洞），改 general
     db: Session = Depends(get_db),
 ):
     """Download and index a national standard from public sources (v1 L3881-L4003)."""
     if not std_no.strip():
         raise HTTPException(400, "Standard number cannot be empty")
 
-    bank_cfg = get_bank_config(bank)
     if bank == "all":
         bank = "general"
-    hs_bank = bank_cfg["hindsight"] or "kb"
+    # 【F2】唯一解析入口（原 `bank_cfg["hindsight"] or "kb"` = 黑洞兜底）。
+    # 注意顺序：先归一化 "all"→"general" 再解析 —— 旧实现先取 cfg 再归一化，
+    # 传 bank="all" 时 cfg 取的是 all（hindsight=None）→ 落 "kb" 黑洞。
+    try:
+        hs_bank = resolve_hs_bank(bank)
+    except BankResolutionError as e:
+        raise HTTPException(422, f"Invalid bank {bank!r}: {e}") from e
 
     # Step 1: Search with AnySearch
     anysearch_cli = os.path.expanduser("~/.agents/skills/anysearch/scripts/anysearch_cli.py")
@@ -417,9 +423,13 @@ async def refetch_document(
     if not meta or not meta.get("title"):
         raise HTTPException(404, "Document not found")
 
-    old_bank = meta.get("bank", "kb")
-    bank_cfg = BANKS.get(old_bank, BANKS["all"])
-    hs_bank = bank_cfg["hindsight"]
+    old_bank = meta.get("bank") or "general"
+    # 【F2】唯一解析入口。原实现 `BANKS.get(old_bank, BANKS["all"])` 对未知名回退
+    # 到聚合键 all → hindsight=None → hs_bank=None（向量路由直接失效）。
+    try:
+        hs_bank = resolve_hs_bank(old_bank)
+    except BankResolutionError as e:
+        raise HTTPException(422, f"Invalid bank {old_bank!r}: {e}") from e
 
     search_term = std_no.strip() or meta["title"]
 
@@ -1021,15 +1031,27 @@ async def patch_document_bank(
     db: Session = Depends(get_db),
     _admin: bool = Depends(require_role("admin")),
 ):
-    """Change document bank assignment (v1 L4070-L4083)."""
+    """Change document bank assignment (v1 L4070-L4083).
+
+    【F2 收口】bank 与 hs_bank 必须**同写**：
+    SQL 路按 documents.hs_bank 过滤（retrieval.py）、向量路按
+    vector_chunks.bank 过滤（vector_repo.py），只写 doc.bank 是半套生效
+    —— 文档仍留在旧库的检索结果里。
+    聚合键 all（跨 8 库）没有单一物理库 → 422 fail-fast，不允许假成功。
+    """
     if bank not in BANKS:
         raise HTTPException(400, f"Invalid bank: {bank}, valid: {', '.join(BANKS.keys())}")
     repo = DocumentRepository(db)
     doc = repo.get(doc_id)
     if doc is None:
         raise HTTPException(404, f"Document {doc_id} not found")
+    try:
+        new_hs_bank = resolve_hs_bank(bank)
+    except BankResolutionError as e:
+        raise HTTPException(422, f"Invalid bank {bank!r}: {e}") from e
     old_bank = str(doc.bank)
     doc.bank = bank
+    doc.hs_bank = new_hs_bank
     db.commit()
     # bank变更 → BM25索引失效（只清旧bank，doc已移走）
     invalidate_bm25_cache(bank=old_bank)
@@ -1037,7 +1059,7 @@ async def patch_document_bank(
     # 【FIX-R2-CC1】bank 变更改变文档集 → 旧 bank 缓存答案可能引用已移走文档，
     # 补清 query_cache（与 R2-7 同型遗漏）
     invalidate_query_cache_by_bank(old_bank)
-    return {"ok": True, "doc_id": doc_id, "bank": bank}
+    return {"ok": True, "doc_id": doc_id, "bank": bank, "hs_bank": new_hs_bank}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1164,6 +1186,15 @@ async def reparse_document(
     if not meta or not meta.get("filename"):
         raise HTTPException(404, f"Document {doc_id} not found or has no filename")
 
+    # 【F2】早失败：在删除任何数据之前解析物理库。
+    # 旧实现在 `DELETE FROM documents` **之后**才解析（且带 `or "kb"` 黑洞兜底），
+    # 一旦解析失败会留下「元数据已删、向量未清」的残局。
+    old_bank = meta.get("bank") or "general"
+    try:
+        hs_bank = resolve_hs_bank(old_bank)
+    except BankResolutionError as e:
+        raise HTTPException(422, f"Invalid bank {old_bank!r}: {e}") from e
+
     filename = meta["filename"]
     doc_title = meta.get("title", filename_to_title(filename))
     doc_category = meta.get("category", "")
@@ -1222,9 +1253,8 @@ async def reparse_document(
     except Exception as e:
         logger.warning("Failed to delete old metadata: %s", e)
 
-    old_bank = meta.get("bank", "kb")
-    bank_cfg = get_bank_config(old_bank) if old_bank else get_bank_config("kb")
-    hs_bank = bank_cfg.get("hindsight") or "kb"
+    # 【F2】hs_bank 已在函数开头解析（早失败，见上）；原此处为
+    # ``bank_cfg.get("hindsight") or "kb"`` 黑洞兜底，且发生在删除之后。
     if settings.vector_backend == "pgvector":
         store = get_vector_store()
         try:
