@@ -1,0 +1,29 @@
+{
+  "query": "AI Agent 工具调用 架构设计",
+  "id": "Q11",
+  "timestamp": null,
+  "top10_doc_ids": [
+    ":d08512b5-379c-442a-949d-f2cf186cd512",
+    ":d08512b5-379c-442a-949d-f2cf186cd512",
+    ":d08512b5-379c-442a-949d-f2cf186cd512",
+    ":e73dca61-d625-494e-ab86-a80d5fcb1c4b",
+    ":74d8ecc0-e819-45b4-b4d7-95343004d6d0",
+    ":797f03b9-43cc-444e-a09f-3c299ca080e2",
+    ":797f03b9-43cc-444e-a09f-3c299ca080e2",
+    ":c7174e2b-6b03-4295-b407-5d8548186ef5",
+    ":3d943692-08d4-4386-91e4-109df2e03b8b",
+    ":0f545705-7795-44a9-975c-7e9c454c1a34"
+  ],
+  "top10_titles": [
+    "俄罗斯网安巨头Positive Technologies开源AI渗透项目 PentAGI",
+    "俄罗斯网安巨头Positive Technologies开源AI渗透项目 PentAGI",
+    "俄罗斯网安巨头Positive Technologies开源AI渗透项目 PentAGI",
+    "Hermes 重磅新功能:MoA(Mixture of Agents)",
+    "howto|提升自媒体表达能力 🍊橘斯斯 sisi",
+    "我的 AI 工作流,一年顶三年⚡",
+    "我的 AI 工作流,一年顶三年⚡",
+    "AI做PPT谁最好?8大AI PPT工具横评",
+    "Anthropic Production AI Agents Workshop深度分析",
+    "Linkly AI(聆客AI)- 为 AI Agents 设计的本地文档搜索引擎"
+  ]
+}
