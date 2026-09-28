@@ -215,6 +215,15 @@ async def upload_document(
         bank = "咨询"
         logger.info("[xhs] source=xhs auto-routed to bank=%s", bank)
 
+    # 【F2】同步侧早失败：未知 / 聚合 bank 在**建任务之前**拒绝，
+    # 让客户端拿到 422，而不是「200 + 后台任务悄悄失败」。
+    # worker（_process_upload_task_impl）内还有一道校验，兜住绕过本端点的调用方。
+    try:
+        resolve_hs_bank(bank)
+    except BankResolutionError as e:
+        logger.warning("[upload] 拒绝非法 bank=%r: %s", bank, e)
+        raise HTTPException(422, f"Invalid bank {bank!r}: {e}") from e
+
     # 解析 published_date（YYYY-MM-DD 格式）
     parsed_pub_date = None
     if published_date and isinstance(published_date, str):
@@ -799,6 +808,22 @@ async def upload_batch(
         raise HTTPException(400, "至少需要上传一个文件")
     if len(files) > MAX_BATCH_FILES:
         raise HTTPException(400, f"单次最多上传 {MAX_BATCH_FILES} 个文件")
+
+    # 【F2】与 POST /api/upload 同口径：先归一化，再同步侧早失败。
+    # 旧行为：/batch 不做归一化，bank="all" 直达 worker → 旧代码 `or "kb"` 落黑洞；
+    # bank="kb" 也无人改写。两条都会静默写入读侧全库哨兵库。
+    if bank == "kb":
+        bank = "general"
+        logger.info("[MIGRATE] batch bank='kb' → 'general'")
+    if bank == "all":
+        bank = "general"
+    if source == "xhs" and bank == "general":
+        bank = "咨询"
+    try:
+        resolve_hs_bank(bank)
+    except BankResolutionError as e:
+        logger.warning("[upload/batch] 拒绝非法 bank=%r: %s", bank, e)
+        raise HTTPException(422, f"Invalid bank {bank!r}: {e}") from e
 
     total_size = 0
     for f in files:
