@@ -143,8 +143,18 @@ async def supersede_and_purge(
     ok = mark_superseded(db, old_doc_id=old_doc_id, new_doc_id=new_doc_id, reason=reason)
     if ok and _settings.vector_backend == "pgvector":
         from app.repositories.vector_repo import get_vector_store
+        from app.services.bank_resolver import resolve_delete_hs_bank
+
         old = db.query(Document).filter(Document.doc_id == old_doc_id).first()
-        hs_bank = old.hs_bank if (old and old.hs_bank) else "kb"
+        # 原实现 `old.hs_bank if old.hs_bank else "kb"` 会把哨兵 "kb" 传给删除。
+        # ⚠️ PgVectorStore.delete 自 FIX-P2-G1（20a0ef7）起按
+        # `WHERE doc_id = $1` 全量删除，bank 不参与 WHERE ⇒ 传什么都不影响
+        # 删除结果。故此处**绝不能因解析失败而跳过清理** —— 那会把旧代码能
+        # 正确清掉的旧版向量留成真孤儿（FIX-D2 要防的「语义永生」），属净回归。
+        # 解析失败时 resolve_delete_hs_bank 返回 "" 并告警，删除照常执行。
+        hs_bank = resolve_delete_hs_bank(
+            getattr(old, "bank", None), getattr(old, "hs_bank", None)
+        )
         try:
             store = get_vector_store()
             await store.delete(old_doc_id, hs_bank)

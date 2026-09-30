@@ -42,7 +42,11 @@ from app.services.parsing import parse_document, mineru_parse_pdf
 from app.services.chunking import heading_chunk, parent_child_chunk
 from app.services.quality import assess_quality, profile_document
 from app.services.cache_service import invalidate_for_doc, invalidate_bm25_cache, invalidate_query_cache_by_bank
-from app.services.bank_resolver import BankResolutionError, resolve_hs_bank
+from app.services.bank_resolver import (
+    BankResolutionError,
+    resolve_delete_hs_bank,
+    resolve_hs_bank,
+)
 from app.utils.text_cleaning import filename_to_title, clean_watermarks
 from app.middleware.jwt_auth import require_role  # 【FIX-R2-12】删 require_admin 死 import（HTTP Basic 遗留，0 调用点）
 
@@ -1075,11 +1079,19 @@ async def delete_document(
     """Delete document and all its vectors (v1 L4276-L4359)."""
     repo = DocumentRepository(db)
     doc = repo.get(doc_id)
-    doc_hs_bank = doc.hs_bank if doc and doc.hs_bank else None
-    doc_bank = doc.bank if doc else None
+    if doc is None:
+        raise HTTPException(404, f"文档不存在：{doc_id[:8]}")
+    doc_hs_bank = doc.hs_bank or None
+    doc_bank = doc.bank
 
     if settings.vector_backend == "pgvector":
-        hs_bank = doc_hs_bank or "kb"
+        # 删除路径的物理库解析：**仅供日志与兼容**。
+        # ⚠️ PgVectorStore.delete 自 FIX-P2-G1（20a0ef7，2026-09-16）起执行
+        # `DELETE FROM vector_chunks WHERE doc_id = $1` —— doc_id 是 UUID
+        # （全局唯一），bank 仅冗余属性、**不参与 WHERE**。故传什么 bank 都
+        # 不影响删除结果，本路径**不得**做 fail-fast / 422：那会把旧代码按
+        # doc_id 能正确删掉的行变成「拒绝删」，属净回归。解析失败返回 "" 并告警。
+        hs_bank = resolve_delete_hs_bank(doc_bank, doc_hs_bank)
         store = get_vector_store()
         # 【FIX-P2-G2】pg 删除失败 → 短退避重试 2 次；仍失败抛 500 且不删 SQLite 户口。
         # 旧实现仅 logger.warning 后照常 repo.delete(doc_id)：pg 向量残留而户口已删

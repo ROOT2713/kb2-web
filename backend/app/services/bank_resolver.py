@@ -28,13 +28,18 @@
 """
 from __future__ import annotations
 
+import logging
+
 from app.services.retrieval import BANKS, LEGACY_BANK_TO_HS
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "BankResolutionError",
     "AGGREGATE_BANK_KEYS",
     "KNOWN_HS_BANKS",
     "resolve_hs_bank",
+    "resolve_delete_hs_bank",
     "validate_bank_pair",
 ]
 
@@ -136,3 +141,66 @@ def validate_bank_pair(bank, hs_bank) -> str:
             f"按 resolve_hs_bank 应为 {expected!r}"
         )
     return expected
+
+
+def resolve_delete_hs_bank(bank, hs_bank) -> str:
+    """**删除 / 清向量路径**的物理库解析 —— 供日志与兼容用，**绝不阻断删除**。
+
+    ⚠️ 关键事实（2026-09-30 复核，勿再误判）：
+
+      在**当前生产后端 pgvector** 上，``bank`` 形参**不参与删除**。
+      ``PgVectorStore.delete`` 自 **FIX-P2-G1（``20a0ef7``，2026-09-16）** 起
+      执行 ``DELETE FROM vector_chunks WHERE doc_id = $1`` —— doc_id 是 UUID
+      （全局唯一），bank 只是冗余属性。旧实现按 ``(doc_id, bank)`` 二元条件删，
+      才是孤儿向量的**复发源**（文档换 bank 后旧 bank 向量删不掉）。
+
+      ⇒ 「哨兵 ``kb`` 当库名 → 从错的库删 → 真库残留孤儿」这个曾经的隐患
+      **在前序修复后已不可能发生**。故本函数**不得**引入 fail-fast / 422 /
+      跳过清理等阻断逻辑：那会把「旧代码按 doc_id 能正确删掉的行」变成
+      「拒绝删 / 不清向量」，属**净回归**。
+
+    职责收窄为：给出一条**尽量可读的库名**用于日志与调用方兼容。
+
+    优先级：① ``hs_bank`` 是**已知物理库**（``KNOWN_HS_BANKS``，含大小写/空白
+    归一）→ 直用（**不要求与 bank 自洽**：存量 38 行 ``general``+``kb_checklist``
+    的向量就在该库里，且硬校验会锁死这些历史行）；② 否则按 ``bank`` 派生；
+    ③ 都不可用 → 返回空串并告警（**不抛错**）。
+
+    >>> resolve_delete_hs_bank("general", "kb")            # 哨兵 → 派生
+    'kb_general'
+    >>> resolve_delete_hs_bank("general", "kb_checklist")  # 已知库 → 直用
+    'kb_checklist'
+    >>> resolve_delete_hs_bank("all", "")                  # 都不可用 → 空串
+    ''
+    """
+    hs = str(hs_bank).strip().lower() if hs_bank else ""
+    if hs in KNOWN_HS_BANKS:
+        # 已知物理库 → 直用；与 bank 不自洽只告警（向量实际写在存量库里）
+        try:
+            expected = resolve_hs_bank(bank)
+            if expected != hs:
+                logger.warning(
+                    "delete-path bank/hs_bank 不自洽：bank=%r hs_bank=%r 应为 %r "
+                    "—— 按存量 hs_bank 记日志（pgvector 删除按 doc_id，bank 不参与）",
+                    bank, hs, expected,
+                )
+        except BankResolutionError as e:
+            logger.warning(
+                "delete-path bank 不可解析（%s）：按存量 hs_bank=%r 记日志", e, hs,
+            )
+        return hs
+    # 非已知库（空值 / 哨兵 "kb" / 大小写变体 / 垃圾值）→ 尝试按 bank 派生
+    try:
+        resolved = resolve_hs_bank(bank)
+        logger.info(
+            "delete-path 存量 hs_bank=%r 非已知物理库 → 按 bank=%r 派生为 %r",
+            hs_bank, bank, resolved,
+        )
+        return resolved
+    except BankResolutionError as e:
+        logger.warning(
+            "delete-path bank/hs_bank 均不可用（bank=%r hs_bank=%r：%s）"
+            "—— 返回空串仅用于日志；**不阻断删除**（pgvector 按 doc_id 删除）",
+            bank, hs_bank, e,
+        )
+        return ""
