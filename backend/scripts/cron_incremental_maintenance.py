@@ -96,6 +96,7 @@ def phase_1_backfill_concepts(db, dry_run: bool = False) -> dict:
             SELECT d.doc_id, d.title, d.bank, d.doc_type
             FROM documents d
             WHERE d.searchable = 1
+              AND d.status = 'active'
               AND NOT EXISTS (
                   SELECT 1 FROM concepts c WHERE c.doc_id = d.doc_id
               )

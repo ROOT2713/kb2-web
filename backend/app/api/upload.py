@@ -338,14 +338,6 @@ async def _process_upload_task_impl(
     if quality["score"] < 80:
         _update_upload_task(task_id, status="failed", stage="quality_check", error_message=f"quality {quality['score']}%")
         return
-    db = SessionLocal()
-    try:
-        if _get_doc_repo(db).get_by_hash(norm_hash):
-            _update_upload_task(task_id, status="failed", stage="duplicate_check", error_message="doc dup")
-            return
-    finally:
-        db.close()
-
     _update_upload_task(task_id, progress=0.25, stage="chunking")
     doc_title = (title or "").strip() or Path(filename).stem or "Untitled"
     doc_category = category.strip() if category and category.strip() else ""

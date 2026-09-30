@@ -364,7 +364,7 @@ async def _build_search_context(
             try:
                 tdb = SessionLocal()
                 all_docs = tdb.execute(
-                    sa_text("SELECT doc_id, title FROM documents WHERE searchable=1")
+                    sa_text("SELECT doc_id, title FROM documents WHERE searchable=1 AND status='active'")
                 ).fetchall()
                 best_doc = None
                 best_score = 0
@@ -1126,7 +1126,7 @@ def _assemble_standard_contents_meta(sources: list, bank: str = "all") -> list[d
         "        WHERE doc_id = d.doc_id ORDER BY parent_idx LIMIT 1) AS preview "
         "FROM documents d "
         "LEFT JOIN parent_chunks pc ON pc.doc_id = d.doc_id "
-        f"WHERE d.doc_id IN ({placeholders}) AND d.searchable = 1"
+        f"WHERE d.doc_id IN ({placeholders}) AND d.searchable = 1 AND d.status = 'active'"
     )
     if bank != "all":
         sql += " AND d.bank = :bank"
@@ -1313,7 +1313,7 @@ def _generate_query_suggestions(
                 params[f"kw{i}"] = f"%{kw}%"
             conditions = " OR ".join(like_clauses)
             sql = f"""SELECT doc_id, title FROM documents
-                WHERE searchable=1 AND bank != 'skip' AND ({conditions})"""
+                WHERE searchable=1 AND status='active' AND bank != 'skip' AND ({conditions})"""
             if bank != "all":
                 sql += " AND bank=:bank"
                 params["bank"] = bank

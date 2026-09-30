@@ -118,7 +118,7 @@ def check_data_integrity():
     cursor = conn.cursor()
 
     # 2a. 文档数与搜索状态
-    cursor.execute("SELECT COUNT(*) as total, SUM(CASE WHEN searchable=1 THEN 1 ELSE 0 END) as searchable FROM documents")
+    cursor.execute("SELECT COUNT(*) as total, SUM(CASE WHEN searchable=1 AND status='active' THEN 1 ELSE 0 END) as searchable FROM documents")
     row = cursor.fetchone()
     total_docs = row["total"]
     searchable_docs = row["searchable"] or 0
@@ -447,7 +447,7 @@ def check_kb_hindsight_consistency():
     # 获取 KB 端各 bank 的 searchable 文档数
     conn = sqlite3.connect(DB_PATH)
     kb_banks = conn.execute(
-        "SELECT bank, COUNT(*) as cnt FROM documents WHERE searchable=1 GROUP BY bank"
+        "SELECT bank, COUNT(*) as cnt FROM documents WHERE searchable=1 AND status='active' GROUP BY bank"
     ).fetchall()
     kb_by_bank = {b[0]: b[1] for b in kb_banks}
     kb_total = sum(kb_by_bank.values())

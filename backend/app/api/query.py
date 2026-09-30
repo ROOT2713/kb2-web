@@ -633,7 +633,7 @@ async def get_standard_full_text(doc_id: str, bank: str = "all"):
     db = SessionLocal()
     try:
         params = {"doc_id": doc_id}
-        doc_sql = "SELECT doc_id, title FROM documents WHERE doc_id=:doc_id AND searchable=1"
+        doc_sql = "SELECT doc_id, title FROM documents WHERE doc_id=:doc_id AND searchable=1 AND status='active'"
         hs_banks = doc_bank_filter(bank)
         if hs_banks:
             # 【FIX-001】按 hs_bank 过滤，替代与值域不匹配的 bank=:bank（会误 404）

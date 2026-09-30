@@ -191,7 +191,7 @@ async def list_banks(db: Session = Depends(get_db)):
     try:
         rows = db.execute(
             sa_text(
-                "SELECT bank, COUNT(*) as cnt, SUM(CASE WHEN searchable=1 THEN 1 ELSE 0 END) as searchable_cnt "
+                "SELECT bank, COUNT(*) as cnt, SUM(CASE WHEN searchable=1 AND status='active' THEN 1 ELSE 0 END) as searchable_cnt "
                 "FROM documents WHERE bank != 'skip' GROUP BY bank"
             )
         ).fetchall()
