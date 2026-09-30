@@ -458,10 +458,22 @@ async def _process_upload_task_impl(
             dr2.domain = _infer_domain(bank, doc_type)
             if con_id:
                 dr2.concept_id = con_id
-        exd = detect_existing_doc(db=db, title=doc_title, bank=bank, doc_type=doc_type, content_hash=norm_hash)
+        # ★ 必须排除自身：上方 dr.save() 已 commit，本参数新文档以相同的
+        #   content_hash/title + status='active' 出现在同一 session 中；不排除
+        #   自身时 detect_existing_doc 会匹配到**刚写入的新文档自己**，随即把
+        #   supersedes 指向自己（线上实测 121 行此类自引用），并令版本历史端点
+        #   因链条自指而不收敛。
+        exd = detect_existing_doc(
+            db=db, title=doc_title, bank=bank, doc_type=doc_type,
+            content_hash=norm_hash, exclude_doc_id=doc_id,
+        )
         if exd:
-            await supersede_and_purge(db, old_doc_id=exd.doc_id, new_doc_id=doc_id, reason="new_version_upload")
-            if dr2:
+            supersede_ok = await supersede_and_purge(
+                db, old_doc_id=exd.doc_id, new_doc_id=doc_id, reason="new_version_upload"
+            )
+            # 仅在 supersede 真正成功时回写反向链接——避免把一次失败
+            # （旧文档已被并发删除等）落成断链/错链。
+            if dr2 and supersede_ok:
                 dr2.supersedes = exd.doc_id
         # ── Apply frontmatter fields to Document (only non-empty, non-override) ──
         if dr2 and fm:

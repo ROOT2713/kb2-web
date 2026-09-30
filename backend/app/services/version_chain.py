@@ -30,6 +30,7 @@ def detect_existing_doc(
     bank: str = "general",
     doc_type: str = "generic",
     content_hash: str = "",
+    exclude_doc_id: Optional[str] = None,
 ) -> Optional[Document]:
     """检测是否已存在同名/同标准号的活跃文档。
 
@@ -38,12 +39,25 @@ def detect_existing_doc(
     2. 同 bank + 同标准号（GB 标准号提取）
     3. 同 bank + 同标题
 
+    Args:
+        exclude_doc_id: 需要排除的 doc_id（通常是**本次刚写入的新文档**）。
+            上传流程里调用方已先 commit 新文档，其 title/content_hash 与
+            新上传内容一致，若不排除自身，规则 1/3 会匹配到新文档自己，
+            导致调用点把 supersedes 指向自己（版本链自引用）。
+
     Returns:
         匹配到的已有文档，或 None
     """
+    def _q():
+        """构造统一的基础查询，并排除自身（防 supersedes 自引用）。"""
+        q = db.query(Document)
+        if exclude_doc_id:
+            q = q.filter(Document.doc_id != exclude_doc_id)
+        return q
+
     # 规则 1: content_hash 精确匹配
     if content_hash:
-        existing = db.query(Document).filter(
+        existing = _q().filter(
             Document.content_hash == content_hash,
             Document.status == "active",
         ).first()
@@ -56,7 +70,7 @@ def detect_existing_doc(
         std_num = _extract_standard_number(title)
         if std_num:
             # 搜索同 bank 下所有活跃文档，匹配标准号
-            candidates = db.query(Document).filter(
+            candidates = _q().filter(
                 Document.bank == bank,
                 Document.status == "active",
                 Document.doc_type == "gb_standard",
@@ -68,7 +82,7 @@ def detect_existing_doc(
                     return c
 
     # 规则 3: 同 bank + 同标题（精确匹配）
-    existing = db.query(Document).filter(
+    existing = _q().filter(
         Document.bank == bank,
         Document.title == title,
         Document.status == "active",
@@ -191,13 +205,15 @@ def get_version_history(
     }
 
     # 向上查找（谁替代了我）
-    if doc.superseded_by:
+    # ★ 排除自指：存量脏数据里有 superseded_by 指向自身的行，直接回显会把
+    #   「本文档替代了它自己」这种无意义结果暴露给调用方。
+    if doc.superseded_by and doc.superseded_by != doc.doc_id:
         newer = db.query(Document).filter(Document.doc_id == doc.superseded_by).first()
         if newer:
             result["superseded_by"] = _doc_brief(newer)
 
     # 向下查找（我替代了谁）
-    if doc.supersedes:
+    if doc.supersedes and doc.supersedes != doc.doc_id:
         older = db.query(Document).filter(Document.doc_id == doc.supersedes).first()
         if older:
             result["supersedes"] = _doc_brief(older)
@@ -206,20 +222,38 @@ def get_version_history(
     chain = [_doc_brief(doc)]
 
     # 向旧版本方向遍历
+    # ★ visited 防环：生产库存在 supersedes 自引用（及潜在环）的历史数据，
+    #   无防环时本循环不收敛（同一条反复 append，内存无界增长且 CPU 打满）。
     current = doc
+    seen_up = {doc.doc_id}
     while current.supersedes:
+        if current.supersedes in seen_up or current.supersedes == current.doc_id:
+            logger.warning(
+                "version chain cycle/self-ref: %s.supersedes=%s — 截断遍历",
+                current.doc_id[:8], str(current.supersedes)[:8],
+            )
+            break
         older = db.query(Document).filter(Document.doc_id == current.supersedes).first()
         if not older:
             break
+        seen_up.add(older.doc_id)
         chain.append(_doc_brief(older))
         current = older
 
-    # 向新版本方向遍历
+    # 向新版本方向遍历（同样防环）
     current = doc
+    seen_down = {doc.doc_id}
     while current.superseded_by:
+        if current.superseded_by in seen_down or current.superseded_by == current.doc_id:
+            logger.warning(
+                "version chain cycle/self-ref: %s.superseded_by=%s — 截断遍历",
+                current.doc_id[:8], str(current.superseded_by)[:8],
+            )
+            break
         newer = db.query(Document).filter(Document.doc_id == current.superseded_by).first()
         if not newer:
             break
+        seen_down.add(newer.doc_id)
         chain.insert(0, _doc_brief(newer))
         current = newer
 
