@@ -28,12 +28,20 @@ def main():
     ).fetchall()
 
     recoverable, to_null = [], []
+    amb = 0
     for doc_id, title, status, sby in selfref:
-        prev = con.execute(
+        # 重复上传的同名标准会产出多个候选；实测 208 个候选**全部** status='superseded'
+        # ⇒ 任取皆合法。这里钉成「最近的前驱」（created_at 降序，ROWID 兜底）以获得
+        # 确定性 + 语义可解释（直接前驱），并加 status 守卫防未来数据漂移。
+        cands = con.execute(
             "SELECT doc_id, title FROM documents "
-            "WHERE superseded_by = ? AND doc_id != ?",
+            "WHERE superseded_by = ? AND doc_id != ? AND status = 'superseded' "
+            "ORDER BY created_at DESC, ROWID DESC",
             (doc_id, doc_id),
-        ).fetchone()
+        ).fetchall()
+        if len(cands) > 1:
+            amb += 1
+        prev = cands[0] if cands else None
         if prev:
             recoverable.append((doc_id, title, prev[0], prev[1]))
         else:
@@ -42,6 +50,7 @@ def main():
     print(f"自引用行数 = {len(selfref)}")
     print(f"  可恢复（反向链 Y.superseded_by=X 存在）: {len(recoverable)}")
     print(f"  置 NULL（无任何信息）                : {len(to_null)}")
+    print(f"  其中反向链歧义（多候选，取最近前驱）  : {amb}")
     print(f"\n可恢复样例（前 5）:")
     for x, xt, y, yt in recoverable[:5]:
         print(f"  {x[:12]} «{(xt or '')[:26]}»  supersedes 应为 {y[:12]} «{(yt or '')[:22]}»")
