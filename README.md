@@ -496,10 +496,10 @@ N5 清理出的 18 个僵尸任务，**先要回答「这些内容到底入库�
 
 | # | 位置 | 问题 | 影响 | 状态 |
 |---|------|------|------|------|
-| 1 | `app/api/upload.py:337` `get_by_hash()` | 去重**不过滤 `status`** | 已删除 / 已 stale 的同哈希文档会**挡住重新上传**（用户看到"重复"但库里没有可检索副本） | 未修 |
+| 1 | `app/api/upload.py:337` `get_by_hash()` | 去重**不过滤 `status`** | 已删除 / 已 stale 的同哈希文档会**挡住重新上传**（用户看到"重复"但库里没有可检索副本） | ✅ 已消除（`2e3bcd3`）—— 该宽查调用点整体移除，`get_by_hash` 现 0 调用方 |
 | 2 | `app/models/database.py` | 未开 **WAL**（实测生产 `journal_mode=delete`、无 `-wal`、7 天内 5 次锁错误） | 并发上传撞 SQLite 锁 → **HTTP 500**。开 WAL 需**瞬时独占锁** = 需要一个维护窗口，属独立授权点 | 未修（待窗口） |
-| 3 | `app/api/documents.py:1060` | 官方删除端点用 `doc_hs_bank or "kb"` | `hs_bank` 为空时**删不到向量却返回成功** → 静默孤儿 | 未修 |
-| 4 | `app/api/upload.py:463-467` | `detect_existing_doc()` **不排除自身** | `supersedes` **自引用**（文档把"上一版"指向自己） | 未修（系统性） |
+| 3 | `app/api/documents.py:1060` | 官方删除端点用 `doc_hs_bank or "kb"` | `hs_bank` 为空时**删不到向量却返回成功** → 静默孤儿 | ✅ 已修（`f4ac991`）—— 库名解析收口为 `resolve_delete_hs_bank()`，失败即告警且不再污染日志 |
+| 4 | `app/api/upload.py:463-467` | `detect_existing_doc()` **不排除自身** | **严重度订正**：不止「自引用」——`get_version_history()` 两向遍历无防环 ⇒ **死循环**，且经 `GET /api/documents/{id}/version-history` **暴露给 API**，命中一个自引用文档即占死一个 worker（内存无界增长 + CPU 打满） | ✅ 已修-代码（`600d0f2`）—— 写侧 `exclude_doc_id` 排除自身 + 读侧 visited 防环；⚠️ **存量 121 行待授权修复**（其中 33 行可从反向链恢复真实旧版本） |
 | 5 | `banks_config_path` | 指向 **v1 已退役目录** | 该目录一旦被清理，配置**静默退化**，`general` 从合法键变黑洞 | 未修 |
 | 6 | 向量库 | pgvector 0.6.0 **HNSW 不回收已删节点** | 索引膨胀（`VACUUM` 无效；唯一回收 = `REINDEX CONCURRENTLY`，在线约 99s） | 未修 |
 | 7 | Hermes 侧 | 会话消息落库告警 **22 次/日**；langfuse 遥测超时 **67 次/日** | 与 kb2-web 无直接关联，但会污染整体可观测性 | 待定位 |
