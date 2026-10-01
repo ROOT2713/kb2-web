@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+# [GUARD 2026-10-01] 自动过期已停用
+
+import os as _os
+import sys as _sys
+
+if _os.environ.get("STALE_ALLOW_WRITE") != "1":
+    _sys.exit(
+        "[已停用] 自动置 stale 自 2026-10-01 起停用（crontab 04:00 作业已注释）。\n"
+        "  人工触发请用:  bash scripts/stale_detect_manual.sh   （默认 dry-run）\n"
+        "  确需执行本脚本: STALE_ALLOW_WRITE=1 python3 " + __file__
+    )
+
 """KB2 知识库 OKF stale 检测周报"""
 import sys
 sys.path.insert(0, '.')

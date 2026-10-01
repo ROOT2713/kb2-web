@@ -119,7 +119,7 @@ def main() -> int:
 
     if expired:
         out.append("")
-        out.append(f"🔴 已过 {args.stale_days} 天（下次 4am 作业将置 stale → 退出检索）：")
+        out.append(f"🔴 已过 {args.stale_days} 天（**不会**再被自动置 stale —— 自动过期已于 2026-10-01 停用，须人工决定）：")
         for d, r, dy in expired[:10]:
             out.append(f"   {d.doc_id[:8]}  {d.title[:32]}  ← 最后活动 {dy} 天前")
         if len(expired) > 10:

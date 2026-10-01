@@ -353,10 +353,17 @@ def lifecycle_confirm(
 @router.get("/stale/detect")
 def stale_detect(
     max_days: int = Query(90, ge=1, le=365),
-    dry_run: bool = Query(False),
+    dry_run: bool = Query(True),
     db: Session = Depends(get_db),
 ):
-    """检测过期文档（管理员，可指定 max_days）。"""
+    """检测过期文档（管理员，可指定 max_days）。
+
+    ⚠️ 安全默认：dry_run 默认 **True**（只报告不写库）。
+    自动过期已于 2026-10-01 停用（见 crontab 注释），置 stale 属**人工触发**操作 ——
+    必须显式传 `dry_run=false` 才会真正把文档标记为 stale。
+
+    注意：本端点是 GET 但可写库（历史设计）。调用方可自行加 CSRF/二次确认保护。
+    """
     result = detect_stale_documents(db, max_days=max_days, dry_run=dry_run)
     db.commit()
     return result
