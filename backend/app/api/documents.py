@@ -35,7 +35,7 @@ from app.models.document import Document
 from app.repositories.vector_repo import get_vector_store
 from app.services.retrieval import (
     recall, get_bank_config, _get_active_hindsight_banks,
-    _hindsight_request, BANKS,
+    _hindsight_request, BANKS, consolidated_db_bank_values,
 )
 from app.services.generation import chat
 from app.services.parsing import parse_document, mineru_parse_pdf
@@ -193,14 +193,13 @@ async def list_documents(bank: str = Query("all"), db: Session = Depends(get_db)
     """List documents (from meta.db, Hindsight supplements chunk/size)."""
     repo = DocumentRepository(db)
 
-    # Map consolidated bank keys to actual DB bank values
-    _CONSOLIDATED_BANK_MAP = {
-        "industry": ["standards", "industry_docs", "tech_guides", "general", "checklist", "templates", "methodology", "business"],
-        "personal": ["咨询", "kb_xhs", "xhs"],
-        "project": ["project_docs"],
-    }
-    if bank in _CONSOLIDATED_BANK_MAP:
-        docs_list = repo.list_by_banks(_CONSOLIDATED_BANK_MAP[bank])
+    # 【2026-10-01 修复】聚合键 → documents.bank 取值：与 /api/banks 徽标共用同一口径
+    # （retrieval.consolidated_db_bank_values）。旧实现用一张手写白名单，
+    # 漏了实际取值 'industry'（56 篇）与 'traffic'（1 篇）⇒ 侧栏「信息化行业」
+    # 点进去少文档（实测徽标 551 / 列表 495；其中 20 篇 active∧searchable=1）。
+    _group_values = consolidated_db_bank_values(bank)
+    if _group_values is not None:
+        docs_list = repo.list_by_banks(_group_values)
     elif bank == "all":
         docs_list = repo.list_all()
     else:

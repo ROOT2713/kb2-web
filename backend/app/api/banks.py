@@ -18,6 +18,7 @@ from app.config import settings
 from app.models.database import get_db
 from app.services.retrieval import (
     BANKS, _active_hs_banks_cache, _hindsight_request, reload_bank_config,
+    consolidated_db_bank_values,
 )
 
 from app.middleware.jwt_auth import require_role  # 【FIX-R2-12】删 require_admin 死 import（HTTP Basic 遗留，0 调用点）
@@ -201,40 +202,30 @@ async def list_banks(db: Session = Depends(get_db)):
         raw_stats = {}
         raw_searchable = {}
     
-    # Map old document bank names to new consolidated bank keys
-    _OLD_TO_NEW = {
-        "standards": "industry", "industry_docs": "industry",
-        "tech_guides": "industry", "general": "industry",
-        "checklist": "industry", "templates": "industry",
-        "methodology": "industry", "business": "industry",
-        "咨询": "personal", "kb_xhs": "personal",
-        "xhs": "personal",
-        "project_docs": "project",
-    }
-    bank_stats = {}
-    searchable_stats = {}
-    for old_bank, cnt in raw_stats.items():
-        new_key = _OLD_TO_NEW.get(old_bank, old_bank)
-        bank_stats[new_key] = bank_stats.get(new_key, 0) + cnt
-    for old_bank, cnt in raw_searchable.items():
-        new_key = _OLD_TO_NEW.get(old_bank, old_bank)
-        searchable_stats[new_key] = searchable_stats.get(new_key, 0) + cnt
-    
-    total = sum(bank_stats.get(key, 0) for key in banks_cfg if key != "all")
-    total_searchable = sum(searchable_stats.get(key, 0) for key in banks_cfg if key != "all")
+    # 【2026-10-01 修复】徽标计数改为与 /api/documents 列表同一口径
+    # （retrieval.consolidated_db_bank_values）。旧实现的两处偏差：
+    #   ① 手写 _OLD_TO_NEW 表没写 'industry'/'traffic' ⇒ 'traffic' 落到
+    #      bank_stats['traffic'] 后因不是配置键而被 all 总数漏掉（605≠606）；
+    #   ② 每个键各自累加，无法保证「徽标数 == 列表条数」（实测 551 vs 495）。
+    # 注：industry 的 hindsight_banks 设计上包含 kb_general，故 industry 与
+    # general 两个条目存在**有意的重叠**，各项之和大于 all 属预期。
     banks = []
+    total = sum(raw_stats.values())
+    total_searchable = sum(raw_searchable.values())
     for key, cfg in banks_cfg.items():
-        if key == "all":
-            banks.append({
-                "key": key, "name": cfg["name"], "count": total, "searchable": total_searchable,
-                "description": cfg.get("description", ""), "hindsight": cfg.get("hindsight"),
-            })
+        vals = consolidated_db_bank_values(key)
+        if vals is None:
+            cnt = raw_stats.get(key, 0)
+            scnt = raw_searchable.get(key, 0)
         else:
-            banks.append({
-                "key": key, "name": cfg["name"], "count": bank_stats.get(key, 0),
-                "searchable": searchable_stats.get(key, 0),
-                "description": cfg.get("description", ""), "hindsight": cfg.get("hindsight"),
-            })
+            cnt = sum(raw_stats.get(v, 0) for v in vals)
+            scnt = sum(raw_searchable.get(v, 0) for v in vals)
+        if key == "all":
+            cnt, scnt = total, total_searchable
+        banks.append({
+            "key": key, "name": cfg["name"], "count": cnt, "searchable": scnt,
+            "description": cfg.get("description", ""), "hindsight": cfg.get("hindsight"),
+        })
     return {"banks": banks}
 
 

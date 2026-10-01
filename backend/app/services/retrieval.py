@@ -44,6 +44,11 @@ _HARDCODED_BANKS = {
     "project":  {"name": "项目文档",
                  "hindsight": "kb_project",
                  "prompt": "你是政务信息化项目管理专家。熟悉项目管理办法、验收管理细则、财政投资规定、软件行业基准数据。回答时注重管理流程、审批要求和实操经验。"},
+    # 【2026-10-01 CC 审查】补齐 general：banks.json 里有此键，内置兜底也必须
+    # 有，否则配置不可读时 BANKS 丢 general ⇒ 197 篇 bank='general' 的文档
+    # 在任何列表筛选下消失（与 bank 映射漏配同类的静默可见性损失）。
+    "general":  {"name": "综合文件", "hindsight": "kb_general",
+                 "prompt": "你是综合文件领域专家。"},
 }
 BANKS = dict(_HARDCODED_BANKS)
 
@@ -57,6 +62,10 @@ LEGACY_BANK_TO_HS = {
     "business": "kb_industry", "traffic": "kb_industry",
     "咨询": "kb_xhs", "xhs": "kb_xhs", "kb_xhs": "kb_xhs",
     "project_docs": "kb_project",
+    # 【2026-10-01 CC 审查】general 是第二大存量 documents.bank 取值，此前只靠
+    # banks.json 的键兜底（隐含单点依赖）。按本常量自述用途（「存量 documents.bank
+    # 实证分布」）显式登记，使取值→物理库的归属不再依赖配置文件是否可读。
+    "general": "kb_general",
 }
 
 
@@ -129,6 +138,63 @@ def doc_bank_filter(bank_key: str) -> list[str]:
         return [legacy]
     logger.warning("[FIX-001] doc_bank_filter: bank_key=%r 不在 BANKS 配置/legacy 映射,兜底 kb_%s (若过滤恒空请检查 upload 写入口径与 banks 配置)", bank_key, bank_key)
     return [f"kb_{bank_key}"]
+
+
+# ── 聚合键 → documents.bank 取值（唯一口径）──────────────────────────
+def consolidated_db_bank_values(bank_key: str) -> list[str] | None:
+    """聚合业务键 → ``documents.bank`` 实际取值列表；非聚合键返回 None。
+
+    ``documents.bank`` 列在历史演进中同时存在三类取值：
+      ① legacy 键（standards / industry_docs / general / project_docs / ...）
+      ② 业务键本身（industry / personal / project / general）
+      ③ 物理库名（kb_xhs）
+    只要某取值的 hindsight 归属落在该聚合键的检索范围内，就必须被计入，
+    否则读侧会静默漏文档。
+
+    实证（2026-10-01）：``/api/documents`` 旧白名单漏了 ``industry``（56 篇）
+    与 ``traffic``（1 篇）⇒ 侧栏「信息化行业」徽标 551、点进去只有 495，
+    其中 20 篇 ``active ∧ searchable=1``（含 GB 50174/GB 50312、电子政务工程
+    造价指导书、粤府办〔2020〕9号 等核心资料）在文档管理页完全不可见。
+    本函数把口径收口到一处，供 documents.py（列表）与 banks.py（徽标）共用。
+
+    ⚠️ 口径说明（2026-10-01 独立审查后补）：调用方（列表 / 徽标）统计的是
+    **文档管理视角**的记录数，**不区分 status** ⇒ 含 superseded / stale 行。
+    它**不等于检索可见面**（检索口径恒为 ``status='active' AND searchable=1``）。
+    二者本就不同且一直如此，勿把徽标数当「能被检索到的篇数」。
+    """
+    if not bank_key or bank_key == "all":
+        return None
+    cfg = BANKS.get(bank_key)
+    if not isinstance(cfg, dict):
+        return None
+    targets = set(cfg.get("hindsight_banks") or [])
+    if not targets:
+        hs = cfg.get("hindsight")
+        if not hs:
+            return None
+        targets = {hs}
+
+    vals: list[str] = []
+    for legacy, hs in LEGACY_BANK_TO_HS.items():          # ① legacy 键
+        if hs in targets:
+            vals.append(legacy)
+    for key, c in BANKS.items():                          # ② 业务键 + ③ 物理库名
+        if key == "all" or not isinstance(c, dict):
+            continue
+        hs = c.get("hindsight")
+        if hs and hs in targets:
+            vals.append(key)
+        vals.extend(b for b in (c.get("hindsight_banks") or []) if b in targets)
+    vals.extend(targets)
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for v in vals:                                        # 去重保序，剔除聚合键
+        if v != "all" and v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
 
 
 # ── Active Hindsight banks 缓存 ────────────────────────────────────

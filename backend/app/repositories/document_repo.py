@@ -172,8 +172,15 @@ class DocumentRepository:
         return list(self.db.execute(stmt).scalars().all())
 
     def list_by_banks(self, banks: List[str]) -> List[Document]:
-        """List documents matching any of the given bank values."""
-        stmt = select(Document).where(Document.bank.in_(banks))
+        """List documents matching any of the given bank values.
+
+        【2026-10-01 CC 审查】与 ``list_all`` 对齐：排除 ``bank='skip'``
+        （哨兵值，不属任何知识库）。此前只有 ``list_all`` 有该守卫，
+        两处不对称；聚合 bank 过滤改走本方法后，不对称面被放大。
+        """
+        stmt = select(Document).where(
+            Document.bank.in_(banks), Document.bank != "skip"
+        )
         stmt = stmt.order_by(Document.created_at.desc())
         return list(self.db.execute(stmt).scalars().all())
 
