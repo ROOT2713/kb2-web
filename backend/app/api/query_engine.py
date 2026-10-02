@@ -34,7 +34,7 @@ from app.services.retrieval import (
 from app.utils.text_cleaning import (
     deai_postprocess,
 )
-from app.utils.tokenizer import extract_keyword_snippet
+from app.utils.tokenizer import extract_keyword_snippet, tokenize
 from app.config import settings
 from app.services.fee_utils import filter_conflicting_fee_types
 from app.services.prompt_hardening import build_fee_hint as _build_fee_table_hint
@@ -2181,6 +2181,61 @@ def _write_audit_log(request, q: str, answer: str, sources: list, cache_hit: int
 # ═══════════════════════════════════════════════════════════════════════
 
 
+# ── 查询↔标题 精确匹配（L1.5 / L2 共用）────────────────────────────────
+# 2026-10-02 修复：原判定为「整串子串」(q in title or title in q)，对
+# 「地名 + 空格 + 主题」这类最自然的提问方式完全失效（「佛山 概算编制指南」
+# 与标题「佛山市市级政务信息化项目概算编制指南（2022版）」互不包含），
+# 导致检索已召回的文档被 L1.5/L2 误判为「无可靠答案」→ 返回 0 来源。
+# 新判定 = ① 查询的实义分词必须**全部**出现在同一标题里（即不允许多出任何
+#              一个「标题解释不了的实义词」——「江门 政务 信息化 项目 概算
+#              编制 指南」里的「江门」、「佛山 概算编制指南 消防」里的「消防」
+#              都会让它落选）；
+#           ② 地名一致性（查询中的每个地名都必须出现在同一标题）
+# 阈值经 170 篇 active∧searchable 真实标题标定（2026-10-02）：
+#   1.00 → 应放行 20/22、误放 0/18（采用）
+#   0.80 → 应放行 22/22 但**误放 3/18**（CC 评审实测复现）：
+#          「江门 政务 信息化 项目 概算 编制 指南」0.857、
+#          「佛山 概算编制指南 消防」0.800、「佛山 江门 概算编制指南」0.800
+#          —— 三者都会拿佛山的文档去答别的主题/城市（张冠李戴）。
+#          0.90 与 1.00 在这组数据上结果相同，但 0.90 仍挡不住「多塞几个
+#          标题里也有的词」的拼接（如 12 词里夹 1 个陌生城市 = 0.917），
+#          故取 1.00（不变量最干净：问句的实义词必须都能在文件名里找到）。
+#   本判定整体仍**严格宽于**修复前的整串子串（后者连「佛山 概算编制指南」
+#   都过不了），故不存在比修复前更严的回归。
+_TITLE_COVERAGE_THRESHOLD = 1.00
+_LOCATION_RE = re.compile(
+    r'(?:[^\s]{1,5}[省市区域]|'
+    r'广州|北京|深圳|上海|浙江|杭州|东莞|佛山|南沙|珠海|中山|'
+    r'江苏|南京|四川|成都|湖北|武汉|福建|厦门|天津|重庆)'
+)
+
+
+def _query_title_match(
+    q_lower: str,
+    doc_name_lower: str,
+    q_tokens: list,
+    q_locs: list,
+) -> bool:
+    """查询是否精确指向该文档标题（L1.5 / L2 共用）。
+
+    取代原「整串子串」判定。``q_tokens`` / ``q_locs`` 由调用方预先算好，
+    避免在文档循环内重复分词与正则扫描。
+    """
+    if not q_lower or not doc_name_lower:
+        return False
+    # 原有整串行为保留（完整标题/连续子串这类提问仍走最短路径）
+    if q_lower in doc_name_lower or doc_name_lower in q_lower:
+        return True
+    if not q_tokens:
+        return False
+    hits = sum(1 for k in q_tokens if k in doc_name_lower)
+    if hits / len(q_tokens) < _TITLE_COVERAGE_THRESHOLD:
+        return False
+    if q_locs and not all(loc in doc_name_lower for loc in q_locs):
+        return False
+    return True
+
+
 def _assess_recall_confidence(
     ctx: dict,
     q: str,
@@ -2308,6 +2363,8 @@ def _assess_recall_confidence(
             # 2026-08-19 修复：复合标准号查询（"GB A 和 GB B 对比"）无法整串匹配单个文档名
             # → 放宽为标准号级匹配：q 中任一标准号命中 doc_name 即算匹配（C1-StdBoost 已注入标准文档）
             q_lower = q.lower()
+            _q_tokens = tokenize(q_lower)
+            _q_locs = _LOCATION_RE.findall(q_lower)
             _has_exact_doc_match = False
             # 标准号正则：GB/T 50174-2017、YD 5214-2015、JGJ/T 454-2019、T/CECS 488-2017 等
             _std_numbers = re.findall(
@@ -2322,7 +2379,7 @@ def _assess_recall_confidence(
                     if not doc_name:
                         continue
                     dn = doc_name.lower()
-                    if q_lower in dn or dn in q_lower:
+                    if _query_title_match(q_lower, dn, _q_tokens, _q_locs):
                         _has_exact_doc_match = True
                         break
                     if _std_numbers:
@@ -2347,11 +2404,7 @@ def _assess_recall_confidence(
                 }
 
     if not is_multi_turn:
-        _location_pattern = re.compile(
-            r'(?:[^\s]{1,5}[省市区域]|'
-            r'广州|北京|深圳|上海|浙江|杭州|东莞|佛山|南沙|珠海|中山|'
-            r'江苏|南京|四川|成都|湖北|武汉|福建|厦门|天津|重庆)'
-        )
+        _location_pattern = _LOCATION_RE
         _query_locations = _location_pattern.findall(q)
         _en_locations = ['gdpr', 'european', 'california', 'new york', 'london', 'tokyo']
         _query_locations += [loc for loc in _en_locations if loc in q.lower()]
@@ -2411,11 +2464,14 @@ def _assess_recall_confidence(
 
     # 是否包含精确匹配（查询标准号在文档名称中）
     q_lower = q.lower()
+    _q_tokens = tokenize(q_lower)
+    _q_locs = _LOCATION_RE.findall(q_lower)
     has_exact_match = False
     for doc_fact_list in doc_facts.values():
         for fact in doc_fact_list:
             doc_name = fact[1] if isinstance(fact, (list, tuple)) and len(fact) > 1 else ""
-            if q_lower in doc_name.lower() or doc_name.lower() in q_lower:
+            if _query_title_match(q_lower, doc_name.lower(),
+                                  _q_tokens, _q_locs):
                 has_exact_match = True
                 break
         if has_exact_match:
