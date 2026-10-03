@@ -158,7 +158,10 @@ def test_jobs_table_matches_real_wrappers():
     import re as _re
 
     scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
-    assert len(cs.JOBS) == 3, "治理任务应为三项"
+    assert len(cs.JOBS) == 2, (
+        "看门狗应监控两项 —— stale 检测 2026-10-01 停用，不得留在表中"
+        "（否则每日误报）"
+    )
 
     for hhmm, job, log_path in cs.JOBS:
         wrapper = scripts_dir / f"{job}.sh"
@@ -181,3 +184,37 @@ def test_jobs_table_matches_real_wrappers():
         got = f"{hour:02d}{minute:02d}"
         assert got == hhmm, f"cron 时刻漂移：表={hhmm} wrapper={got}"
 
+
+
+
+# ── ⑥ ★ 反向锚：JOBS 表不得包含「已停用」的任务（2026-10-02 误报根因）──
+def test_jobs_table_excludes_disabled_crontab_entries():
+    """表里每个任务，其 wrapper 在系统 crontab 中必须有**未注释**的定义。
+
+    背景：cron_stale_detection 于 2026-10-01 停用（crontab 行被注释），但看门狗
+    表仍列着它 ⇒ 连续两日 06:40 误报「cron 可能整体死亡 / 日志被轮转」。
+    本用例把「任务已停用、看门狗未同步」变成可被测试抓到的错误：
+    只要表里还留着已停用的任务，crontab 里就找不到未注释的该 wrapper ⇒ 变红。
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["crontab", "-l"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover - 环境相关
+        pytest.skip("无法执行 crontab -l（无 cron 环境），跳过环境相关检查")
+    if out.returncode != 0:
+        pytest.skip(f"crontab -l rc={out.returncode}，跳过环境相关检查")
+
+    active = [
+        ln for ln in out.stdout.splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+    assert active, "crontab 无未注释行 —— 预期至少两项治理任务在跑"
+
+    for _hhmm, job, _log_path in cs.JOBS:
+        assert any(f"{job}.sh" in ln for ln in active), (
+            f"看门狗仍在监控未启用的任务：{job} —— crontab 中没有未注释的 "
+            f"{job}.sh 定义。任务停用/恢复时必须同步 JOBS 表，否则每日误报。"
+        )
