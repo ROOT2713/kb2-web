@@ -92,15 +92,25 @@ CATEGORY_REGEX_RULES = [
 
 
 def infer_category(title: str = "", filename: str = "", bank: str = "") -> str:
-    """自动推断文档分类。优先级：关键词正则 > bank 映射 > 空字符串"""
+    """自动推断文档分类。优先级：关键词正则 > bank 映射 > 空字符串
+
+    例外（2026-10-05 修复）：当 ``bank`` 已在 BANK_TO_CATEGORY 中显式配置为
+    **非隔离类**时，隔离类兜底正则（daily/news）不得覆盖它 —— 否则
+    XHS(``kb_xhs``)/legacy(``咨询``) 库的文档会因标题含「笔记/memo/动态/资讯」
+    等词落进隔离类，默认检索不可见。无 bank 上下文时行为不变（仍按正则）。
+    """
     source = title or filename
+    bank_cat = BANK_TO_CATEGORY.get(bank)
+    bank_wins = bank_cat is not None and bank_cat not in ISOLATED_CATEGORIES
     for pattern, cat in CATEGORY_REGEX_RULES:
         if re.search(pattern, source, re.IGNORECASE):
-            if cat is not None:
-                return cat
-            break
-    if bank in BANK_TO_CATEGORY and BANK_TO_CATEGORY[bank] is not None:
-        return BANK_TO_CATEGORY[bank]
+            if cat is None:
+                break
+            if bank_wins and cat in ISOLATED_CATEGORIES:
+                break  # 隔离兜底正则让位 → 落到 bank 映射（非隔离类）
+            return cat
+    if bank_cat is not None:
+        return bank_cat
     return ""
 
 
