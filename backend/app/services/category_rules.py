@@ -60,7 +60,7 @@ BANK_TO_CATEGORY = {
     "checklist":      "evaluation",
     "business":       "business",     # 修复: 原为 cost
     "咨询":           "consulting",    # 修复: 原为 news
-    "kb_xhs":         "daily",
+    "kb_xhs":         "consulting",    # 修复(2026-10-04): 原为 daily —— daily/news 属 ISOLATED_CATEGORIES，默认检索被剔除 ⇒ XHS 入库后检不到。与 legacy "咨询" 键对齐。
     "general":        None,
     "methodology":    "it",
 }
