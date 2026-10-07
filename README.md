@@ -582,7 +582,7 @@ N5 清理出的 18 个僵尸任务，**先要回答「这些内容到底入库�
 |------|------|
 | 后端测试 | **776 passed / 64 skipped / 0 failed**（`pytest tests/unit`，21.9s 实测）—— 较 09-29 的 574 增 **202**（含本轮 bank 过滤回归锁 `test_query_engine_bank_filter.py` 40 例 + 同类收口回归） |
 | **回归基线** | **有效且已冻结**（`9dd2645`）—— `compare 100.0% (125/125)`、**回归项 0/22**、exit 0；非空 doc_id **220/220**、连跑两次 **Jaccard=1.00** |
-| 代码状态 | HEAD **`1f86fc4`**（本地已提交；`origin/main` 停在 `2052912`，本轮推送遇 GitHub 侧 500，**待重试**）；**kb2-web 已重启生效**（`MainPID 3363921`，`Application startup complete`，`/api/banks` 401） |
+| 代码状态 | HEAD **`4b5da9d`**，已推送 `origin/main`（`2052912..4b5da9d`）；**kb2-web 已重启生效**（`MainPID 3363921`，`Application startup complete`，`/api/banks` 401） |
 | 数据规模 | SQLite `documents` **616 总 / 184 active / 53 stale / 379 superseded**；对外**可检索** = active 且 `searchable=1` = **180**。pg `vector_chunks` **22,834**（`registry` 100%、**真孤儿 0**；覆盖 **237** 个 doc_id，恰 = 616 − 379 ⇒ superseded 无向量属**预期隔离态**，非缺失） |
 | 上传任务 | `upload_tasks` **done=59 / failed=20 / 非终态残留 0** |
 | 治理定时任务 | kb2 两条治理 cron（**3am 置信度重算 / 5am 上传清理**）；**90 天自动 stale 已停用**（改人工 `stale_detect_manual.sh`，避免「单向棘轮」误杀，见 N4） |
