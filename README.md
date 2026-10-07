@@ -1,6 +1,6 @@
 # kb2-web — 知识库 Web 服务 v2
 
-基于 **FastAPI + Vue 3 + Hindsight** 的政务信息化知识库 Web 服务，支持多 bank 知识库管理、BM25+Dense 混合检索、LLM 问答生成。
+基于 **FastAPI + Vue 3 + PostgreSQL 16/pgvector** 的政务信息化知识库 Web 服务，支持多 bank 知识库管理、BM25+Dense 混合检索、LLM 问答生成。
 
 > 从 V1 架构完全重写，当前替代 V1 作为生产环境。
 
@@ -10,15 +10,16 @@
 
 | 特性 | 说明 |
 |------|------|
-| **混合检索** | BM25(初筛) → Hindsight Dense(向量排序) → top-K → LLM 生成，支持多 bank 并行召回 |
+| **混合检索** | BM25(初筛) → pgvector Dense(向量排序) → top-K → LLM 生成，支持多 bank 并行召回 |
 | **知识库管理** | 上传(单文件/批量/文件夹)、文档 CRUD、重解析、缓存管理 |
 | **取费表查询** | `fee_utils` 关键词评分 D2-B 注入，16 种子词+金额档位评分排序 |
 | **同义词扩展** | 158 条同义词映射在检索层扩展 query，零 prompt 膨胀 |
 | **L2 语义缓存** | 基于语义指纹的查询缓存，nocache 参数控制 |
 | **多用户权限** | admin/viewer 双角色 + JWT + 路由级 require_role |
-| **Domain 过滤** | 按领域关键词自动路由到对应 Hindsight bank |
+| **Domain 过滤** | 按领域关键词自动路由到对应知识库 bank |
 | **OKF 信息架构** | Document 12 字段 + Concept/KGTriple/QualityGate + Concept Summary 上浮 |
 | **66 题质量评估** | 并行测试脚本，66 道真实政务场景题（历史存档通过率 74.2%，见文末） |
+| **检索召回优化** | pgvector 部分索引（`bank`+`registry` 双谓词内嵌），小 bank 不再被大 bank 挤占；多 bank 按检索范围（`hs_bank`）限定 |
 
 ---
 
@@ -45,8 +46,8 @@
 └──────────┬───────────────────────────────────────────┘
            │
     ┌──────┴──────┐
-    │  SQLite     │  Hindsight (:8888)
-    │  (kb.db)    │  (Dense/BM25 检索)
+    │  SQLite     │  PostgreSQL 16 + pgvector
+    │  (kb.db)    │  (Dense ANN 检索)
     └─────────────┘
 ```
 
@@ -59,7 +60,7 @@
 - Python 3.10+
 - Node.js 18+
 - SQLite >= 3.25（依赖窗口函数 `ROW_NUMBER() OVER` 与 JSON1；Ubuntu 22.04+ 自带 3.37 满足）
-- Hindsight 服务 (`:8888`)
+- PostgreSQL 16 + pgvector（向量库）
 - MinerU API Key（文档解析）
 
 ### 账号与权限
@@ -155,9 +156,9 @@ kb2-web/
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
-| 检索引擎 | Hindsight (BM25+Dense) | 自托管，低延迟，SQLite 原生集成 |
+| 向量检索引擎 | pgvector（HNSW，PostgreSQL 16） | 自托管、低延迟；部分索引（`bank`+`registry` 谓词内嵌）隔离各 bank 召回 |
 | 文档解析 | MinerU (优先) → pypdf (降级) | MinerU 高精度保留表格/公式 |
-| LLM | DeepSeek V4 (OpenRouter) | 成本低、中文表现强 |
+| LLM | DeepSeek（`deepseek-flash`，官方 API） | 成本低、中文表现强 |
 | 缓存 | L2 语义缓存 | 相似 query 命中，nocache 强制绕过 |
 | 鉴权 | JWT + require_role | 轻量、stateless、支持 admin/viewer |
 | 数据存储 | SQLite (kb.db 元数据) + pgvector (向量) | 元数据/缓存 SQLite，chunk 向量 pgvector；registry 打标隔离孤儿 |
@@ -501,12 +502,12 @@ N5 清理出的 18 个僵尸任务，**先要回答「这些内容到底入库�
 | 3 | `app/api/documents.py:1060` | 官方删除端点用 `doc_hs_bank or "kb"` | `hs_bank` 为空时**删不到向量却返回成功** → 静默孤儿 | ✅ 已修并生效（`f4ac991` + 2026-09-30 22:53:32 重启）—— 库名解析收口为 `resolve_delete_hs_bank()`，失败即告警且不再污染日志 |
 | 4 | `app/api/upload.py:463-467` | `detect_existing_doc()` **不排除自身** | **严重度订正**：不止「自引用」——`get_version_history()` 两向遍历无防环 ⇒ **死循环**，且经 `GET /api/documents/{id}/versions` **暴露给 API**（`documents.py:1484`），命中一个自引用文档即占死一个 worker（内存无界增长 + CPU 打满）；实测修前 `timeout 10` 被杀（rc=124）、修后 0.010s 返回 | ✅ 已修并生效（`600d0f2` 代码 + 存量数据已修复 + 2026-09-30 22:53:32 重启，PID 707125）—— 写侧 `exclude_doc_id` 排除自身 + 读侧 visited 防环；存量 **121 行已修复**（33 恢复 / 88 置 NULL / 残留自引用 0，写前自动备份 `kb.db.selfref_bak.20260930213623`）；曾挂死文档 `589bcc7e` 现 **0.01s 返回** |
 | 5 | `banks_config_path` | 指向 **v1 已退役目录** | 该目录一旦被清理，配置**静默退化**，`general` 从合法键变黑洞 | 未修 |
-| 6 | 向量库 | pgvector 0.6.0 **HNSW 不回收已删节点** | 索引膨胀（`VACUUM` 无效；唯一回收 = `REINDEX CONCURRENTLY`，在线约 99s） | 未修 |
+| 6 | 向量库 | pgvector 0.6.0 **HNSW 不回收已删节点** | 索引膨胀（`VACUUM` 无效；唯一回收 = `REINDEX CONCURRENTLY`，在线约 99s） | 部分缓解（2026-10-07 已建 5 个部分索引改善小 bank 检索，**死节点回收本身仍未解**，见「检索层整改记录」） |
 | 7 | Hermes 侧 | 会话消息落库告警 **22 次/日**；langfuse 遥测超时 **67 次/日** | 与 kb2-web 无直接关联，但会污染整体可观测性 | 待定位 |
-| 8 | 流程 | **stale 无复验回归路径**（N4 的根因） | 预警只解决「看得见」，未解决「能回来」；90 天自净空仍会持续发生 | 半解（感知段已补） |
+| 8 | 流程 | **stale 无复验回归路径**（N4 的根因） | 预警只解决「看得见」，未解决「能回来」 | **已缓解（2026-10-01）**：90 天自动 stale 已停用，改人工 `stale_detect_manual.sh`（当前 stale=53） |
 | 9 | 运维 | kb2-wiki 保活**每天仅一次** | 根修后卡死概率大降，但检测窗口仍有 **~24h**；可考虑加密保活或加 socket 级守护 | 待定 |
 
-**口径说明（避免误读）**：`README` 历史存档中的「544 篇 active」为 **2026-09-05** 口径；当前权威口径（2026-09-29）为 `documents` **606 总 / 132 active / 95 stale / 379 superseded**，「可检索」= **active 且 `searchable=1`**。跨存储：pg 覆盖 227 个 doc_id = 606 − 379（superseded），**孤儿 0**；`status='superseded'` 的 379 篇在 pg **无向量属预期隔离态**，**不得据此判「向量缺失」**。另：`metadata.bank`（业务键）与列 `bank`（物理库名）是**设计分层**，二者不一致 93% **不是缺陷**（勿据此判"数据不一致"）；`kb_general` 出现在 `industry` 范围内属**设计意图**（`hindsight_banks` 是列表，industry 跨 6 库 / all 跨 8 库）。
+**口径说明（避免误读）**：`README` 历史存档中的「544 篇 active」为 **2026-09-05** 口径；**当前权威口径见 §「当前状态」**（2026-10-07：`documents` **616 总 / 184 active / 53 stale / 379 superseded**，「可检索」= **active 且 `searchable=1`** = **180**）。跨存储：pg 覆盖 **237** 个 doc_id = 616 − 379（superseded），**真孤儿 0**；`status='superseded'` 的 379 篇在 pg **无向量属预期隔离态**，**不得据此判「向量缺失」**。另：`metadata.bank`（业务键）与列 `bank`（物理库名）是**设计分层**，二者不一致 93% **不是缺陷**（勿据此判"数据不一致"）；`kb_general` 出现在 `industry` 范围内属**设计意图**（`hindsight_banks` 是列表，industry 跨 6 库 / all 跨 8 库）。
 
 ### 5. 关键教训（本轮沉淀）
 
@@ -519,18 +520,82 @@ N5 清理出的 18 个僵尸任务，**先要回答「这些内容到底入库�
 
 ---
 
-## 📊 当前状态（2026-09-29 更新）
+## 🔍 检索层整改记录（2026-10-07，R4 后续）
+
+**本轮定性（一句话）**：检索侧「小 bank 返 0」是**两个相互独立的缺陷**叠加（此前误当同一缺陷）——一个在 **DB 层**（索引候选被截断），一个在**结果过滤层**（legacy bank 映射缺失）。两者均已修并上生产，各附三层验证 + 突变测试证据。
+
+### 1. 缺陷① DB 层：全量 HNSW 无 bank 限定 → 小 bank 候选被截断
+
+- **机制**：`vector_chunks` 原只有全量 HNSW（`idx_vc_embedding`，无 `bank` 谓词）。ANN 检索**先按距离取 TopK 再回表过滤 bank** ⇒ bank 内文档少时（project=117 chunks / general=465），候选被大 bank（standard=18,889）挤掉 → 返 0 或极少。
+- **修法（零停机、不改代码）**：建 **5 个「`bank` + `registry` 双谓词内嵌」部分 HNSW 索引**，谓词与生产真实 WHERE（`vector_repo.py:375`：`bank=$1 AND embedding IS NOT NULL AND metadata->>'registry'='1'`）**严格对齐**：
+
+| 索引 | 大小 |
+|------|------|
+| `idx_vc_kb_standard_pr` | 105 MB |
+| `idx_vc_kb_industry_pr` | 19 MB |
+| `idx_vc_kb_xhs_pr` | 5.1 MB |
+| `idx_vc_kb_general_pr` | 2.0 MB |
+| `idx_vc_kb_project_pr` | 944 KB |
+
+- 全部 `CREATE INDEX CONCURRENTLY`（**零停机**，终态 `indisvalid=t`），合计 ~131 MB。
+- **验证（第 2/3 层）**：auto 模式 5 bank **全返 30 条**（general 11.9ms / project 8.6ms / standard 4.8ms）；`pg_stat_user_indexes.idx_scan` 5 个 `_pr` 索引各 **+15**；`EXPLAIN` 确认走 `Index Scan using idx_vc_kb_general_pr`。
+
+### 2. 缺陷② 过滤层：`_old_bank_map` 缺 `project_docs→project`（commit `2052912`）
+
+- **机制**：`query_engine.py` 结果过滤层把 `documents.bank`（legacy 键，实测值域 `project_docs/industry_docs/kb_xhs/...`）映射为请求业务键，映射表**缺 `project_docs` 与 `traffic`** ⇒ project 文档 `bank='project_docs'` → 映射为 `None` ≠ `project` → **被丢弃**。
+- **真凶定位**：BM25 日志显示「已找到 project 30 条」，丢弃发生在**结果过滤**而非检索；`general`（bank 值恰为业务键）因此正常，只有 project/personal 异常。
+- **修法**：补齐映射；内联 dict 提为模块级常量 `LEGACY_BANK_TO_BIZKEY`（唯一来源），抽纯函数 `bank_visible_for_request()`；新增回归锁 `tests/unit/test_query_engine_bank_filter.py`（40 例）。
+- **验证**：API 端到端 `bank=project` **0 → 3 sources**（3 条查询全中，score 1.0 / 0.92 / 0.84）。
+- **被推翻的两个假说**（如实记录）：①「generic 计划是主因」——`force_generic` 下确有残留，但修前修后 project 均 0，非主因；②「`_filter_invisible` 剔除」——8 个向量文档实测全 `active+searchable=1`，不成立。
+
+### 3. 缺陷② 同类收口：7 处「业务键直比 `documents.bank`」统一改 `hs_bank`（commit `1f86fc4`）
+
+- **同形态扫描**发现 6 处同类隐患（BM25 主索引 / BM25 计数 ×2 / 费率表 ×2 / 标准元数据 / 相关文档召回）。
+- **修法**：新增单一入口 `retrieval.db_bank_scope(bank_key)` —— 复用既定 `doc_bank_filter` 取该 bank 的检索范围（`hs_bank` 值集），产出 `AND <col> IN (...)` 片段 + 参数。**沿用既定 FIX-001 口径，不造第三张表**；`hs_bank` 覆盖率实测 **100%**（无 NULL）。
+- **验证**（真实库 SQL 层）：BM25 主索引 `project` **0→30 行**、`personal` **0→161 行**（原先恒 0 行、静默退 pgvector 兜底）。
+- **测试卫生修正**：既有夹具**假性通过** —— 只 patch `query.py.SessionLocal`，被测函数 `_assemble_standard_contents_meta` 却用 `query_engine.SessionLocal` ⇒ 另开会话读空库 ⇒ 断言 `== []` 恒成立。已补 patch（移除即失败，证明必要）+ 加正控用例。
+
+### 4. 本轮验证证据汇总
+
+| 层 | 证据 |
+|----|------|
+| ① 磁盘 / 单测 | `pytest tests/unit` **776 passed / 64 skipped**（与基线一致，零回归）；`py_compile` OK |
+| ② 进程加载 | kb2-web 重启 `MainPID 3363921`，`Application startup complete`，`/api/banks` **401**（认证通） |
+| ③ 运行时生效 | API `bank=project` → 3 sources；真实库 BM25 project 0→30 / personal 0→161 |
+| 突变测试 | `bank_visible_for_request` 4/4 变红；`db_bank_scope` 恒不限定 / 忽略请求 **2/2 变红** |
+
+### 5. 待审计方复核 / 未修项
+
+| # | 问题 | 影响 | 状态 |
+|---|------|------|------|
+| A | pgvector 0.6.0 在 **`force_generic_plan`** 下 HNSW 静默返 0（实测 `kb_general` 4 条 / `kb_project` 29 条，**比慢更重**） | 应用当前**未设** `plan_cache_mode`（0 命中），风险为潜在 | 未修（已知限制） |
+| B | **谓词耦合巡检脚本**未建 —— 索引谓词（`bank='kb_x'`）与代码 WHERE 若漂移，部分索引会**静默失效**（退回全量索引，不报错） | 后续若改 `vector_repo` 的 WHERE 可能悄悄退化 | 待建 |
+| C | 费率表查询：`industry` 检索范围含 `kb_general`/`kb_standard`（设计意图，见 `banks.json`），理论上可能混入综合/标准库的费用表 | 结果相关性 | 待裁决（是否收紧为精确 bank） |
+
+---
+
+## 📊 当前状态（2026-10-07 更新）
+
+> **口径定义**：**可检索文档** = `documents.status='active' AND searchable=1`；**向量覆盖** = pg `vector_chunks` 中 `metadata->>'registry'='1'` 的去重 `doc_id`。下表数字均为当日实测（命令见本节末）。
 
 | 指标 | 数值 |
 |------|------|
-| 后端测试 | **574 passed / 62 skipped / 0 failed**（`pytest tests/unit`，20.7s 实测）—— 较 09-17 的 531 增 **43**，全部来自 A 组 bank 派生契约 `test_a_group_hs_bank_derivation.py`（修复前 **43 红**，即 N3 的验收靶） |
-| **回归基线** | **有效且已冻结**（`9dd2645`）—— 修复三个独立缺陷后 `compare 100.0% (125/125)`、**回归项 0/22**、exit 0；非空 doc_id **220/220**、连跑两次 **Jaccard=1.00** |
-| 代码状态 | HEAD **`45e7238`**，已推送 `origin/main`；**kb2-web 已重启生效**（`MainPID 4141181`，`Application startup complete`）；kb2-wiki 修复 `de939cd`（**本地仓库，无远端**） |
-| 数据规模 | SQLite `documents` **606 总 / 132 active / 95 stale / 379 superseded**；pg `vector_chunks` **22,605**（`registry` 100%、**孤儿 0**；覆盖 **227** 个 doc_id，恰 = 606 − 379 ⇒ superseded 无向量属**预期隔离态**，非缺失）；对外**可检索口径 = active 且 `searchable=1`** |
-| 上传任务 | `upload_tasks` **done=47 / failed=21 / 非终态残留 0**（本轮清理 18 个滞留 11 天的僵尸任务，见 N5） |
-| 治理定时任务 | 三条 kb2 治理 cron（**3am 置信度重算 / 4am stale 检测 / 5am 上传清理**）**首次通电成功**，无失败（N1）；gov-tree 备份恢复正常（03:00，652K，保留 7 天）；新增 ① 每周一 09:00 到期预警 cron |
-| 服务 | kb2-web `:3027` · kb2-wiki `:3006` · hermes-wiki `:3004` · tianzhi `:3037` 全部 **200** |
-| 数据治理（0904） | 主库 `/home/ubuntu/kb-web/data/kb.db`；`PRAGMA integrity_check` = **ok**、`foreign_key_check` = **0 违规**；`profile_confidence` 覆盖 **可检索集 127/127 = 100%**（**active 131/131**；全表 245 有值 / 360 为 NULL，NULL **全部集中在 superseded 历史行**（379 中 359），属预期——0904 回填即按「非 superseded」口径） |
+| 后端测试 | **776 passed / 64 skipped / 0 failed**（`pytest tests/unit`，21.9s 实测）—— 较 09-29 的 574 增 **202**（含本轮 bank 过滤回归锁 `test_query_engine_bank_filter.py` 40 例 + 同类收口回归） |
+| **回归基线** | **有效且已冻结**（`9dd2645`）—— `compare 100.0% (125/125)`、**回归项 0/22**、exit 0；非空 doc_id **220/220**、连跑两次 **Jaccard=1.00** |
+| 代码状态 | HEAD **`1f86fc4`**（本地已提交；`origin/main` 停在 `2052912`，本轮推送遇 GitHub 侧 500，**待重试**）；**kb2-web 已重启生效**（`MainPID 3363921`，`Application startup complete`，`/api/banks` 401） |
+| 数据规模 | SQLite `documents` **616 总 / 184 active / 53 stale / 379 superseded**；对外**可检索** = active 且 `searchable=1` = **180**。pg `vector_chunks` **22,834**（`registry` 100%、**真孤儿 0**；覆盖 **237** 个 doc_id，恰 = 616 − 379 ⇒ superseded 无向量属**预期隔离态**，非缺失） |
+| 上传任务 | `upload_tasks` **done=59 / failed=20 / 非终态残留 0** |
+| 治理定时任务 | kb2 两条治理 cron（**3am 置信度重算 / 5am 上传清理**）；**90 天自动 stale 已停用**（改人工 `stale_detect_manual.sh`，避免「单向棘轮」误杀，见 N4） |
+| 服务 | kb2-web `:3027`（PID 3363921）· kb2-wiki `:3006` · hermes-wiki `:3004` · tianzhi `:3037` 全部 **200** |
+| 数据治理（0904 口径） | 主库 `/home/ubuntu/kb-web/data/kb.db`；`PRAGMA integrity_check` = **ok**、`foreign_key_check` = **0 违规**；`profile_confidence` 覆盖 **可检索集 179/180 = 99.4%**（**active 183/184**；全表 256 有值 / 360 为 NULL，NULL 集中在 superseded 历史行）—— 唯一缺口 `1e13f9e0`（JJF 1059.1-2012，新上传未生成 profile，**非治理回退**） |
+
+**本节取数命令（可复现）**：
+```bash
+sqlite3 /home/ubuntu/kb-web/data/kb.db "SELECT status,COUNT(*) FROM documents GROUP BY status;"
+sqlite3 /home/ubuntu/kb-web/data/kb.db "SELECT COUNT(*) FROM documents WHERE status='active' AND searchable=1;"
+# pg 侧（DSN 见 backend/.env 的 pgvector_database_url）
+psql "$PGVECTOR_DATABASE_URL" -c "SELECT count(*), count(DISTINCT doc_id) FROM vector_chunks WHERE metadata->>'registry'='1';"
+```
 
 ### 历史状态（2026-09-17 存档）
 
@@ -615,7 +680,7 @@ Phase 3 (2周): 前端深度重构（Loop工程 + 查询工作台）
 ## 🗺️ 相关链接
 
 - [kb2-web Wiki](http://rogerz-ROOT2713-7y3p7v5g8xtq-3006.us.kg/) — 项目架构图/改造档案/更新日志
-- [Hindsight](https://github.com/vectorize-io/hindsight) — 检索后端
+- [pgvector](https://github.com/pgvector/pgvector) — 向量检索后端（PostgreSQL 16 扩展）
 - [MinerU](https://github.com/opendatalab/MinerU) — PDF 文档解析
 - [anti-ai-plastic-ui](https://github.com/NousResearch/hermes-agent) — 前端设计规范参考
 
