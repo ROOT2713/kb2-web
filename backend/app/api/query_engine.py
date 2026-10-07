@@ -50,6 +50,48 @@ logger = logging.getLogger(__name__)
 _REJECT_MSG_KNOWLEDGE_GAP = "知识库中未找到与您问题直接相关的信息。请尝试换一种方式提问，或确认您的查询范围。"
 _REJECT_MSG_LOW_COVERAGE = "知识库中未找到与您问题直接相关的信息。请尝试换一种方式提问，或确认您的查询范围。"
 
+# ── 旧 bank 名 → 业务键 映射（2026-07-21 合并遗留）─────────────────────
+# documents.bank 列在历史演进中同时存在 legacy 键（standards / industry_docs /
+# project_docs / traffic / 咨询 ...）与业务键本身。检索结果按请求 bank 过滤时，
+# 需先把 legacy 键映射回业务键，否则映射不到 ⇒ `continue` 丢弃全部（静默返 0）。
+#
+# [FIX 2026-10-07] 补 project_docs→project 与 traffic→industry：
+#   实证 kb.db：documents.bank='project_docs' 3 篇（active∧searchable=1）、
+#   'traffic' 1 篇，此前未登记 ⇒ /api/query bank=project 恒返 0 sources
+#   （BM25 检索层已命中 3 篇，全被本过滤层丢弃）。
+#   口径与 retrieval.LEGACY_BANK_TO_HS / consolidated_db_bank_values 对齐；
+#   回归锁见 tests/unit/test_query_engine_bank_filter.py。
+LEGACY_BANK_TO_BIZKEY = {
+    "standards": "industry", "industry_docs": "industry", "tech_guides": "industry",
+    "general": "industry", "checklist": "industry", "templates": "industry",
+    "methodology": "industry", "business": "industry", "traffic": "industry",
+    "咨询": "personal", "xhs": "personal", "kb_xhs": "personal",
+    "management": "project", "consulting": "project", "project_docs": "project",
+}
+
+
+def bank_visible_for_request(doc_bank_value: str | None, requested_bank: str) -> bool:
+    """检索结果过滤判定：某文档在其 ``documents.bank`` 取值下，于请求 bank 是否可见。
+
+    收口原先内联在 ``_build_search_context`` 里的两段过滤（skip bank + 指定 bank），
+    提为纯函数以便单测。语义与收口前逐字等价：
+
+      - ``doc_bank_value == "skip"`` → 永不可见（无论请求哪个 bank）；
+      - 请求 ``bank == "all"`` 或物理库名（``kb_*``）→ 不做 bank 过滤；
+      - 文档 bank 值缺失，或恰等于请求 bank → 可见；
+      - 否则查 ``LEGACY_BANK_TO_BIZKEY`` 把 legacy 值映射回业务键再比对。
+
+    历史缺陷（2026-10-07）：映射表缺 ``project_docs``/``traffic`` ⇒ 请求
+    ``bank='project'`` 时把 3 篇项目文档全部丢弃（API 恒返 0 sources）。
+    """
+    if doc_bank_value == "skip":
+        return False
+    if requested_bank == "all" or requested_bank.startswith("kb_"):
+        return True
+    if doc_bank_value is None or doc_bank_value == requested_bank:
+        return True
+    return LEGACY_BANK_TO_BIZKEY.get(doc_bank_value) == requested_bank
+
 
 def _extract_high_signal_terms(query_keywords: list[str] | None) -> set[str]:
     """Extract high-signal terms from query keywords for query-doc relevance.
@@ -821,25 +863,10 @@ async def _build_search_context(
 
         logger.warning("[P0.5-DEBUG] processing doc_id=%s bank=%s title_map_has=%s", doc_id[:20], bank, doc_id in title_map)
 
-        # 过滤 skip bank
-        if bank_map.get(doc_id) == "skip":
+        # 过滤 skip bank + 指定 bank（兼容旧 bank 名，standards→industry 等）。
+        # 判定收口到纯函数 bank_visible_for_request（可单测，含 2026-10-07 修复）。
+        if not bank_visible_for_request(bank_map.get(doc_id), bank):
             continue
-
-        # 过滤指定 bank — 兼容旧 bank 名（standards→industry, industry_docs→industry 等）
-        if bank != "all":
-            if not bank.startswith("kb_"):
-                mapped = bank_map.get(doc_id)
-                if mapped is not None and mapped != bank:
-                    # 旧 bank 名映射（2026-07-21 合并后遗留）
-                    _old_bank_map = {
-                        "standards": "industry", "industry_docs": "industry", "tech_guides": "industry",
-                        "general": "industry", "checklist": "industry", "templates": "industry",
-                        "methodology": "industry", "business": "industry",
-                        "咨询": "personal", "xhs": "personal", "kb_xhs": "personal",
-                        "management": "project", "consulting": "project",
-                    }
-                    if _old_bank_map.get(mapped) != bank:
-                        continue
 
         # 提取文档名
         doc_name = ""
