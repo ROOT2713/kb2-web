@@ -28,14 +28,18 @@ def seeded_db(db_session, monkeypatch):
     """
     # 2 个规范 + 1 个非规范
     docs = [
+        # ⚠️ 必须显式设 hs_bank：Document.hs_bank 的模型默认值是 "kb_general"
+        # （models/document.py:24）。检索侧按 bank 过滤恒以 hs_bank 为准
+        # （db_bank_scope），fixture 若不设会让 bank/hs_bank 自相矛盾
+        # （如 bank='standards' 却 hs_bank='kb_general'），既非现实也不可信。
         Document(doc_id="d-gb-001", title="GB 50174-2017 数据中心设计规范",
-                 bank="standards", searchable=1),
+                 bank="standards", hs_bank="kb_standard", searchable=1),
         Document(doc_id="d-gb-002", title="GB/T 28449-2018 等级保护测评要求",
-                 bank="standards", searchable=1),
+                 bank="standards", hs_bank="kb_standard", searchable=1),
         Document(doc_id="d-misc",   title="小红书笔记示例",  # 不匹配 _STD_PATTERN
-                 bank="general", searchable=1),
+                 bank="general", hs_bank="kb_general", searchable=1),
         Document(doc_id="d-disabled", title="GB 50116-2013 火警规范",
-                 bank="standards", searchable=0),  # searchable=0 应被排除
+                 bank="standards", hs_bank="kb_standard", searchable=0),  # searchable=0 应被排除
     ]
     chunks = [
         ParentChunk(doc_id="d-gb-001", parent_idx=0, parent_text="第一章 总则。本规范适用于" + "x"*100),
@@ -47,9 +51,15 @@ def seeded_db(db_session, monkeypatch):
     for c in chunks: db_session.add(c)
     db_session.commit()
 
-    # Repoint SessionLocal to test session factory
+    # Repoint SessionLocal to test session factory.
+    # ⚠️ 必须同时 patch query_engine：_assemble_standard_contents_meta 定义在
+    # query_engine 模块、用其自身模块的 SessionLocal；只 patch query.py 时该函数
+    # 会另开 session 而看不见本夹具 seed 的数据 ⇒ 任何「断言空列表」的用例都会
+    # **假性通过**（vacuous，2026-10-07 发现）。
     import app.api.query as q_mod
+    import app.api.query_engine as qe_mod
     monkeypatch.setattr(q_mod, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(qe_mod, "SessionLocal", lambda: db_session)
     return db_session
 
 
@@ -88,12 +98,44 @@ def test_assemble_standard_contents_meta_dedup(seeded_db):
 
 
 def test_assemble_standard_contents_meta_bank_filter(seeded_db):
-    """bank=general 时不应返回 standards 文档。"""
+    """bank=general 时不应返回 standards 文档（hs_bank 维度）。"""
     sources = [
-        {"doc": "GB 50174-2017 数据中心设计规范", "doc_id": "d-gb-001"},  # standards bank
+        {"doc": "GB 50174-2017 数据中心设计规范", "doc_id": "d-gb-001"},  # hs_bank=kb_standard
     ]
     result = _assemble_standard_contents_meta(sources, bank="general")
     assert result == []
+
+
+def test_assemble_standard_contents_meta_hs_bank_decides_visibility(seeded_db):
+    """正控（2026-10-07）：可见性由 hs_bank 决定，不由 legacy bank 列决定。
+
+    回归背景：检索侧原按 legacy ``documents.bank`` 列过滤，对 project/personal
+    恒 0 命中；收口为 ``db_bank_scope``（按 hs_bank）。本用例证明：
+    同一份 legacy bank 取值（standards），只要 hs_bank 落入请求 bank 范围即可见。
+    """
+    from app.models.document import Document, ParentChunk
+    seeded_db.add(Document(doc_id="d-gb-gen", title="GB 50000-2024 综合标准",
+                           bank="standards", hs_bank="kb_general", searchable=1))
+    seeded_db.add(ParentChunk(doc_id="d-gb-gen", parent_idx=0,
+                              parent_text="综合标准条文" + "q" * 120))
+    seeded_db.commit()
+
+    sources = [
+        {"doc": "GB 50000-2024 综合标准", "doc_id": "d-gb-gen"},        # hs_bank=kb_general
+        {"doc": "GB 50174-2017 数据中心设计规范", "doc_id": "d-gb-001"},  # hs_bank=kb_standard
+    ]
+    # 请求 general：只放行 hs_bank=kb_general 的（与 legacy bank 列无关）
+    r_gen = _assemble_standard_contents_meta(sources, bank="general")
+    assert [x["doc_id"] for x in r_gen] == ["d-gb-gen"]
+    # 请求 industry（范围 = kb_standard…kb_template，含 kb_general）：两者皆可见
+    r_ind = _assemble_standard_contents_meta(sources, bank="industry")
+    assert sorted(x["doc_id"] for x in r_ind) == ["d-gb-001", "d-gb-gen"]
+    # 请求 project（范围仅 kb_project）：两者皆不可见
+    r_proj = _assemble_standard_contents_meta(sources, bank="project")
+    assert r_proj == []
+    # bank=all：不过滤，两者皆可见
+    r_all = _assemble_standard_contents_meta(sources, bank="all")
+    assert sorted(x["doc_id"] for x in r_all) == ["d-gb-001", "d-gb-gen"]
 
 
 def test_assemble_standard_contents_meta_empty_input(seeded_db):

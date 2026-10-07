@@ -25,6 +25,7 @@ from app.services.retrieval import (
     apply_tiebreaker_sort,
     bm25_search,
     build_bm25_index,
+    db_bank_scope,
     keyword_rerank,
     llm_rerank,
     cross_encoder_rerank,
@@ -1155,9 +1156,9 @@ def _assemble_standard_contents_meta(sources: list, bank: str = "all") -> list[d
         "LEFT JOIN parent_chunks pc ON pc.doc_id = d.doc_id "
         f"WHERE d.doc_id IN ({placeholders}) AND d.searchable = 1 AND d.status = 'active'"
     )
-    if bank != "all":
-        sql += " AND d.bank = :bank"
-        params["bank"] = bank
+    _bf, _bp = db_bank_scope(bank, "d.hs_bank")
+    sql += _bf
+    params.update(_bp)
     sql += " GROUP BY d.doc_id, d.title"
 
     db = SessionLocal()
@@ -1341,9 +1342,9 @@ def _generate_query_suggestions(
             conditions = " OR ".join(like_clauses)
             sql = f"""SELECT doc_id, title FROM documents
                 WHERE searchable=1 AND status='active' AND bank != 'skip' AND ({conditions})"""
-            if bank != "all":
-                sql += " AND bank=:bank"
-                params["bank"] = bank
+            _bf, _bp = db_bank_scope(bank, "hs_bank")
+            sql += _bf
+            params.update(_bp)
             sql += " LIMIT 5"
             rows = db.execute(sa_text(sql), params).fetchall()
             for row in rows:

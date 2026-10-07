@@ -140,6 +140,28 @@ def doc_bank_filter(bank_key: str) -> list[str]:
     return [f"kb_{bank_key}"]
 
 
+def db_bank_scope(bank_key: str, col: str = "hs_bank", prefix: str = "bh") -> tuple[str, dict]:
+    """按 bank 限定 ``documents.hs_bank`` 范围的 SQL 片段 + 绑定参数（唯一口径）。
+
+    返回 ``("", {})`` 表示不限定（``all`` / ``kb`` / 空 bank）。
+
+    背景（2026-10-07）：多处旧写法拿**请求业务键**直比 ``documents.bank`` 列
+    （``AND bank=:bank``），而该列值域是 legacy 键（standards / industry_docs /
+    project_docs / kb_xhs / 咨询 …）⇒ 对 ``project`` / ``personal`` 恒 0 命中，
+    静默漏文档（BM25 主索引、费率表定位、标准元数据拼装、相关文档召回等）。
+    统一改用 ``hs_bank``（ingest 写入、100% 填充）并经 ``doc_bank_filter`` 取
+    该 bank 的检索范围，与 standard_boost / query.py 既有 FIX-001 写法一致。
+
+    :param col: 限定列表达式（含表别名，如 ``"d.hs_bank"``；无别名用 ``"hs_bank"``）。
+    :param prefix: 绑定参数前缀，避免同一 params dict 多次调用撞名。
+    """
+    hs = doc_bank_filter(bank_key)
+    if not hs:
+        return "", {}
+    holders = ", ".join(f":{prefix}{i}" for i in range(len(hs)))
+    return f" AND {col} IN ({holders})", {f"{prefix}{i}": v for i, v in enumerate(hs)}
+
+
 # ── 聚合键 → documents.bank 取值（唯一口径）──────────────────────────
 def consolidated_db_bank_values(bank_key: str) -> list[str] | None:
     """聚合业务键 → ``documents.bank`` 实际取值列表；非聚合键返回 None。
@@ -547,7 +569,7 @@ async def build_bm25_index(bank: str = "all") -> tuple:
             if bank == "all":
                 row = _count_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND status='active'")).fetchone()
             else:
-                row = _count_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND status='active' AND bank=:bank"), {"bank": bank}).fetchone()
+                row = _count_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND status='active'" + db_bank_scope(bank)[0]), db_bank_scope(bank)[1]).fetchone()
             current_ts = str(row[0]) if row and row[0] else ""
             current_count = row[1] if row else 0
             cached_ts = cache.get("updated_at", "")
@@ -589,11 +611,10 @@ async def build_bm25_index(bank: str = "all") -> tuple:
                 FROM parent_chunks p
                 JOIN documents d ON p.doc_id = d.doc_id
                 WHERE length(p.parent_text) > 50
-                  AND d.bank = :bank
                   AND d.searchable = 1
                   AND d.status = 'active'
                   AND (d.category IS NULL OR d.category = '' OR d.category NOT IN ('daily', 'news'))
-            """), {"bank": bank}).fetchall()
+            """ + db_bank_scope(bank, "d.hs_bank")[0]), db_bank_scope(bank, "d.hs_bank")[1]).fetchall()
         pdb.close()
         pdb = None
 
@@ -672,7 +693,7 @@ async def build_bm25_index(bank: str = "all") -> tuple:
         if bank == "all":
             _ts_row = _ts_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND status='active'")).fetchone()
         else:
-            _ts_row = _ts_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND status='active' AND bank=:bank"), {"bank": bank}).fetchone()
+            _ts_row = _ts_db.execute(text("SELECT MAX(updated_at), COUNT(*) FROM documents WHERE searchable=1 AND status='active'" + db_bank_scope(bank)[0]), db_bank_scope(bank)[1]).fetchone()
         _ts_db.close()
         _ts_db = None
         _max_ts_str = str(_ts_row[0]) if _ts_row and _ts_row[0] else ""
@@ -1117,10 +1138,8 @@ def _find_rate_table_snippet(tier_keywords: list, bank: str = "all") -> tuple:
                 _cond_parts.append(f"p.parent_text LIKE :{key}")
                 _params[key] = f"%{kw}%"
             _conditions = " OR ".join(_cond_parts)
-            _bank_filter = ""
-            if bank and bank != "all":
-                _bank_filter = " AND d.bank = :bank"
-                _params["bank"] = bank
+            _bank_filter, _bp = db_bank_scope(bank, "d.hs_bank")
+            _params.update(_bp)
             _sql = f"""
                 SELECT d.doc_id, d.title, p.parent_text
                 FROM documents d
@@ -1149,10 +1168,8 @@ def _find_rate_table_snippet(tier_keywords: list, bank: str = "all") -> tuple:
             _conditions_parts.append(f"p.parent_text LIKE :{key}")
             _params[key] = f"%{kw}%"
         _conditions = " OR ".join(_conditions_parts)
-        _bank_filter = ""
-        if bank and bank != "all":
-            _bank_filter = " AND d.bank = :bank"
-            _params["bank"] = bank
+        _bank_filter, _bp = db_bank_scope(bank, "d.hs_bank")
+        _params.update(_bp)
         _sql = f"""
             SELECT d.doc_id, d.title, p.parent_text
             FROM documents d
