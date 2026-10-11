@@ -568,9 +568,55 @@ N5 清理出的 18 个僵尸任务，**先要回答「这些内容到底入库�
 
 | # | 问题 | 影响 | 状态 |
 |---|------|------|------|
-| A | pgvector 0.6.0 在 **`force_generic_plan`** 下 HNSW 静默返 0（实测 `kb_general` 4 条 / `kb_project` 29 条，**比慢更重**） | 应用当前**未设** `plan_cache_mode`（0 命中），风险为潜在 | 未修（已知限制） |
+| A | ~~pgvector 0.6.0 在 **`force_generic_plan`** 下 HNSW 静默返 0~~ **（2026-10-12 已修）** | generic 计划 `$1`(bank) 未知 ⇒ 用不上部分索引 `idx_vc_kb_*_pr` ⇒ 退回全量索引 ⇒ 静默丢召回（实测 `kb_general` custom 10 → generic 3 行，3/3 稳定）。**修复**：`ALTER DATABASE hindsight SET plan_cache_mode='force_custom_plan'` + 回归测试 `tests/integration/test_pgvector_plan_mode.py`（3 用例，含风险证明 + 突变核验） | 已修（2026-10-12） |
 | B | **谓词耦合巡检脚本**未建 —— 索引谓词（`bank='kb_x'`）与代码 WHERE 若漂移，部分索引会**静默失效**（退回全量索引，不报错） | 后续若改 `vector_repo` 的 WHERE 可能悄悄退化 | 待建 |
 | C | 费率表查询：`industry` 检索范围含 `kb_general`/`kb_standard`（设计意图，见 `banks.json`），理论上可能混入综合/标准库的费用表 | 结果相关性 | 待裁决（是否收紧为精确 bank） |
+
+---
+
+## 🔧 检索计划模式锁定修复记录（2026-10-12）
+
+**本轮定性（一句话）**：README 未修项 **A** 的机制查清并修复 —— pgvector 部分索引在
+**generic 计划**下用不上，导致 KNN 检索**静默丢召回**（非报错）；修法为一条数据库设置，
+**不改任何应用代码**。
+
+### 1. 机制（实测，单变量 A/B）
+
+检索 SQL（`backend/app/repositories/vector_repo.py`）为 CTE + `ORDER BY embedding <=> $2 LIMIT $3`；
+部分索引 `idx_vc_kb_*_pr` 谓词 = `bank = 'kb_x' AND metadata->>'registry' = '1'`。
+
+| plan_cache_mode | 索引 | KNN 返回行数（kb_general，确定性向量） |
+|---|---|---|
+| `force_custom_plan` | `idx_vc_kb_general_pr`（部分索引） | **10** |
+| `force_generic_plan` | `idx_vc_embedding`（全量索引） | **3** |
+
+- generic 计划下 `$1`(bank) 未知 ⇒ 部分索引谓词不可证 ⇒ 退回全量索引 ⇒ 召回静默缩水。
+- **稳定性**：确定性取样（`ORDER BY doc_id, chunk_index LIMIT 1`）下 kb_general `10 → 3` **3/3 次一致**；其余 4 个 bank 当前 10/10。
+- **纠错**：此前「静默返 0」的表述不准确 —— 实测为**静默丢召回**（依 bank/向量可为 0～满额）；psql `PREPARE`（真 generic）路径实测为 0，asyncpg 缓存计划路径实测为 3。
+- **判别陷阱**：`EXPLAIN` **无法**判别本问题 —— 它对该参数化语句强制 custom 规划，两种模式下都显示部分索引；判别必须看**真实执行行数**。
+
+### 2. 修法
+
+```sql
+ALTER DATABASE hindsight SET plan_cache_mode = 'force_custom_plan';
+```
+- **不改应用代码**（未加配置开关，遵循「不加开关」决策）；`hnsw.ef_search=100` 为库级既有设置。
+- 新增回归测试 `backend/tests/integration/test_pgvector_plan_mode.py`（需 `--run-integration`）：
+  ① 设置已锁定；② 每 bank KNN 返满额；③ **风险证明**（generic 下至少一 bank 召回 < custom，pgvector 修好后转红提示解除锁定）。
+
+### 3. 三层验证
+
+| 层 | 证据 |
+|----|------|
+| ① 磁盘 | `pg_db_role_setting` 含 `plan_cache_mode=force_custom_plan`；测试文件落盘 |
+| ② 进程加载 | 新连接 `SHOW plan_cache_mode` = `force_custom_plan`（现有连接池旧连接仍为 auto，待回收/重启） |
+| ③ 运行时 | `pytest tests/integration/test_pgvector_plan_mode.py --run-integration` **3 passed**；全量单测 **6 failed / 788 passed / 67 skipped / 52 errors**，与基线（6/788/64/52）**零回归**（+3 = 新增测试默认 skip） |
+| 突变核验 | 变异体「期望 auto」「期望每 bank <10 行」**2/2 变红** |
+
+### 4. 回滚 / 授权
+
+- 回滚：`ALTER DATABASE hindsight RESET plan_cache_mode;`
+- 生效范围：新连接立即生效；**现有连接池旧连接需重启或自然回收后统一**（重启 kb2-web 为独立授权点）。
 
 ---
 
