@@ -569,7 +569,7 @@ N5 清理出的 18 个僵尸任务，**先要回答「这些内容到底入库�
 | # | 问题 | 影响 | 状态 |
 |---|------|------|------|
 | A | ~~pgvector 0.6.0 在 **`force_generic_plan`** 下 HNSW 静默返 0~~ **（2026-10-12 已修）** | generic 计划 `$1`(bank) 未知 ⇒ 用不上部分索引 `idx_vc_kb_*_pr` ⇒ 退回全量索引 ⇒ 静默丢召回（实测 `kb_general` custom 10 → generic 3 行，3/3 稳定）。**修复**：`ALTER DATABASE hindsight SET plan_cache_mode='force_custom_plan'` + 回归测试 `tests/integration/test_pgvector_plan_mode.py`（3 用例，含风险证明 + 突变核验） | 已修（2026-10-12） |
-| B | **谓词耦合巡检脚本**未建 —— 索引谓词（`bank='kb_x'`）与代码 WHERE 若漂移，部分索引会**静默失效**（退回全量索引，不报错） | 后续若改 `vector_repo` 的 WHERE 可能悄悄退化 | 待建 |
+| B | ~~**谓词耦合巡检脚本**未建~~ **（2026-10-12 已修）** | 索引谓词（`bank='kb_x'` + `registry='1'`）与代码 WHERE 若漂移，部分索引会**静默失效**（退回全量索引，不报错）。**修复**：`backend/scripts/check_index_predicate_drift.py`（只读巡检，E1–E5 五项）+ 单测 19 例 + CI job `index-drift`（离线快照，无需 DB）；**并补齐 DDL 来源** `create_partial_vector_indexes.py`（原先 5 个部分索引不在仓库任何脚本里，库重建即静默消失） | 已修（2026-10-12） |
 | C | 费率表查询：`industry` 检索范围含 `kb_general`/`kb_standard`（设计意图，见 `banks.json`），理论上可能混入综合/标准库的费用表 | 结果相关性 | 待裁决（是否收紧为精确 bank） |
 
 ---
@@ -617,6 +617,61 @@ ALTER DATABASE hindsight SET plan_cache_mode = 'force_custom_plan';
 
 - 回滚：`ALTER DATABASE hindsight RESET plan_cache_mode;`
 - 生效范围：新连接立即生效；**现有连接池旧连接需重启或自然回收后统一**（重启 kb2-web 为独立授权点）。
+
+---
+
+## 🧭 部分索引谓词漂移巡检（2026-10-12）
+
+**本轮定性（一句话）**：未修项 **B** 收口 —— 把「索引谓词与代码 WHERE 脱钩 ⇒ 部分索引静默失效」
+从**只能靠人记得**变成 **CI 可拦截**；并查出配套硬缺口：5 个部分索引**原本不在仓库任何脚本/迁移里**
+（2026-10-07 手工 CREATE）⇒ 库一旦从 `create_pgvector_tables.py` 重建就**静默消失**，已补齐 DDL 来源。
+
+### 1. 风险模型
+
+检索主路径依赖 5 个部分 HNSW 索引 `idx_vc_kb_{general,industry,project,standard,xhs}_pr`，
+其谓词必须与代码检索 WHERE 严格对齐：
+
+```
+代码 vector_repo.py:  bank = $1 AND embedding IS NOT NULL AND metadata->>'registry' = '1'
+索引 indexdef:        bank = 'kb_x'           AND (metadata ->> 'registry') = '1'
+```
+
+任一侧漂移（改代码没改索引 / 改索引没改代码 / registry 值变更 / 新增 bank 无索引），
+pgvector **静默退回全量索引** —— 不报错、不告警，召回悄悄缩水（与 A 同一失效类）。
+
+### 2. 交付物
+
+| 文件 | 作用 |
+|------|------|
+| `backend/scripts/check_index_predicate_drift.py` | 只读巡检（watchdog：一致则静默）。E1 代码缺 bank 过滤／E2 索引 registry 谓词与代码不一致／E3 有数据 bank 无部分索引（覆盖缺口）／E4 陈旧索引／E5 无 DDL 来源。支持 `--offline-snapshot`（CI 无 DB）、`--dump-snapshot`、`--strict`。退出码 0 一致 / 1 检出漂移 / 2 巡检本身失败 |
+| `backend/scripts/create_partial_vector_indexes.py` | 幂等 DDL（`CREATE INDEX CONCURRENTLY IF NOT EXISTS`，手工运行、**不**进部署）。谓词从 `vector_repo.py` **推导**（单一来源）⇒ 代码改谓词后重跑即可对齐，不引入新漂移 |
+| `backend/scripts/baselines/vector_index_predicates.json` | 库结构快照（5 索引 + 5 bank 数据分布），CI 离线基线 |
+| `backend/tests/unit/test_index_predicate_drift.py` | 19 例纯函数单测（无需 DB / 无需 `.env`；CI 用 `--noconftest`） |
+| `.github/workflows/regression.yml` → job `index-drift` | CI 拦截：离线快照巡检（`--strict`）+ 单测 |
+
+### 3. 验证（全实测）
+
+| 层 | 证据 |
+|----|------|
+| ① 磁盘 / 单测 | `pytest tests/unit/test_index_predicate_drift.py` **19 passed**；全量 `pytest tests/` **6 failed / 807 passed / 67 skipped / 52 errors**，与基线（6/788/…）零回归（+19 = 本批新增） |
+| ② 运行时（连库） | `check_index_predicate_drift.py --verbose`：代码谓词 `registry=1`、5 索引全部 `bank=kb_*`+`registry=1`、有数据 bank 5 个全覆盖、`DDL 已声明: True` → **EXIT=0** |
+| ③ 出牙齿（突变） | 突变快照（`kb_general` 的 registry 1→2 + 删 `kb_project` 索引）→ 输出 **1 CRITICAL**（谓词漂移）+ **1 ALERT**（覆盖缺口）、**EXIT=1** |
+| CI 口径 | `--offline-snapshot … --strict` 在仓库根跑通、静默退出 0；单测 `--noconftest` 19 passed |
+
+### 4. 本轮踩到并修正的假阳性（如实记录）
+
+初版 E5「DDL 来源」检查**扫全仓库** `.py` ⇒ 被 `backend/tests/` 里的断言字符串
+（`"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vc_kb_xhs_pr …"`）满足 ⇒ **误报「已声明」**。
+修法：`_ddl_source_files()` 只扫合法 DDL 目录（`backend/scripts`、`backend/migrations`、`scripts`），
+显式排除 `tests/`、`docs/`；并把索引名改为 DDL 脚本里的**字面量**（`BANK_INDEX_NAMES`）逐名核对。
+已加 3 条守卫测试（真实仓库命中 / 未知索引名不得命中 / 测试目录不得计入），防复发。
+
+### 5. 维护约定
+
+- 新增 `kb_*` 物理库 → 在 `create_partial_vector_indexes.py::BANK_INDEX_NAMES` 登记并重建索引；
+  漏登记会被 E3 拦下。
+- 改 `vector_repo.py` 检索 WHERE 的谓词 → `test_extract_code_predicate_live_repo` 先红，
+  须同步 `create_partial_vector_indexes.py` 重建索引 + `--dump-snapshot` 刷新基线。
 
 ---
 

@@ -1,0 +1,16 @@
+{
+  "indexes": [
+    "CREATE INDEX idx_vc_kb_general_pr ON public.vector_chunks USING hnsw (embedding vector_cosine_ops) WITH (m='24', ef_construction='200') WHERE ((bank = 'kb_general'::text) AND ((metadata ->> 'registry'::text) = '1'::text))",
+    "CREATE INDEX idx_vc_kb_industry_pr ON public.vector_chunks USING hnsw (embedding vector_cosine_ops) WITH (m='24', ef_construction='200') WHERE ((bank = 'kb_industry'::text) AND ((metadata ->> 'registry'::text) = '1'::text))",
+    "CREATE INDEX idx_vc_kb_project_pr ON public.vector_chunks USING hnsw (embedding vector_cosine_ops) WITH (m='24', ef_construction='200') WHERE ((bank = 'kb_project'::text) AND ((metadata ->> 'registry'::text) = '1'::text))",
+    "CREATE INDEX idx_vc_kb_standard_pr ON public.vector_chunks USING hnsw (embedding vector_cosine_ops) WITH (m='24', ef_construction='200') WHERE ((bank = 'kb_standard'::text) AND ((metadata ->> 'registry'::text) = '1'::text))",
+    "CREATE INDEX idx_vc_kb_xhs_pr ON public.vector_chunks USING hnsw (embedding vector_cosine_ops) WITH (m='24', ef_construction='200') WHERE ((bank = 'kb_xhs'::text) AND ((metadata ->> 'registry'::text) = '1'::text))"
+  ],
+  "banks_with_data": {
+    "kb_standard": 18833,
+    "kb_industry": 2710,
+    "kb_xhs": 681,
+    "kb_general": 465,
+    "kb_project": 117
+  }
+}

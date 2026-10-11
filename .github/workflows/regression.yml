@@ -43,3 +43,28 @@ jobs:
             PASS_RATE=$(python3 -c "import json; d=json.load(open('$LAST_RESULT')); r=d.get('results',d.get('summary',{}).get('results',[])); print(f'{sum(1 for x in r if x.get(\"score\",0)>=7)/len(r)*100:.1f}')" 2>/dev/null || echo "0")
             echo "本次通过率: $PASS_RATE%"
           fi
+
+  index-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pytest
+        run: pip install pytest
+
+      # 部分索引谓词漂移巡检（离线快照，无需 DB）——未修项 B 的 CI 拦截
+      # 若 vector_repo.py 检索 WHERE 与索引谓词/快照脱钩，本步失败。
+      - name: Index predicate drift check (offline snapshot)
+        run: |
+          cd backend/scripts
+          python3 check_index_predicate_drift.py \
+            --offline-snapshot baselines/vector_index_predicates.json --strict
+
+      - name: Unit tests for drift tooling
+        # --noconftest：本测试只用 stdlib，跳过会加载 app.config（需 .env）的 conftest
+        run: python3 -m pytest backend/tests/unit/test_index_predicate_drift.py -q --noconftest
