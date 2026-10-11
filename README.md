@@ -627,13 +627,13 @@ N5 清理出的 18 个僵尸任务，**先要回答「这些内容到底入库�
 
 | 指标 | 数值 |
 |------|------|
-| 后端测试 | **776 passed / 64 skipped / 0 failed**（`pytest tests/unit`，21.9s 实测）—— 较 09-29 的 574 增 **202**（含本轮 bank 过滤回归锁 `test_query_engine_bank_filter.py` 40 例 + 同类收口回归） |
+| 后端测试 | 本地全量 `pytest tests/unit`（2026-10-11）**767 passed / 5 failed / 22 errors**（5 + 22 为**测试环境缺表 / 用例顺序**问题，单独运行即通过，非代码回归）；10-07 冻结基线为 **776 passed / 64 skipped / 0 failed** |
 | **回归基线** | **有效且已冻结**（`9dd2645`）—— `compare 100.0% (125/125)`、**回归项 0/22**、exit 0；非空 doc_id **220/220**、连跑两次 **Jaccard=1.00** |
-| 代码状态 | HEAD **`4b5da9d`**，已推送 `origin/main`（`2052912..4b5da9d`）；**kb2-web 已重启生效**（`MainPID 3363921`，`Application startup complete`，`/api/banks` 401） |
+| 代码状态 | HEAD **`0002797`**，已推送 `origin/main`（`b18c4a5..0002797`）；**kb2-web 已重启生效**（`MainPID 629349`，`Application startup complete`，`/api/banks` 401；文件 mtime `16:57:12` < 进程启动 `16:57:16`） |
 | 数据规模 | SQLite `documents` **616 总 / 184 active / 53 stale / 379 superseded**；对外**可检索** = active 且 `searchable=1` = **180**。pg `vector_chunks` **22,834**（`registry` 100%、**真孤儿 0**；覆盖 **237** 个 doc_id，恰 = 616 − 379 ⇒ superseded 无向量属**预期隔离态**，非缺失） |
 | 上传任务 | `upload_tasks` **done=59 / failed=20 / 非终态残留 0** |
 | 治理定时任务 | kb2 两条治理 cron（**3am 置信度重算 / 5am 上传清理**）；**90 天自动 stale 已停用**（改人工 `stale_detect_manual.sh`，避免「单向棘轮」误杀，见 N4） |
-| 服务 | kb2-web `:3027`（PID 3363921）· kb2-wiki `:3006` · hermes-wiki `:3004` · tianzhi `:3037` 全部 **200** |
+| 服务 | kb2-web `:3027`（PID 629349）· kb2-wiki `:3006` · hermes-wiki `:3004` · tianzhi `:3037` 全部 **200** |
 | 数据治理（0904 口径） | 主库 `/home/ubuntu/kb-web/data/kb.db`；`PRAGMA integrity_check` = **ok**、`foreign_key_check` = **0 违规**；`profile_confidence` 覆盖 **可检索集 179/180 = 99.4%**（**active 183/184**；全表 256 有值 / 360 为 NULL，NULL 集中在 superseded 历史行）—— 唯一缺口 `1e13f9e0`（JJF 1059.1-2012，新上传未生成 profile，**非治理回退**） |
 
 **本节取数命令（可复现）**：
