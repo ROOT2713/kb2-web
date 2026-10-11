@@ -214,7 +214,7 @@ def _install_monkeypatches(monkeypatch):
         pass
 
     # ── active Hindsight banks -> empty (no multi-bank recall) ──
-    async def _mock_get_active_hindsight_banks(min_docs=1):
+    async def _mock_get_active_banks(min_docs=1):
         return []
 
     # ── _hindsight_request -> safe stub (prevents real Hindsight calls
@@ -235,8 +235,8 @@ def _install_monkeypatches(monkeypatch):
     monkeypatch.setattr(query_mod, "cache_get_exact", _mock_cache_get_exact)
     monkeypatch.setattr(query_mod, "cache_get_semantic", _mock_cache_get_semantic)
     monkeypatch.setattr(query_mod, "cache_set", _mock_cache_set)
-    monkeypatch.setattr(query_mod, "_get_active_hindsight_banks",
-                        _mock_get_active_hindsight_banks)
+    monkeypatch.setattr(query_mod, "_get_active_banks",
+                        _mock_get_active_banks)
     monkeypatch.setattr(retrieval_mod, "_hindsight_request",
                         _mock_hindsight_request)
 

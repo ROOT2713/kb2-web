@@ -32,14 +32,20 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 # ── Bank 配置 ── 2026-07-21 合并为3大类 + 全部 ─────────────────────
+# 【B-1 重命名】物理向量库清单键 hindsight_banks → vector_banks（Hindsight 后端
+# 已于 2026-09-17 退役；该键语义 = "该逻辑 bank 检索哪些 pgvector 物理库"，与
+# Hindsight 服务无关）。"all" 显式全库清单提为常量，防止被 banks.json 覆盖项整键
+# 替换后静默丢失（= 曾致 kb_standard 漏检的 M2 根因）。
+ALL_VECTOR_BANKS = ["kb_standard", "kb_industry", "kb_tech", "kb_general",
+                    "kb_checklist", "kb_template", "kb_xhs", "kb_project"]
 _HARDCODED_BANKS = {
-    "all":     {"name": "全部",     "hindsight_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general", "kb_checklist", "kb_template", "kb_xhs", "kb_project"], "prompt": "通用政务信息化知识库"},
+    "all":     {"name": "全部",     "vector_banks": list(ALL_VECTOR_BANKS), "prompt": "通用政务信息化知识库"},
     "industry": {"name": "信息化行业",
                  "hindsight": "kb_industry",
-                 "hindsight_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general", "kb_checklist", "kb_template"],
+                 "vector_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general", "kb_checklist", "kb_template"],
                  "prompt": "你是政务信息化行业专家。精通GB/GA/T/EGAG/GDZW等国家及团体标准，覆盖等保测评、密码应用、监理服务、立项咨询、验收测评、会议系统、安防工程、数据中心等领域。回答时注重条款引用、合规要求和行业实操经验。"},
     "personal": {"name": "个人资讯",
-                 "hindsight_banks": ["kb_xhs"],
+                 "vector_banks": ["kb_xhs"],
                  "prompt": "你是互联网产品与技术内容分析专家。精通互联网产品评测、AI/Agent/DevOps 工具体验、技术趋势解读。回答时注重产品能力边界、真实体验和对比分析。善于从社区内容中提炼有实操价值的手法、技巧和避坑建议。"},
     "project":  {"name": "项目文档",
                  "hindsight": "kb_project",
@@ -79,8 +85,16 @@ def _normalize_bank_config(raw: dict) -> dict:
             item["name"] = item.pop("label")
         if "name" not in item:
             item["name"] = key
+        # 【B-1】旧键 hindsight_banks → vector_banks 过渡兼容
+        if "hindsight_banks" in item and "vector_banks" not in item:
+            item["vector_banks"] = item.pop("hindsight_banks")
         if key != "all" and not item.get("hindsight"):
             item["hindsight"] = f"kb_{key}"
+        # "all" 必须是全库清单的**超集**：banks.json 覆盖项整键替换，缺键或
+        # 给不完整清单都会静默漏检（= M2 根因）。此处做并集兜底（非仅补缺）。
+        if key == "all":
+            item["vector_banks"] = list(dict.fromkeys(
+                list(item.get("vector_banks") or []) + list(ALL_VECTOR_BANKS)))
         if "prompt" not in item:
             item["prompt"] = f"你是{item['name']}领域专家。"
         normalized[key] = item
@@ -116,7 +130,7 @@ def doc_bank_filter(bank_key: str) -> list[str]:
     旧逻辑按 ``documents.bank``（业务 key 列）做 ``AND bank=:bank`` 过滤，与 hs_bank
     值域不匹配，导致 bank != "all" 时 C1 标准号增强 / 标准全文接口恒 0 命中（P0）。
 
-    过滤值域取该 bank 的检索范围：``hindsight_banks``（聚合 bank）优先，
+    过滤值域取该 bank 的检索范围：``vector_banks``（聚合 bank）优先，
     退回 ``hindsight`` 单值，与 recall() 的检索口径保持一致。
     返回空列表表示不限定 bank（all / kb），由调用方判断。
     """
@@ -125,7 +139,7 @@ def doc_bank_filter(bank_key: str) -> list[str]:
     if bank_key.startswith("kb_"):
         return [bank_key]  # 已是 Hindsight bank 名，直接透传
     cfg = BANKS.get(bank_key) or {}
-    banks = cfg.get("hindsight_banks") or []
+    banks = cfg.get("vector_banks") or []
     if banks:
         return list(banks)
     hs = cfg.get("hindsight")
@@ -189,7 +203,7 @@ def consolidated_db_bank_values(bank_key: str) -> list[str] | None:
     cfg = BANKS.get(bank_key)
     if not isinstance(cfg, dict):
         return None
-    targets = set(cfg.get("hindsight_banks") or [])
+    targets = set(cfg.get("vector_banks") or [])
     if not targets:
         hs = cfg.get("hindsight")
         if not hs:
@@ -206,7 +220,7 @@ def consolidated_db_bank_values(bank_key: str) -> list[str] | None:
         hs = c.get("hindsight")
         if hs and hs in targets:
             vals.append(key)
-        vals.extend(b for b in (c.get("hindsight_banks") or []) if b in targets)
+        vals.extend(b for b in (c.get("vector_banks") or []) if b in targets)
     vals.extend(targets)
 
     seen: set[str] = set()
@@ -218,10 +232,6 @@ def consolidated_db_bank_values(bank_key: str) -> list[str] | None:
     return out
 
 
-
-# ── Active Hindsight banks 缓存 ────────────────────────────────────
-_active_hs_banks_cache = {"banks": None, "ts": 0}
-_ACTIVE_HS_BANKS_TTL = 300  # 5 minutes
 
 # ── 同义词缓存 ─────────────────────────────────────────────────────
 _synonym_cache = {"rows": [], "ts": 0}
@@ -235,63 +245,19 @@ def get_bank_config(bank_key: str) -> dict:
     return BANKS.get(bank_key, BANKS["all"])
 
 
-# ── Hindsight HTTP helper ──────────────────────────────────────────
-async def _hindsight_request(endpoint: str, method: str = "GET", json_data: dict = None, timeout: int = 30) -> dict:
-    """调用 Hindsight API"""
-    hs_url = settings.hindsight_url
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            if method == "POST":
-                resp = await client.post(f"{hs_url}{endpoint}", json=json_data)
-            elif method == "DELETE":
-                resp = await client.delete(f"{hs_url}{endpoint}")
-            else:
-                resp = await client.get(f"{hs_url}{endpoint}")
-        except httpx.TimeoutException:
-            raise Exception(f"Hindsight {method} {endpoint}: 请求超时（{timeout}s）")
-        except httpx.ConnectError:
-            raise Exception(f"Hindsight {method} {endpoint}: 无法连接（服务未启动？）")
-        except Exception as e:
-            raise Exception(f"Hindsight {method} {endpoint}: 网络异常: {e}")
+async def _get_active_banks(min_docs: int = 1) -> list:
+    """返回当前应检索的 pgvector 物理库清单（去重保序）。
 
-        if resp.status_code >= 400:
-            detail = ""
-            try:
-                detail = resp.json().get("detail", "")
-            except Exception:
-                pass
-            detail = detail or resp.text[:200] or f"HTTP {resp.status_code}"
-            raise Exception(f"Hindsight {method} {endpoint} returned {resp.status_code}: {detail}")
-        try:
-            return resp.json()
-        except Exception:
-            raise Exception(f"Hindsight {method} {endpoint}: 响应不是有效 JSON: {resp.text[:200]}")
-
-
-async def _get_active_hindsight_banks(min_docs: int = 1) -> list:
-    """Discover which Hindsight banks have documents. Returns list of bank_ids."""
-    # ── pgvector 后端 ──
-    if settings.vector_backend == "pgvector":
-        active = [cfg["hindsight"] for k, cfg in BANKS.items() if cfg.get("hindsight")]
-        return active or ["kb_standard"]
-
-    now = _time.time()
-    if _active_hs_banks_cache["banks"] and (now - _active_hs_banks_cache["ts"]) < _ACTIVE_HS_BANKS_TTL:
-        return _active_hs_banks_cache["banks"]
-
-    try:
-        result = await _hindsight_request("/v1/default/banks", timeout=10)
-        banks_data = result.get("banks", [])
-        active = [b["bank_id"] for b in banks_data if b.get("fact_count", 0) >= min_docs]
-        if not active:
-            active = ["kb"]  # fallback
-        _active_hs_banks_cache["banks"] = active
-        _active_hs_banks_cache["ts"] = now
-        logger.info("Active Hindsight banks: %s", active)
-        return active
-    except Exception as e:
-        logger.warning("Failed to discover Hindsight banks: %s", e)
-        return ["kb"]  # fallback
+    【B-1】原 _get_active_hindsight_banks 只读单值键 hindsight、忽略清单键
+    vector_banks ⇒ "all" 的 8 库清单塌缩成 4 库、静默漏检 kb_standard。
+    【B-2】Hindsight 后端已退役，仅保留 pgvector 路径。
+    """
+    active: list[str] = []
+    for _k, cfg in BANKS.items():
+        active.extend(cfg.get("vector_banks") or [])
+        if cfg.get("hindsight"):
+            active.append(cfg["hindsight"])
+    return list(dict.fromkeys(active)) or ["kb_standard"]
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -415,11 +381,11 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
             pg = store if isinstance(store, PgVectorStore) else PgVectorStore()
             all_banks = []
             for k, cfg in BANKS.items():
-                if cfg.get("hindsight_banks"):
-                    all_banks.extend(cfg["hindsight_banks"])
+                if cfg.get("vector_banks"):
+                    all_banks.extend(cfg["vector_banks"])
                 elif cfg.get("hindsight"):
                     all_banks.append(cfg["hindsight"])
-            all_banks = list(set(all_banks))  # dedup
+            all_banks = list(dict.fromkeys(all_banks))  # 保序去重（原 list(set()) 顺序随进程变）
             logger.warning("[RECALL-DEBUG] bank=%s hs_bank=%s all_banks=%s", bank, hs_bank, all_banks)
             # per-bank 下限保护：防止 limit 过小时每个 bank 只查几条
             per_bank_limit = max(limit // len(all_banks), 10)
@@ -441,6 +407,11 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
                     if key not in seen:
                         seen.add(key)
                         merged.append(r)
+            # 【FIX-RECALLSORT】跨 bank 合并后按 score 全局降序再截断。
+            # 原实现按 all_banks 固定顺序深度优先拼接，末尾 [:limit] 会把
+            # 排在后面的 bank 整体切掉（恒定的 bank 顺序偏置，非相关性）。
+            # 各 bank 的 score 同为 余弦相似度+ts_rank 加权，量纲一致，可全局比较。
+            merged.sort(key=lambda r: r.get("score") or 0.0, reverse=True)
             returned_doc_ids = []
             for r in merged:
                 tags = r.get("tags", [])
@@ -454,103 +425,6 @@ async def recall(query: str, limit: int = 5, bank: str = "kb", max_tokens: int =
             _r = await store.query(query_text=query[:1800], bank=hs_bank, top_k=limit)
             return _filter_invisible(_r)
 
-    # 2. "all" or "kb" (legacy) → query all active Hindsight banks in parallel
-    if bank in ("all", "kb") or not hs_bank:
-        active_banks = await _get_active_hindsight_banks()
-
-        per_bank_limit = max(limit // len(active_banks), 10)
-
-        async def _recall_one(hs: str):
-            try:
-                # Truncate query to ~450 tokens (roughly 1800 chars for Chinese text) to avoid Hindsight 500-token limit
-                _q_for_recall = query
-                if len(_q_for_recall) > 1800:
-                    _q_for_recall = _q_for_recall[:1800]
-                    logger.info("[RECALL] Query truncated from %d to 1800 chars for bank '%s'", len(query), hs)
-                recall_body = {"query": _q_for_recall, "max_tokens": max_tokens, "limit": per_bank_limit}
-                if doc_ids:
-                    recall_body["doc_ids"] = list(doc_ids)
-                r = await _hindsight_request(
-                    f"/v1/default/banks/{hs}/memories/recall",
-                    "POST",
-                    recall_body,
-                    timeout=15,  # Reduced from 30s to prevent long waits
-                )
-                return r.get("results", [])
-            except Exception as e:
-                logger.warning("recall(%s) failed: %s", hs, e)
-                return []
-
-        tasks = [_recall_one(hs) for hs in active_banks]
-        all_lists = await asyncio.gather(*tasks, return_exceptions=True)
-        merged = []
-        seen = set()
-        doc_counts = {}
-        for lst in all_lists:
-            if isinstance(lst, Exception):
-                logger.warning("recall task exception: %s", lst)
-                continue
-            for r in lst:
-                key = r.get("text", "")[:80]
-                if key not in seen:
-                    # per-doc 限制
-                    doc_id = None
-                    for t in r.get("tags", []):
-                        if t.startswith("doc_id:"):
-                            doc_id = t[7:]
-                            break
-                    # doc_ids 白名单过滤
-                    if doc_ids and doc_id and doc_id not in doc_ids:
-                        continue
-                    if doc_id:
-                        if doc_counts.get(doc_id, 0) >= max_chunks_per_doc:
-                            continue
-                        doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
-                    seen.add(key)
-                    merged.append(r)
-        return _filter_invisible(merged)[:limit]
-
-    # 3. Specific bank → use resolved Hindsight bank name
-    # Try to pass doc_ids to Hindsight API if supported
-    recall_body = {"query": query, "max_tokens": max_tokens, "limit": limit}
-    if doc_ids:
-        recall_body["doc_ids"] = list(doc_ids)
-    result = await _hindsight_request(
-        f"/v1/default/banks/{hs_bank}/memories/recall",
-        "POST",
-        recall_body,
-    )
-    results = result.get("results", [])
-    # Post-filter by doc_ids if Hindsight didn't respect the filter
-    if doc_ids and results:
-        _filtered_by_doc = []
-        for _r in results:
-            _did = None
-            for _t in _r.get("tags", []):
-                if _t.startswith("doc_id:"):
-                    _did = _t[7:]
-                    break
-            if _did and _did in doc_ids:
-                _filtered_by_doc.append(_r)
-        if _filtered_by_doc:
-            results = _filtered_by_doc
-    # per-doc 限制
-    if results and max_chunks_per_doc > 0:
-        _dc_raw = {}
-        _filtered = []
-        for _r in results:
-            _did = None
-            for _t in _r.get("tags", []):
-                if _t.startswith("doc_id:"):
-                    _did = _t[7:]
-                    break
-            if _did:
-                if _dc_raw.get(_did, 0) >= max_chunks_per_doc:
-                    continue
-                _dc_raw[_did] = _dc_raw.get(_did, 0) + 1
-            _filtered.append(_r)
-        results = _filtered
-    return _filter_invisible(results)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -650,7 +524,7 @@ async def build_bm25_index(bank: str = "all") -> tuple:
                 hs_bank_for_bm25 = bank_cfg.get("hindsight") or "kb"
                 bm25_hs_banks = [hs_bank_for_bm25] if hs_bank_for_bm25 else []
             else:
-                bm25_hs_banks = await _get_active_hindsight_banks()
+                bm25_hs_banks = await _get_active_banks()
             tasks = []
             for q in recall_queries:
                 for hs_bank in bm25_hs_banks:

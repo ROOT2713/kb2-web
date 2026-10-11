@@ -2,7 +2,7 @@
 
 Ported from: kb-web server.py stats() L4253-L4275,
              health() L2601-L2629 (already in main.py)
-             _get_active_hindsight_banks() L1803-L1823 (re-export from retrieval)
+             _get_active_banks() L1803-L1823 (re-export from retrieval)
              get_bank_config() L1824-L1829 (re-export from retrieval)
 """
 import logging
@@ -16,7 +16,7 @@ from app.config import settings
 from app.models.database import get_db
 from app.models.audit import AuditLog
 from app.repositories.vector_repo import get_vector_store
-from app.services.retrieval import _get_active_hindsight_banks, _hindsight_request, get_bank_config
+from app.services.retrieval import _get_active_banks, get_bank_config
 from app.services.cache_service import invalidate_bm25_cache
 from app.services.cost_tracker import get_stats as get_cost_stats
 
@@ -34,7 +34,7 @@ async def get_stats():
     """Knowledge base statistics (v1 L4253-L4275)."""
     if settings.vector_backend == "pgvector":
         store = get_vector_store()
-        active_banks = await _get_active_hindsight_banks()
+        active_banks = await _get_active_banks()
         total_nodes = 0
         total_documents = 0
         for bank_id in active_banks:
@@ -49,26 +49,6 @@ async def get_stats():
             "total_documents": total_documents,
             "total_links": 0,
         }
-    active_banks = await _get_active_hindsight_banks()
-    total_nodes = 0
-    total_documents = 0
-    total_links = 0
-    for bank_id in active_banks:
-        try:
-            result = await _hindsight_request(f"/v1/default/banks/{bank_id}/stats", timeout=10)
-            total_nodes += result.get("total_nodes", 0)
-            total_documents += result.get("total_documents", 0)
-            total_links += result.get("total_links", 0)
-        except Exception as e:
-            logger.warning("Stats: bank %s failed: %s", bank_id, e)
-    return {
-        "total_nodes": total_nodes,
-        "total_documents": total_documents,
-        "total_links": total_links,
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════
 # Route: POST /cache/invalidate — invalidate caches
 # ═══════════════════════════════════════════════════════════════════
 
@@ -100,7 +80,7 @@ async def admin_invalidate_cache(
 @router.get("/banks/active")
 async def list_active_banks():
     """List currently active Hindsight banks."""
-    active = await _get_active_hindsight_banks()
+    active = await _get_active_banks()
     return {"active_banks": active}
 
 
@@ -153,9 +133,6 @@ async def admin_health():
         if settings.vector_backend == "pgvector":
             store = get_vector_store()
             health_status["vector_store"] = "ok" if await store.health() else "degraded"
-        else:
-            result = await _hindsight_request("/health", timeout=5)
-            health_status["vector_store"] = "ok" if result.get("status") == "ok" else "degraded"
     except Exception:
         health_status["vector_store"] = "unreachable"
         health_status["status"] = "degraded"

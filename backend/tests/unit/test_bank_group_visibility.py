@@ -39,15 +39,15 @@ OBSERVED_DB_BANK_VALUES = [
 # 与生产 banks.json 逐字对齐的**测试夹具**（密封：不读外部文件）。
 FIXTURE_BANKS = {
     "all": {"name": "全部", "hindsight": None,
-            "hindsight_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general",
+            "vector_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general",
                                 "kb_checklist", "kb_template", "kb_xhs", "kb_project"],
             "prompt": "通用政务信息化知识库"},
     "industry": {"name": "信息化行业", "hindsight": "kb_industry",
-                 "hindsight_banks": ["kb_standard", "kb_industry", "kb_tech",
+                 "vector_banks": ["kb_standard", "kb_industry", "kb_tech",
                                      "kb_general", "kb_checklist", "kb_template"],
                  "prompt": "政务信息化行业专家"},
     "personal": {"name": "个人资讯", "hindsight": "kb_xhs",
-                 "hindsight_banks": ["kb_xhs"], "prompt": "内容分析专家"},
+                 "vector_banks": ["kb_xhs"], "prompt": "内容分析专家"},
     "project": {"name": "项目文档", "hindsight": "kb_project",
                 "prompt": "项目管理专家"},
     "general": {"name": "综合文件", "hindsight": "kb_general",
@@ -145,7 +145,7 @@ class TestNoDuplicates:
         ``test_every_observed_value_has_an_owner`` 负责。两条互补。
         """
         cfg = BANKS[key]
-        targets = set(cfg.get("hindsight_banks") or [])
+        targets = set(cfg.get("vector_banks") or [])
         if not targets and cfg.get("hindsight"):
             targets = {cfg["hindsight"]}
         for v in consolidated_db_bank_values(key) or []:
@@ -156,7 +156,7 @@ class TestNoDuplicates:
             elif v.startswith("kb_"):
                 assert v in targets, f"{key}: 物理库名 {v!r} 不在本组 {sorted(targets)}"
             elif v in BANKS:
-                sub = set(BANKS[v].get("hindsight_banks") or [])
+                sub = set(BANKS[v].get("vector_banks") or [])
                 hs = BANKS[v].get("hindsight")
                 assert (hs in targets) or (sub & targets), (
                     f"{key}: 业务键 {v!r}（hindsight={hs}）与本组 {sorted(targets)} 无交集"

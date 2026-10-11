@@ -46,10 +46,10 @@ __all__ = [
 # 聚合键：跨多库，没有单一物理库可写入
 AGGREGATE_BANK_KEYS = frozenset({"all"})
 
-# 已知物理库名集合：BANKS 的 hindsight 值 ∪ 各 hindsight_banks ∪ LEGACY 目标值
+# 已知物理库名集合：BANKS 的 hindsight 值 ∪ 各 vector_banks ∪ LEGACY 目标值
 KNOWN_HS_BANKS = frozenset(
     {cfg["hindsight"] for cfg in BANKS.values() if cfg.get("hindsight")}
-    | {b for cfg in BANKS.values() for b in (cfg.get("hindsight_banks") or [])}
+    | {b for cfg in BANKS.values() for b in (cfg.get("vector_banks") or [])}
     | set(LEGACY_BANK_TO_HS.values())
 )
 

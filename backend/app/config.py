@@ -44,11 +44,8 @@ class Settings(BaseSettings):
     db_path: Path = Path("./data/kb.db")
     banks_config_path: Path = Path("./data/banks.json")
 
-    # ── Hindsight ──
-    hindsight_url: str = "http://localhost:8080"
-
     # ── Vector Store ──
-    vector_backend: str = "hindsight"  # "pgvector" | "hindsight" — 切换开关
+    vector_backend: str = "pgvector"  # 仅支持 pgvector（Hindsight 后端已于 2026-09-17 退役）
     pgvector_database_url: str = ""  # 【FIX-003b】无默认口令——VECTOR_BACKEND=pgvector 时必须经 .env 显式提供
 
     # ── LLM ──

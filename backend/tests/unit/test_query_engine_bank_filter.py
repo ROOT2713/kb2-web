@@ -48,15 +48,15 @@ OBSERVED_DB_BANK_VALUES = [
 # 与生产 banks.json 逐字对齐的测试夹具（密封：不读外部文件）。
 FIXTURE_BANKS = {
     "all": {"name": "全部", "hindsight": None,
-            "hindsight_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general",
+            "vector_banks": ["kb_standard", "kb_industry", "kb_tech", "kb_general",
                                 "kb_checklist", "kb_template", "kb_xhs", "kb_project"],
             "prompt": "通用政务信息化知识库"},
     "industry": {"name": "信息化行业", "hindsight": "kb_industry",
-                 "hindsight_banks": ["kb_standard", "kb_industry", "kb_tech",
+                 "vector_banks": ["kb_standard", "kb_industry", "kb_tech",
                                      "kb_general", "kb_checklist", "kb_template"],
                  "prompt": "政务信息化行业专家"},
     "personal": {"name": "个人资讯", "hindsight": "kb_xhs",
-                 "hindsight_banks": ["kb_xhs"], "prompt": "内容分析专家"},
+                 "vector_banks": ["kb_xhs"], "prompt": "内容分析专家"},
     "project": {"name": "项目文档", "hindsight": "kb_project",
                 "prompt": "项目管理专家"},
     "general": {"name": "综合文件", "hindsight": "kb_general",
@@ -67,9 +67,9 @@ BIZKEYS = {k for k in FIXTURE_BANKS if k != "all"}
 
 
 def _targets_of(bizkey: str) -> set[str]:
-    """业务键的检索范围（hindsight_banks 优先，退回 hindsight 单值）。"""
+    """业务键的检索范围（vector_banks 优先，退回 hindsight 单值）。"""
     cfg = FIXTURE_BANKS[bizkey]
-    return set(cfg.get("hindsight_banks") or ([cfg["hindsight"]] if cfg.get("hindsight") else []))
+    return set(cfg.get("vector_banks") or ([cfg["hindsight"]] if cfg.get("hindsight") else []))
 
 
 @pytest.fixture(autouse=True)

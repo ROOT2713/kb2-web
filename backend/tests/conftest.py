@@ -159,5 +159,5 @@ def mock_get_active_banks(monkeypatch):
     async def _fake():
         return []
 
-    monkeypatch.setattr(retrieval, "_get_active_hindsight_banks", _fake)
+    monkeypatch.setattr(retrieval, "_get_active_banks", _fake)
     return _fake

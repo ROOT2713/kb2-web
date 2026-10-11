@@ -12,6 +12,11 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# 标题分块的 child 覆盖率下限（见 heading_chunk 末尾的 _guard_heading_coverage）。
+# child 才是被向量化/检索的单元；OCR 噪声会把标题检测打乱 → 切出大量几字符
+# 碎块 → child 覆盖率极低（实测某 GB 标准仅 3%）→ 标题分块不可信，回退 generic。
+HEADING_CHILD_MIN_COVERAGE = 0.80
+
 
 @dataclass
 class Chunk:
@@ -51,11 +56,34 @@ def heading_chunk(text: str, profile: dict, min_child_size: int = 200, max_paren
         return []  # caller should fall back to parent_child_chunk
 
     if doc_type == "gb_standard":
-        return _heading_chunk_gb(text, headings, min_child_size, max_parent_size)
+        res = _heading_chunk_gb(text, headings, min_child_size, max_parent_size)
     elif doc_type == "regulation":
-        return _heading_chunk_regulation(text, headings)
+        res = _heading_chunk_regulation(text, headings)
     else:
         return []
+    return _guard_heading_coverage(text, res, doc_type)
+
+
+def _guard_heading_coverage(text: str, res: list, doc_type: str,
+                            min_coverage: float = HEADING_CHILD_MIN_COVERAGE) -> list:
+    """校验标题分块的 child 覆盖率；过低则返回 []（调用方回退 generic 分块）。
+
+    为什么量 child 而非 parent：检索层（pgvector）向量化的是 pc["child"]，
+    parent 只作为上下文随 child 落 SQLite。当标题检测被噪声（OCR 讹字/页码/
+    目录）打乱时，会切出大量几字符的碎 section → child 合计极小，而 parent
+    因重叠/拼接仍可能 >100% → 用 parent 做守卫会漏判（实测某 GB 标准 child
+    仅覆盖 3%、parent 却 259%）。故此处以 child 覆盖率为准。
+    """
+    if not res:
+        return res
+    child_cov = sum(len(p.get("child") or "") for p in res) / max(len(text), 1)
+    if child_cov < min_coverage:
+        logger.warning(
+            "heading_chunk: child 覆盖率 %.1f%% < %.0f%% (doc_type=%s, chunks=%d) → 回退 generic 分块",
+            child_cov * 100, min_coverage * 100, doc_type, len(res),
+        )
+        return []
+    return res
 
 
 def _truncate_at_sentence_boundary(text: str, max_len: int = 800) -> str:

@@ -12,6 +12,8 @@ from app.services.chunking import (
     ExcelRowChunking,
     Chunk,
     _clause_split,
+    _guard_heading_coverage,
+    HEADING_CHILD_MIN_COVERAGE,
 )
 
 
@@ -402,3 +404,55 @@ class TestDictsToChunksMapping:
             # excel_row_chunk acts on empty list triggers fallback; if actual chunks produced, concept_id may be empty
             if c.text.strip():
                 pass
+
+
+# ═══════════════════════════════════════════════════════
+# heading_chunk child 覆盖率守卫（OCR 噪声 → 碎块 → 回退）
+# ═══════════════════════════════════════════════════════
+
+class TestHeadingChildCoverageGuard:
+    """守卫必须按 **child** 覆盖率判定（child 才是被向量化/检索的单元）。"""
+
+    def test_rejects_low_child_coverage(self):
+        """child 覆盖率过低 → 返回 [] 触发回退。"""
+        text = "x" * 10000
+        res = [{"child": "abc", "parent": "x" * 200, "child_index": 0,
+                "parent_index": 0, "section_hint": ""}]
+        assert _guard_heading_coverage(text, res, "gb_standard") == []
+
+    def test_keeps_adequate_child_coverage(self):
+        """child 覆盖率达标 → 原样返回。"""
+        text = "x" * 10000
+        res = [{"child": "x" * 9000, "parent": "x" * 9000, "child_index": 0,
+                "parent_index": 0, "section_hint": ""}]
+        assert _guard_heading_coverage(text, res, "gb_standard") == res
+
+    def test_uses_child_not_parent(self):
+        """关键判别：child 低但 parent 高时必须仍判定为不可信（量 child 而非 parent）。
+
+        突变把 child 换成 parent → 本用例变红（parent 9000/10000=90% 会放行）。
+        """
+        text = "x" * 10000
+        res = [{"child": "abc", "parent": "x" * 9000, "child_index": 0,
+                "parent_index": 0, "section_hint": ""}]
+        child_cov = 3 / len(text)
+        parent_cov = 9000 / len(text)
+        assert child_cov < HEADING_CHILD_MIN_COVERAGE <= parent_cov  # 前提成立
+        assert _guard_heading_coverage(text, res, "gb_standard") == []
+
+    def test_empty_res_passthrough(self):
+        assert _guard_heading_coverage("x" * 100, [], "gb_standard") == []
+
+    def test_heading_chunk_wired_to_guard(self):
+        """端到端接线：噪声标题切出碎块时 heading_chunk 必须返回 []。
+
+        构造噪声文本：每行都被 re_raw_numbered 当成标题 → 大量 1 行 section
+        → child 碎成很短 → 覆盖率远低于阈值。
+        """
+        lines = [f"{i} x" for i in range(1, 400)]  # 399 个 1~4 字符碎行
+        text = "\n".join(lines)
+        headings = [(1, f"{i} x", 0) for i in range(1, 400)]
+        profile = {"doc_type": "gb_standard", "headings": headings, "confidence": 0.9}
+        result = heading_chunk(text, profile)
+        assert result == [], f"噪声文本应触发回退，实得 {len(result)} 块"
+

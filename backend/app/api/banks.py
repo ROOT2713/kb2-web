@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.database import get_db
 from app.services.retrieval import (
-    BANKS, _active_hs_banks_cache, _hindsight_request, reload_bank_config,
+    BANKS, reload_bank_config,
     consolidated_db_bank_values,
 )
 
@@ -207,7 +207,7 @@ async def list_banks(db: Session = Depends(get_db)):
     #   ① 手写 _OLD_TO_NEW 表没写 'industry'/'traffic' ⇒ 'traffic' 落到
     #      bank_stats['traffic'] 后因不是配置键而被 all 总数漏掉（605≠606）；
     #   ② 每个键各自累加，无法保证「徽标数 == 列表条数」（实测 551 vs 495）。
-    # 注：industry 的 hindsight_banks 设计上包含 kb_general，故 industry 与
+    # 注：industry 的 vector_banks 设计上包含 kb_general，故 industry 与
     # general 两个条目存在**有意的重叠**，各项之和大于 all 属预期。
     banks = []
     total = sum(raw_stats.values())
@@ -293,16 +293,6 @@ async def delete_bank_api(
             {"ok": False, "detail": f"This bank has {count} documents, require confirm=true"},
             status_code=409,
         )
-
-    hs_bank_id = banks_cfg[bank_key].get("hindsight")
-
-    # 1. Delete Hindsight bank
-    if hs_bank_id:
-        try:
-            await _hindsight_request(f"/v1/default/banks/{hs_bank_id}", "DELETE")
-        except Exception as e:
-            logger.warning("Failed to delete Hindsight bank: %s", e)
-
     # 2. Move documents to general
     if count > 0:
         db.execute(

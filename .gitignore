@@ -66,3 +66,7 @@ frontend/tmp/
 *.bak
 *.bak.*
 0909/
+
+# Local delivery / scratch artifacts (不随代码版本化)
+kb2-delivery.zip
+tmp-cc-review/

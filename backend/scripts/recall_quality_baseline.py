@@ -94,8 +94,8 @@ def build_context_params(q: str) -> dict:
     """复刻 query.py L200-257 的参数构造（bank='all' 路径，无 session/kg）。"""
     bank = DEFAULT_BANK
     bank_cfg = BANKS.get(bank, {})
-    hindsight_banks = bank_cfg.get("hindsight_banks") or [bank_cfg.get("hindsight")]
-    hs_bank = ",".join(h for h in hindsight_banks if h)
+    _banks = bank_cfg.get("vector_banks") or ([bank_cfg["hindsight"]] if bank_cfg.get("hindsight") else [])
+    hs_bank = ",".join(b for b in _banks if b)
 
     q_recalled = expand_query_synonyms(q)
     q_bm25 = expand_amount_tiers(q_recalled)

@@ -116,6 +116,77 @@ class TestCleanHtmlResiduals:
         result = clean_html_residuals(text)
         assert "style=" not in result
 
+    def test_stray_angle_bracket_does_not_eat_following_text(self):
+        """OCR 讹字里的落单 '<a'（如 '<ACS)'）不得跨段吞并正文。
+
+        回归：旧正则 `</?(div|span|p|table|tr|td|th|img|a)[^>]*>` 的 `[^>]*`
+        可跨换行——线上 GB 50348-2018 文本因 'access control system<ACS)' 一次
+        被删 44,320 字符（含第 6.4.5 条正文）。
+        """
+        filler = "正文内容甲。" * 3000  # 18,000 字符夹在中间
+        text = "access control system<ACS)\n" + filler + "\n:>"
+        result = clean_html_residuals(text)
+        assert "正文内容甲。" in result, "落单 '<a' 吞掉了中间正文"
+        assert len(result) >= len(filler)
+
+    def test_plain_tags_still_stripped(self):
+        """收紧边界后，合法标签仍必须被移除。"""
+        for t in ["<div class='x'>内容</div>", "<p>段落</p>", "</span>",
+                  "<td colspan=2>", "<a href='#'>链接</a>"]:
+            r = clean_html_residuals(t)
+            assert "<" not in r and ">" not in r, f"{t!r} -> {r!r}"
+
+    def test_pipeline_preserves_text_around_stray_bracket(self):
+        """端到端：clean_pipeline 不得因落单 '<a' 丢正文。"""
+        filler = "条款正文内容乙。" * 2000
+        result = clean_pipeline("模式识别系统<ACS)\n" + filler + "\n:>结束")
+        assert "条款正文内容乙。" in result
+
+    def test_runaway_attribute_span_not_swallowed(self):
+        """属性段限长 2000：'<a ' 后隔 ~5000 字符才有 '>' 时不得吞掉中间正文。
+
+        突变把 `[^>]{0,2000}` 改回 `[^>]*` → 本用例变红。
+        """
+        text = "前缀 <a " + ("正文丁。" * 1500) + " > 后缀"  # 跨度 > 5000 字符
+        result = clean_html_residuals(text)
+        assert "正文丁。" in result, "无限的属性段吞掉了中间正文"
+
+    def test_non_tag_sequences_preserved(self):
+        """标签名后不是合法边界（如 '<divx>'、'<p3>'）时不得当标签删除。
+
+        突变去掉 `(?=[\\s/>])` 前瞻 → 本用例变红（限长兜不住这种短跨度）。
+        """
+        for s in ["<divx>", "<p3>", "<td2>"]:
+            assert s in clean_html_residuals(s), f"{s!r} 被误当标签删除"
+
+    def test_oversized_tag_not_deleted(self):
+        """超长伪标签（字符级硬限 1000）须原样保留，防整段正文被当属性删除。
+
+        复算 CC 的 PoC：'<a "' + 10 万字符 + '">' 曾被整段删除（100,006 字符）。
+        """
+        body = "正文戊。" * 20000  # 80,000 字符
+        t = '前文<a "' + body + '">后文'
+        r = clean_html_residuals(t)
+        assert "正文戊。" in r, "超长伪标签吞掉了正文"
+        assert len(r) >= len(body)
+
+    def test_normal_tag_still_stripped_under_cap(self):
+        """硬限内的正常标签仍须剥离（语料实测最长 28 字符）。"""
+        t = '<td colspan="1" rowspan="1">内容</td>'
+        r = clean_html_residuals(t)
+        assert "<td" not in r and "内容" in r
+
+    def test_gt_inside_quoted_attribute(self):
+        """属性值内含 '>' 时须匹配到标签真正的结尾（引用感知），不得提前结束。"""
+        t = '<a title="x > y">链接</a>'
+        r = clean_html_residuals(t)
+        assert r == "链接", f"引用感知失效，残留 {r!r}"
+
+    def test_table_lookalike_not_converted(self):
+        """'<tableABC' 类伪标签不得触发表格转换（边界前瞻）。"""
+        r = clean_html_residuals("前<tableABC>中</table>后")
+        assert "前" in r and "中" in r and "后" in r
+
 
 # ═══════════════════════════════════════════════════════
 # clean_encoding_errors
@@ -202,6 +273,18 @@ class TestCleanPipeline:
         result = clean_pipeline(text)
         assert "<div" not in result
         assert "test.com" not in result
+
+    def test_pipeline_watchdog_warns_on_massive_shrink(self, caplog):
+        """清洗后字符骤降（<80%）须告警，便于发现静默丢内容。"""
+        import logging
+        text = "正文内容。" * 2000  # 10,000 字符
+        with caplog.at_level(logging.WARNING, logger="app.utils.text_cleaning"):
+            # 注入一个会触发大幅删除的输入：落单 '<a' 本不该删，但为验证看门狗，
+            # 直接构造一个确实会被清洗掉大段的场景（海量水印行）。
+            shrink = "内容X。" * 1000 + "\n" + ("www.a.com\n" * 2000)
+            clean_pipeline(shrink)
+        assert any("降幅异常" in r.message or "降幅异常" in r.getMessage() for r in caplog.records), \
+            "看门狗未告警"
 
 
 # ═══════════════════════════════════════════════════════

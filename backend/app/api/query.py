@@ -51,7 +51,7 @@ from app.services.cache_service import (
 from app.services.generation import chat, logic_validate
 from app.services.retrieval import (
     BANKS,
-    _get_active_hindsight_banks,
+    _get_active_banks,
     expand_query_synonyms,
     bm25_search,
     build_bm25_index,
@@ -244,11 +244,11 @@ async def query(
 
     bank_cfg = get_bank_config(bank)
     bank_prompt = bank_cfg["prompt"]
-    # support hindsight_banks (list) for consolidated banks
-    hindsight_banks = bank_cfg.get("hindsight_banks")
+    # support vector_banks (list) for consolidated banks
+    vector_banks = bank_cfg.get("vector_banks")
     hs_bank: str = "kb"  # default: search all banks
-    if hindsight_banks:
-        hs_bank = ",".join(hindsight_banks)  # pass as comma-separated to _build_search_context
+    if vector_banks:
+        hs_bank = ",".join(vector_banks)  # pass as comma-separated to _build_search_context
     elif bank_cfg.get("hindsight"):
         hs_bank = bank_cfg["hindsight"]
 
@@ -301,7 +301,9 @@ async def query(
     query_keywords_raw = [w for w in _jieba_mod.cut(_q_for_kw) if len(w.strip()) > 1]
     query_keywords = expand_keywords(query_keywords_raw)
     if _tier_extra:
-        query_keywords = list(set(query_keywords + _tier_extra))
+        # 【保序去重】list(set()) 顺序随 PYTHONHASHSEED 变 → 关键词顺序漂移 →
+        # BM25/rerank/snippet 排名跨进程不一致（重启换答案）。改保序去重。
+        query_keywords = list(dict.fromkeys(query_keywords + _tier_extra))
 
     # （use_rerank / use_rerank_mode / cache_scope 已在函数头部计算，见 【FIX-R2-2】）
 

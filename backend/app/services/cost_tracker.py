@@ -25,6 +25,10 @@ MODEL_PRICES: dict[str, dict[str, float]] = {
     # DeepSeek-V4.1-Flash 规范模型名（2026-09-16 起）。legacy 名 deepseek-v4-flash /
     # deepseek-chat 由上游按 Flash 价转发，故三者同价。
     "deepseek-flash": {"input": 0.07, "output": 0.14},
+    # 2026-10-11 起 kb2-web 经 moyu 网关（moyu.cn/v1）调用；moyu 内部按 Flash 转发，
+    # 与 deepseek-v4-flash 同价。API 回包 model 名为小写 deepseek-v4.1-flash，两种写法都登记。
+    "DeepSeek-V4.1-flash": {"input": 0.07, "output": 0.14},
+    "deepseek-v4.1-flash": {"input": 0.07, "output": 0.14},
     "gpt-4o": {"input": 2.50, "output": 10.00},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
     "claude-sonnet-4": {"input": 3.00, "output": 15.00},

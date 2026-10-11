@@ -20,7 +20,7 @@ from app.middleware.jwt_auth import get_username_from_token
 from app.models.audit import AuditLog
 from app.services.generation import chat, logic_validate
 from app.services.retrieval import (
-    _get_active_hindsight_banks,
+    _get_active_banks,
     _find_rate_table_snippet,
     apply_tiebreaker_sort,
     bm25_search,
@@ -437,7 +437,7 @@ async def _build_search_context(
 
     # ── Hybrid Search: Dense + BM25 RRF 融合 ──
     all_recall_results = []
-    # support comma-separated hindsight_banks (consolidated bank groups)
+    # support comma-separated vector_banks (consolidated bank groups)
     if hs_bank and "," in hs_bank:
         hs_list = [h.strip() for h in hs_bank.split(",") if h.strip()]
         for hs in hs_list:
@@ -452,7 +452,7 @@ async def _build_search_context(
         except Exception as e:
             logger.warning("recall(%s) failed: %s", hs_bank, e)
     else:
-        active_banks = await _get_active_hindsight_banks()
+        active_banks = await _get_active_banks()
         for _hs_bank in active_banks:
             try:
                 bank_results = await recall(q_recalled, limit=20, bank=_hs_bank)
@@ -1517,7 +1517,7 @@ async def _generate_answer(
     parent_text_cache = {}
     parent_keys_to_fetch = set()
     for doc_id, facts in doc_facts.items():
-        for _, _, _, pidx in facts[:3]:
+        for _, _, _, pidx in facts[:5]:
             if pidx is not None:
                 parent_keys_to_fetch.add((doc_id, pidx))
 
@@ -1548,7 +1548,7 @@ async def _generate_answer(
     _summary_doc_ids = set()  # T1-3: 检测为摘要的 doc_id
 
     for doc_id, facts in doc_facts.items():
-        top_facts = facts[:3]
+        top_facts = facts[:5]
         doc_name = top_facts[0][1]
 
         # T1-3: 摘要文档检测（取首个 chunk 判断）
@@ -1576,6 +1576,49 @@ async def _generate_answer(
                     parent_texts_for_doc.append(pt)
 
         parts = []
+        # 【FIX-clause 2026-10-11 v2】条款/数值片段前置 —— 选窗按 query 关键词锚定 + 规范性数值打分。
+        # 治本（非本题特判）：v1 取"左起第一个数字/条款号"会选中与问题无关的数字（如 GB50348
+        # 条文里的 "30s/0.5h 存储更新间隔"），导致"保存期限不得少于九十日"这类真条款被漏摘。
+        # v2 对每个 fact 文本，以 query 关键词为锚点滑动取候选窗，按【命中查询词数 + 是否含
+        # 规范性数值(不应少于/不得少于/…N天|日|d…)】打分，取最高分且互不重叠的 ≤2 个窗前置。
+        # 依赖 query 自身词汇 → 对任意标准号/条款问句通用，冷门标准同样命中。
+        try:
+            _NUM = re.compile(
+                r"(?:不应|不得|禁止)(?:少|大|高|低|超|小)于|"
+                r"\d+\s*(?:d|天|日|h|min|%|℃|万元)"
+            )
+            _kws = [k for k in sorted(set(query_keywords or []), key=len, reverse=True) if len(k) >= 2]
+            _cands = []  # (score, fact_idx, start, end, window)
+            for _fi, _f in enumerate(facts[:5]):
+                _c = (_f[2] or _f[0] or "")
+                if not _c:
+                    continue
+                _anchors = [_c.find(k) for k in _kws]
+                _anchors = [p for p in _anchors if p >= 0]
+                if not _anchors:
+                    _anchors = [0]
+                for _p in set(_anchors):
+                    _s = max(0, _p - 150)
+                    _e = min(len(_c), _p + 450)
+                    _win = _c[_s:_e]
+                    _sc = sum(1 for k in _kws if k in _win) + (3 if _NUM.search(_win) else 0)
+                    _cands.append((_sc, _fi, _s, _e, _win))
+            _cands.sort(key=lambda x: -x[0])
+            _exc, _sel = [], []  # _sel: (fact_idx, start, end) 去重叠
+            for _sc, _fi, _s, _e, _win in _cands:
+                if _sc <= 0:
+                    break
+                if any(sf == _fi and min(_e, se) - max(_s, ss) > 0.7 * min(_e - _s, se - ss)
+                       for sf, ss, se in _sel):
+                    continue
+                _sel.append((_fi, _s, _e))
+                _exc.append(_win)
+                if len(_exc) >= 2:
+                    break
+            if _exc:
+                parts.append("【条款片段】" + " ".join(_exc))
+        except Exception:
+            pass
         if fact_combined:
             parts.append(f"[摘要] {fact_combined}")
         if parent_texts_for_doc:
@@ -1583,6 +1626,18 @@ async def _generate_answer(
         combined = "\n\n".join(parts) if parts else None
         if not combined:
             continue
+
+        # 【FIX-CTXBUDGET 2026-10-11】单文档 context 限幅（结构病④）。
+        # 病：combined = 【条款片段】+[摘要](facts[:5] 全文，实测单篇可达 3 万字) + parent_texts[:2]，
+        # 单篇即可吞掉 15000 总预算 ⇒ 下游总量截断在首篇溢出处 break，其余文档整篇不进 prompt。
+        # 实测（生产链路抓真 prompt）：16 篇 doc_facts 最终只有 2 段 [来源:] 进 prompt，
+        # 而 sources 仍列 12 篇 ⇒ 喂给 LLM 的正文与展示的来源元数据严重不一致。
+        # 修：按文档数均分总量做单篇限幅；【条款片段】位于 parts 最前 ⇒ 命中条款仍保留。
+        # 注：单文档查询 _per_doc_cap=15000（不限），不影响单篇场景。
+        _n_docs = max(len(doc_facts), 1)
+        _per_doc_cap = max(800, 15000 // _n_docs)
+        if len(combined) > _per_doc_cap:
+            combined = combined[:_per_doc_cap] + "…"
 
         # Phase C1-RPO: 关键词命中密度信号（检索层结构化输出，零 prompt 改动）
         # 让 LLM 感知检索质量 — 检索内容与 query 的关键词重合度
@@ -1602,7 +1657,7 @@ async def _generate_answer(
         else:
             context_parts.append(_context_entry)
 
-        merged_text = "；".join([c for _, _, c, _ in facts[:3]])
+        merged_text = "；".join([c for _, _, c, _ in facts[:5]])
         if parent_texts_for_doc:
             parent_preview = "\n\n".join(parent_texts_for_doc[:2])
             if len(parent_preview) > len(merged_text):

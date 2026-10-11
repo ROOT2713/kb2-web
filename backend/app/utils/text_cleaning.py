@@ -122,7 +122,33 @@ def _html_table_to_pipe(text: str) -> str:
                 cell_texts = [re.sub(r'<[^>]+>', '', c).strip() for c in cells]
                 lines.append("| " + " | ".join(cell_texts) + " |")
         return "\n".join(lines)
-    return re.sub(r'<table[^>]*>.*?</table>', _table_replacer, text, flags=re.DOTALL | re.IGNORECASE)
+    result = re.sub(
+        r'''<table(?=[\s/>])(?>"[^"]*"|'[^']*'|[^>"']){0,2000}>[\s\S]{0,200000}?</table>''',
+        _table_replacer, text, flags=re.IGNORECASE,
+    )
+    # 若仍有 <table 残留（超 20 万字符 / 畸形 / 无配对 </table>），说明未转换。
+    # 后续 clean_html_residuals 会剥掉标签但丢失表格结构（内容仍在）。告警以便发现。
+    if "<table" in result.lower():
+        logger.warning("_html_table_to_pipe: 文本中仍残留未转换的 <table（过大或畸形），表格结构可能丢失")
+    return result
+
+
+_HTML_TAG_RE = re.compile(
+    r'''</?(?:div|span|p|table|tr|td|th|img|a)(?=[\s/>])(?>"[^"]*"|'[^']*'|[^>"']){0,2000}>''',
+    re.IGNORECASE,
+)
+
+# 单个标签「从 '<' 到 '>'」允许删除的最大字符数；超过即视为伪标签吞并，原样保留。
+# 语料实测：1529 个真实标签最长仅 28 字符（`<td colspan="1" rowspan="1">`），
+# 取 1000 留足余量。为什么需要它：`{0,2000}` 限制的是**迭代次数**而非字符数，
+# 单个 `"[^"]*"` 片段可消费任意长度 —— 若无此上限，`<a "` + 10 万字符 + `">`
+# 仍会把正文整段当属性删掉（实测删 100,006 字符）。
+_HTML_TAG_MAX_LEN = 1000
+
+
+def _strip_one_html_tag(m) -> str:
+    s = m.group(0)
+    return "" if len(s) <= _HTML_TAG_MAX_LEN else s
 
 
 def clean_html_residuals(text: str) -> str:
@@ -131,7 +157,13 @@ def clean_html_residuals(text: str) -> str:
     text = _html_table_to_pipe(text)
     text = _html_mod.unescape(text)
     text = re.sub(r'<br\s*/?>', '\n', text)
-    text = re.sub(r'</?(div|span|p|table|tr|td|th|img|a)[^>]*>', '', text, flags=re.IGNORECASE)
+    # 剥离标签：由模块级 _HTML_TAG_RE + _strip_one_html_tag 完成 ——
+    #   (?=[\s/>])  标签名后必须是空白、'/' 或 '>' —— 挡住 OCR 伪标签 '<ACS)'
+    #   (?>"[^"]*"|'[^']*'|[^>"']){0,2000}  引用感知（属性含 '>' 也正确）
+    #   _HTML_TAG_MAX_LEN  单标签字符级硬限，超长原样保留（防整段正文被当属性删）
+    # 旧式 `</?(div|span|p|...)[^>]*>` 的 `[^>]*` 可跨换行无限吞并，线上实测
+    # GB 50348-2018 因 'access control system<ACS)' 一次被删 44,320 字符（含条文正文）。
+    text = _HTML_TAG_RE.sub(_strip_one_html_tag, text)
     text = re.sub(r'style="[^"]*"', '', text)
     return text.strip()
 
@@ -168,18 +200,38 @@ def clean_transcript_errors(text: str) -> str:
 
 def clean_pipeline(text: str, source_hint: str = "") -> str:
     """可插拔清洗管线"""
-    text = clean_watermarks(text)
-    text = clean_page_artifacts(text)
-    text = clean_html_residuals(text)
-    text = clean_encoding_errors(text)
-    text = normalize_whitespace(text)
+    _in_len = len(text)
+
+    def _step(cur: str, name: str, prev: int) -> str:
+        # 看门狗：逐步比对字符数。清洗本应只做小幅收敛；某一步骤字符骤降
+        # 往往是正则误删（如 HTML 标签正则的跨段吞并 —— 线上曾一次删 44,320
+        # 字符）。仅告警不拦截，便于及早发现「静默丢内容」。
+        if prev >= 500 and len(cur) < prev * 0.8:
+            logger.warning(
+                "clean_pipeline: 步骤 %s 字符 %d → %d (保留 %.1f%%)，降幅异常，请核查清洗规则",
+                name, prev, len(cur), 100.0 * len(cur) / max(prev, 1),
+            )
+        return cur
+
+    text = _step(clean_watermarks(text), "clean_watermarks", len(text))
+    text = _step(clean_page_artifacts(text), "clean_page_artifacts", len(text))
+    text = _step(clean_html_residuals(text), "clean_html_residuals", len(text))
+    text = _step(clean_encoding_errors(text), "clean_encoding_errors", len(text))
+    text = _step(normalize_whitespace(text), "normalize_whitespace", len(text))
     # 标准号规范化：GB／T → GB/T，确保文档和查询使用同一套格式
-    text = normalize_standard_numbers(text)
+    text = _step(normalize_standard_numbers(text), "normalize_standard_numbers", len(text))
     if "video" in source_hint or "whisper" in source_hint:
-        text = clean_transcript_errors(text)
+        text = _step(clean_transcript_errors(text), "clean_transcript_errors", len(text))
     # D4: 最终空行压缩（其他清洗步骤可能引入新的连续空行）
     text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
+    text = text.strip()
+    # 汇总看门狗（含 strip 及空行压缩的净变化）
+    if _in_len >= 500 and len(text) < _in_len * 0.8:
+        logger.warning(
+            "clean_pipeline: 清洗后字符 %d → %d (保留 %.1f%%)，降幅异常，请核查清洗规则",
+            _in_len, len(text), 100.0 * len(text) / max(_in_len, 1),
+        )
+    return text
 
 
 _GENERIC_TITLES = frozenset({
