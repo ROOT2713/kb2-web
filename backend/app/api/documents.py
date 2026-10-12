@@ -47,7 +47,7 @@ from app.services.bank_resolver import (
     resolve_delete_hs_bank,
     resolve_hs_bank,
 )
-from app.utils.text_cleaning import filename_to_title, clean_watermarks
+from app.utils.text_cleaning import clean_pipeline, filename_to_title
 from app.middleware.jwt_auth import require_role  # 【FIX-R2-12】删 require_admin 死 import（HTTP Basic 遗留，0 调用点）
 
 logger = logging.getLogger(__name__)
@@ -1047,7 +1047,7 @@ async def reparse_document(
     try:
         text = await parse_document(filename, content)
         text = text.replace("\x00", "")
-        text = clean_watermarks(text)
+        text = clean_pipeline(text, source_hint=filename)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
