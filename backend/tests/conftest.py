@@ -134,24 +134,6 @@ def client(db_session):
 
 
 @pytest.fixture()
-def mock_hindsight(monkeypatch):
-    """Monkeypatch _hindsight_request to return empty success responses."""
-    import app.services.retrieval as retrieval
-
-    async def _fake_hindsight_request(endpoint, method="GET", json_data=None, timeout=30):
-        if "stats" in endpoint:
-            return {"total_nodes": 0, "total_documents": 0, "total_links": 0}
-        if "documents" in endpoint and method == "GET":
-            return {"items": []}
-        if "memories" in endpoint:
-            return {"items_count": 0}
-        return {"status": "ok"}
-
-    monkeypatch.setattr(retrieval, "_hindsight_request", _fake_hindsight_request)
-    return _fake_hindsight_request
-
-
-@pytest.fixture()
 def mock_get_active_banks(monkeypatch):
     """Return empty active banks list."""
     import app.services.retrieval as retrieval

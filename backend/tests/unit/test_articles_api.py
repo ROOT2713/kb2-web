@@ -100,7 +100,7 @@ def _insert_test_data(db_session):
 # ═══════════════════════════════════════════════════════
 
 class TestExtractByTopic:
-    def test_extract_basic(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_extract_basic(self, client, db_session, mock_get_active_banks):
         """基本提取"""
         _insert_test_data(db_session)
         resp = client.post("/api/articles/extract", json={"topic": "火灾"})
@@ -110,7 +110,7 @@ class TestExtractByTopic:
         assert data["total_documents"] >= 1
         assert data["total_concepts"] >= 1
 
-    def test_extract_aggregates_by_doc(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_extract_aggregates_by_doc(self, client, db_session, mock_get_active_banks):
         """按文档聚合"""
         _insert_test_data(db_session)
         resp = client.post("/api/articles/extract", json={"topic": "火灾"})
@@ -122,7 +122,7 @@ class TestExtractByTopic:
             if r["doc_id"] == "doc-001":
                 assert r["concept_count"] == 2
 
-    def test_extract_excludes_deprecated(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_extract_excludes_deprecated(self, client, db_session, mock_get_active_banks):
         """默认排除 deprecated 文档"""
         _insert_test_data(db_session)
         resp = client.post("/api/articles/extract", json={"topic": "标准"})
@@ -130,7 +130,7 @@ class TestExtractByTopic:
         doc_ids = [r["doc_id"] for r in data["results"]]
         assert "doc-003" not in doc_ids  # deprecated
 
-    def test_extract_min_confidence(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_extract_min_confidence(self, client, db_session, mock_get_active_banks):
         """按置信度过滤"""
         _insert_test_data(db_session)
         resp = client.post("/api/articles/extract", json={"topic": "火灾", "min_confidence": 0.75})
@@ -138,12 +138,12 @@ class TestExtractByTopic:
         for r in data["results"]:
             assert r["confidence"] >= 0.75
 
-    def test_extract_empty_topic(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_extract_empty_topic(self, client, db_session, mock_get_active_banks):
         """空主题"""
         resp = client.post("/api/articles/extract", json={"topic": ""})
         assert resp.status_code == 422  # validation error
 
-    def test_extract_no_results(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_extract_no_results(self, client, db_session, mock_get_active_banks):
         """无匹配结果"""
         _insert_test_data(db_session)
         resp = client.post("/api/articles/extract", json={"topic": "完全不匹配xyz"})
@@ -151,7 +151,7 @@ class TestExtractByTopic:
         assert data["total_documents"] == 0
         assert data["results"] == []
 
-    def test_extract_sorted_by_confidence(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_extract_sorted_by_confidence(self, client, db_session, mock_get_active_banks):
         """按置信度排序"""
         _insert_test_data(db_session)
         resp = client.post("/api/articles/extract", json={"topic": "安全"})
@@ -166,7 +166,7 @@ class TestExtractByTopic:
 # ═══════════════════════════════════════════════════════
 
 class TestExtractByConcept:
-    def test_by_concept_prefix(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_by_concept_prefix(self, client, db_session, mock_get_active_banks):
         """按 concept_id 前缀查询"""
         _insert_test_data(db_session)
         resp = client.get("/api/articles/by-concept", params={"concept_id": "standards/security"})
@@ -175,7 +175,7 @@ class TestExtractByConcept:
         assert data["total_documents"] >= 1
         assert data["total_concepts"] >= 1
 
-    def test_by_concept_no_match(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_by_concept_no_match(self, client, db_session, mock_get_active_banks):
         """无匹配"""
         _insert_test_data(db_session)
         resp = client.get("/api/articles/by-concept", params={"concept_id": "nonexistent"})

@@ -76,8 +76,20 @@ def _refresh_banks():
 
 
 def _invalidate_bank_caches():
-    _active_hs_banks_cache["banks"] = None
-    _active_hs_banks_cache["ts"] = 0
+    """bank 集合变更后失效依赖 bank 配置的缓存。
+
+    ⚠️ 原实现引用 Hindsight 时代遗留全局（全仓无定义）⇒ 任一调用点必抛
+    `NameError`：`POST /api/banks`、`DELETE /api/banks/{key}` 一律 HTTP 500；
+    且 create 路径是在 `_save_banks_config(BANKS)` **之后**抛错，即「调用方见
+    500 但 banks.json 已改」的**部分成功**（比直接失败更难排查）。
+
+    现失效**真实存在**的缓存：BM25 每-bank 索引（bank 集合变更后 `all` 等
+    组合索引会过期）。`retrieval._get_active_banks()` 每次现算无缓存、
+    `BANKS` 为就地修改，二者均无需失效。
+    """
+    from app.services.cache_service import invalidate_bm25_cache
+
+    invalidate_bm25_cache()  # bank=None → 清全部 bank 的 BM25 缓存
 
 
 # ═══════════════════════════════════════════════════════════════════

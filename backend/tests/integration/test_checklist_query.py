@@ -185,14 +185,31 @@ def _insert_test_data(db_session):
 
 def _install_monkeypatches(monkeypatch):
     """Install all monkeypatches that isolate the query endpoint from
-    real external services (Hindsight, LLM, network).
+    real external services (LLM, network).
+
+    ⚠️ 关键：`recall / llm_rerank / _get_active_banks / chat` 的真正**调用点**在
+    `app.api.query_engine`（`_build_search_context()` / `_generate_answer()` 在此定义，
+    query.py 只是 `from app.api.query_engine import _build_search_context` 后转调）。
+    `from X import name` 会把名字绑定到**导入方**的命名空间，故只 patch
+    `app.api.query` 对这些调用无效（会漏打真实 LLM/网络）。
+    原实现仅 patch query_mod，且查询 llm_rerank 时直接 AttributeError（query.py 未导入该名）。
+    现对 query / query_engine / retrieval 三处按 hasattr 逐名 patch，覆盖全部查找点。
     """
     import app.api.query as query_mod
+    import app.api.query_engine as engine_mod
     import app.services.retrieval as retrieval_mod
 
-    # ── recall -> always empty (no dense vector recall) ──
+    # ── recall -> 返回夹具 chunk（**关键**：现架构 BM25 的数据源就是 recall()，
+    #    旧实现返回 [] 会把整条流水线饿死 → source_count=0 → 门禁拒答，
+    #    5 条 query 里只有部分靠 doc 兜底命中，表现为「第 1 条稳定失败」。
+    #    返回夹具 parent_chunks 后 BM25/RRF/rerank 才有真实数据可比。）──
+    _CHECKLIST_HITS = [
+        {"text": pc["parent_text"], "tags": [f"doc_id:{pc['doc_id']}"]}
+        for pc in PARENT_CHUNKS
+    ]
+
     async def _mock_recall(query, limit=5, bank="kb", max_tokens=4096):
-        return []
+        return list(_CHECKLIST_HITS)
 
     # ── llm_rerank -> passthrough (keep BM25+RRF order) ──
     async def _mock_llm_rerank(query, candidates, top_k=15):
@@ -213,32 +230,23 @@ def _install_monkeypatches(monkeypatch):
     async def _mock_cache_set(query, bank, answer, sources, doc_ids):
         pass
 
-    # ── active Hindsight banks -> empty (no multi-bank recall) ──
+    # ── active banks -> 夹具文档所在物理库（不再返回 []，否则 BM25 无源可建）──
     async def _mock_get_active_banks(min_docs=1):
-        return []
+        return ["kb_checklist"]
 
-    # ── _hindsight_request -> safe stub (prevents real Hindsight calls
-    #    inside build_bm25_index / recall) ──
-    async def _mock_hindsight_request(endpoint, method="GET",
-                                      json_data=None, timeout=30):
-        if "stats" in endpoint:
-            return {"total_nodes": 0, "total_documents": 0, "total_links": 0}
-        if "documents" in endpoint and method == "GET":
-            return {"items": []}
-        if "memories" in endpoint:
-            return {"items_count": 0}
-        return {"status": "ok"}
-
-    monkeypatch.setattr(query_mod, "recall", _mock_recall)
-    monkeypatch.setattr(query_mod, "llm_rerank", _mock_llm_rerank)
-    monkeypatch.setattr(query_mod, "chat", _mock_chat)
-    monkeypatch.setattr(query_mod, "cache_get_exact", _mock_cache_get_exact)
-    monkeypatch.setattr(query_mod, "cache_get_semantic", _mock_cache_get_semantic)
-    monkeypatch.setattr(query_mod, "cache_set", _mock_cache_set)
-    monkeypatch.setattr(query_mod, "_get_active_banks",
-                        _mock_get_active_banks)
-    monkeypatch.setattr(retrieval_mod, "_hindsight_request",
-                        _mock_hindsight_request)
+    patches = {
+        "recall": _mock_recall,
+        "llm_rerank": _mock_llm_rerank,
+        "chat": _mock_chat,
+        "cache_get_exact": _mock_cache_get_exact,
+        "cache_get_semantic": _mock_cache_get_semantic,
+        "cache_set": _mock_cache_set,
+        "_get_active_banks": _mock_get_active_banks,
+    }
+    for mod in (query_mod, engine_mod, retrieval_mod):
+        for name, fn in patches.items():
+            if hasattr(mod, name):
+                monkeypatch.setattr(mod, name, fn)
 
     # ── Clear BM25 caches to avoid cross-test contamination ──
     retrieval_mod._bm25_caches.clear()
@@ -270,9 +278,33 @@ class TestChecklistQueryRegression:
 
     @pytest.fixture(autouse=True)
     def _setup(self, db_session, monkeypatch):
-        """Insert data, install patches, clear caches before each test."""
+        """Insert data, install patches, clear caches before each test.
+
+        ⚠️ 用 `db_session` + 显式 commit：conftest 的引擎是 StaticPool（**全测试
+        共享同一条 DBAPI 连接**），用独立 SessionLocal 提交会与 db_session 的
+        事务边界互相干扰（曾致 test_articles_api 连带失败）。共享 session 提交
+        既可让 app 侧的 `SessionLocal()` 看到数据（同连接已提交），又不引入第二条
+        连接的事务冲突。
+        """
+        from app.services import retrieval as _r
+
         _insert_test_data(db_session)
+        db_session.commit()  # 关键：提交后 app 的连接才可见
+
         _install_monkeypatches(monkeypatch)
+        _r._invisible_cache["ts"] = 0.0  # 可见性集合重算（含本次插入的 active 文档）
+        _r._bm25_caches.clear()
+        yield
+
+        # ── teardown：删夹具行，避免污染同 session 的其他测试 ──
+        from sqlalchemy import text as _t
+        db_session.execute(_t("DELETE FROM parent_chunks WHERE doc_id = :d"),
+                           {"d": CHECKLIST_DOC_ID})
+        db_session.execute(_t("DELETE FROM documents WHERE doc_id = :d"),
+                           {"d": CHECKLIST_DOC_ID})
+        db_session.commit()
+        _r._invisible_cache["ts"] = 0.0
+        _r._bm25_caches.clear()
 
     @pytest.mark.parametrize("query_text", QUERY_CASES)
     def test_checklist_query_returns_fields(self, client, query_text):

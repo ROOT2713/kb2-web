@@ -70,7 +70,7 @@ def _insert_test_concepts(db_session):
 # ═══════════════════════════════════════════════════════
 
 class TestGetConcept:
-    def test_get_existing_concept(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_get_existing_concept(self, client, db_session, mock_get_active_banks):
         """获取存在的 concept"""
         _insert_test_concepts(db_session)
         resp = client.get("/api/concepts/get", params={"concept_id": "standards/security/gb-50116/clause-4.1"})
@@ -81,12 +81,12 @@ class TestGetConcept:
         assert data["confidence"] == 0.8
         assert "content" in data  # full content in to_full_dict
 
-    def test_get_nonexistent_concept(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_get_nonexistent_concept(self, client, db_session, mock_get_active_banks):
         """获取不存在的 concept → 404"""
         resp = client.get("/api/concepts/get", params={"concept_id": "nonexistent/id"})
         assert resp.status_code == 404
 
-    def test_access_count_increments(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_access_count_increments(self, client, db_session, mock_get_active_banks):
         """访问后 access_count 递增"""
         _insert_test_concepts(db_session)
         # First access
@@ -103,7 +103,7 @@ class TestGetConcept:
 # ═══════════════════════════════════════════════════════
 
 class TestSearchConcepts:
-    def test_search_by_keyword(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_search_by_keyword(self, client, db_session, mock_get_active_banks):
         """关键词搜索"""
         _insert_test_concepts(db_session)
         resp = client.get("/api/concepts/search", params={"q": "火灾"})
@@ -111,7 +111,7 @@ class TestSearchConcepts:
         data = resp.json()
         assert data["total"] >= 2  # 两个 GB-50116 concept 都包含"火灾"
 
-    def test_search_by_summary(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_search_by_summary(self, client, db_session, mock_get_active_banks):
         """搜索摘要内容"""
         _insert_test_concepts(db_session)
         resp = client.get("/api/concepts/search", params={"q": "人工智能"})
@@ -119,7 +119,7 @@ class TestSearchConcepts:
         data = resp.json()
         assert data["total"] >= 1
 
-    def test_search_filter_by_doc(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_search_filter_by_doc(self, client, db_session, mock_get_active_banks):
         """按 doc_id 过滤"""
         _insert_test_concepts(db_session)
         resp = client.get("/api/concepts/search", params={"q": "标准", "doc_id": "doc-001"})
@@ -128,7 +128,7 @@ class TestSearchConcepts:
         for c in data["concepts"]:
             assert c["doc_id"] == "doc-001"
 
-    def test_search_excludes_deprecated(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_search_excludes_deprecated(self, client, db_session, mock_get_active_banks):
         """默认排除 deprecated 状态"""
         _insert_test_concepts(db_session)
         resp = client.get("/api/concepts/search", params={"q": "标准"})
@@ -137,12 +137,12 @@ class TestSearchConcepts:
         for c in data["concepts"]:
             assert c["status"] != "deprecated"
 
-    def test_search_empty_query(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_search_empty_query(self, client, db_session, mock_get_active_banks):
         """空查询 → 422"""
         resp = client.get("/api/concepts/search", params={"q": ""})
         assert resp.status_code == 422
 
-    def test_search_no_results(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_search_no_results(self, client, db_session, mock_get_active_banks):
         """无匹配结果"""
         _insert_test_concepts(db_session)
         resp = client.get("/api/concepts/search", params={"q": "完全不匹配的内容xyz"})
@@ -157,7 +157,7 @@ class TestSearchConcepts:
 # ═══════════════════════════════════════════════════════
 
 class TestListConcepts:
-    def test_list_all_active(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_list_all_active(self, client, db_session, mock_get_active_banks):
         """列出所有 active concepts"""
         _insert_test_concepts(db_session)
         resp = client.get("/api/concepts")
@@ -165,7 +165,7 @@ class TestListConcepts:
         data = resp.json()
         assert data["total"] == 3  # 3 active, 1 deprecated
 
-    def test_list_filter_by_doc(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_list_filter_by_doc(self, client, db_session, mock_get_active_banks):
         """按 doc_id 过滤"""
         _insert_test_concepts(db_session)
         resp = client.get("/api/concepts", params={"doc_id": "doc-001"})
@@ -173,7 +173,7 @@ class TestListConcepts:
         data = resp.json()
         assert data["total"] == 2
 
-    def test_list_filter_by_domain(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_list_filter_by_domain(self, client, db_session, mock_get_active_banks):
         """按 domain 前缀过滤"""
         _insert_test_concepts(db_session)
         resp = client.get("/api/concepts", params={"domain": "standards"})
@@ -181,7 +181,7 @@ class TestListConcepts:
         data = resp.json()
         assert data["total"] == 2  # 2 active standards concepts
 
-    def test_list_pagination(self, client, db_session, mock_hindsight, mock_get_active_banks):
+    def test_list_pagination(self, client, db_session, mock_get_active_banks):
         """分页"""
         _insert_test_concepts(db_session)
         resp = client.get("/api/concepts", params={"limit": 2, "offset": 0})

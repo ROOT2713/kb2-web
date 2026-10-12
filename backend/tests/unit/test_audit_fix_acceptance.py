@@ -53,7 +53,7 @@ class TestEnsureScopeColumn:
         async def _run():
             await set_cache("scope默认测试", "standards", "答案", [], {"doc1"}, scope="")
         import asyncio
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
         row = db_session.execute(
             sa_text("SELECT scope FROM query_cache WHERE query_text='scope默认测试'")
         ).fetchone()
@@ -70,7 +70,7 @@ class TestHitCountFromZero:
         """INSERT 后 hit_count 必须是 0(非 NULL)— 修复 NULL+1=NULL。"""
         _ensure_scope_column()
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             set_cache("计数起点测试", "standards", "答案", [], {"doc1"})
         )
         row = db_session.execute(
@@ -83,7 +83,7 @@ class TestHitCountFromZero:
         """首次命中后 hit_count 0→1(硬断言,非软校验)。"""
         _ensure_scope_column()
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             set_cache("计数累加测试", "standards", "答案", [], {"doc1"})
         )
         # 首次命中
@@ -111,7 +111,7 @@ class TestScopeIsolation:
         """scope='alice' 的缓存, scope='bob' 查询不可见(用户隔离)。"""
         _ensure_scope_column()
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             set_cache("隔离查询", "standards", "alice的答案", [], {"doc1"}, scope="alice")
         )
         # bob 精确查询 → 应 miss
@@ -125,7 +125,7 @@ class TestScopeIsolation:
         """默认 scope('')与用户 scope 各自独立,互不串扰。"""
         _ensure_scope_column()
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             set_cache("共存查询", "standards", "默认答案", [], {"doc1"}, scope="")
         )
         # 用户 scope 查询不应命中默认 scope 缓存

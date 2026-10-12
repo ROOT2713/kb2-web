@@ -1,9 +1,13 @@
 """Database setup — SQLAlchemy engine, session, base model."""
 
+import logging
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 engine = create_engine(settings.db_url, echo=settings.debug, connect_args={"timeout": 30})
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
@@ -73,7 +77,8 @@ def init_db():
             "  importance INTEGER DEFAULT 0,"
             "  status TEXT DEFAULT 'draft',"
             "  created_at TEXT NOT NULL,"
-            "  updated_at TEXT NOT NULL"
+            "  updated_at TEXT NOT NULL,"
+            "  bank_hint TEXT DEFAULT ''"
             ")"
         ))
         conn.execute(sa_text(
@@ -94,4 +99,17 @@ def init_db():
         conn.execute(sa_text(
             "CREATE INDEX IF NOT EXISTS idx_wiki_relations_src ON wiki_relations(source_entry_id)"
         ))
+        # ── 迁移：wiki_entries.bank_hint（2026-10-12 补齐）──
+        # 缺陷：建表 DDL 长期缺 bank_hint，而 wiki_service.retrieve_for_query()
+        # 明确 SELECT bank_hint ⇒ 任何「按此 schema 新建」的库都会让 wiki 检索
+        # 抛 OperationalError (no such column) 并被 except 吞掉 → wiki 检索静默失效。
+        # 生产库侥幸有该列（历史上手工 ALTER），故缺陷一直潜伏。
+        _cols = {r[1] for r in conn.execute(
+            sa_text("PRAGMA table_info(wiki_entries)")
+        ).fetchall()}
+        if _cols and "bank_hint" not in _cols:
+            conn.execute(sa_text(
+                "ALTER TABLE wiki_entries ADD COLUMN bank_hint TEXT DEFAULT ''"
+            ))
+            logger.warning("[MIGRATE] wiki_entries 补建 bank_hint 列完成")
         conn.commit()

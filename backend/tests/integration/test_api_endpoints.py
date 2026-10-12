@@ -12,14 +12,14 @@ from unittest.mock import AsyncMock, patch, MagicMock
 # ═══════════════════════════════════════════════════════
 
 class TestHealthEndpoint:
-    def test_health_returns_ok(self, client, mock_hindsight, mock_get_active_banks):
+    def test_health_returns_ok(self, client, mock_get_active_banks):
         resp = client.get("/health")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
         assert "version" in data
 
-    def test_health_has_version(self, client, mock_hindsight, mock_get_active_banks):
+    def test_health_has_version(self, client, mock_get_active_banks):
         resp = client.get("/health")
         data = resp.json()
         assert data["version"] == "2.0.0"
@@ -30,7 +30,7 @@ class TestHealthEndpoint:
 # ═══════════════════════════════════════════════════════
 
 class TestBanksEndpoints:
-    def test_list_banks(self, client, mock_hindsight, mock_get_active_banks):
+    def test_list_banks(self, client, mock_get_active_banks):
         resp = client.get("/api/banks")
         assert resp.status_code == 200
         data = resp.json()
@@ -38,13 +38,13 @@ class TestBanksEndpoints:
         assert isinstance(data["banks"], list)
         assert len(data["banks"]) > 0
 
-    def test_list_banks_has_all_entry(self, client, mock_hindsight, mock_get_active_banks):
+    def test_list_banks_has_all_entry(self, client, mock_get_active_banks):
         resp = client.get("/api/banks")
         banks = resp.json()["banks"]
         keys = [b["key"] for b in banks]
         assert "all" in keys
 
-    def test_list_banks_structure(self, client, mock_hindsight, mock_get_active_banks):
+    def test_list_banks_structure(self, client, mock_get_active_banks):
         resp = client.get("/api/banks")
         banks = resp.json()["banks"]
         for bank in banks:
@@ -52,7 +52,7 @@ class TestBanksEndpoints:
             assert "name" in bank
             assert "count" in bank
 
-    def test_list_banks_has_all_four(self, client, mock_hindsight, mock_get_active_banks):
+    def test_list_banks_has_all_four(self, client, mock_get_active_banks):
         """2026-07-21 bank 收敛为 4 类：all/industry/personal/project"""
         resp = client.get("/api/banks")
         banks = resp.json()["banks"]
@@ -60,21 +60,21 @@ class TestBanksEndpoints:
         for expected in ("all", "industry", "personal", "project"):
             assert expected in keys
 
-    def test_wiki_tree(self, client, mock_hindsight, mock_get_active_banks):
+    def test_wiki_tree(self, client, mock_get_active_banks):
         resp = client.get("/api/banks/wiki")
         assert resp.status_code == 200
         data = resp.json()
         assert "tree" in data
         assert "total" in data
 
-    def test_categories(self, client, mock_hindsight, mock_get_active_banks):
+    def test_categories(self, client, mock_get_active_banks):
         resp = client.get("/api/banks/categories")
         assert resp.status_code == 200
         data = resp.json()
         assert "super_categories" in data
         assert isinstance(data["super_categories"], list)
 
-    def test_list_banks_has_industry(self, client, mock_hindsight, mock_get_active_banks):
+    def test_list_banks_has_industry(self, client, mock_get_active_banks):
         """checklist 已并入 industry（2026-07-21 bank 收敛）"""
         resp = client.get("/api/banks")
         assert resp.status_code == 200
@@ -82,19 +82,16 @@ class TestBanksEndpoints:
         assert "industry" in keys
 
     def test_create_bank_does_not_call_hindsight_create(self, client, monkeypatch, tmp_path):
+        """回归锁（Hindsight 已退役 2026-09-17）：建 bank 只写本地配置，无 Hindsight 创建调用。
+
+        原断言 monkeypatch `banks_api._hindsight_request` 记录是否 POST /v1/default/banks ——
+        该符号已随 Hindsight 退役删除。改为**结构性**等价断言：符号不得再出现（出现即红），
+        同时建库成功 + 配置落盘 + 响应键齐全。
+        """
         import app.api.banks as banks_api
         import app.services.retrieval as retrieval
 
-        called = []
-
-        async def fail_on_hindsight_create(endpoint, method="GET", json_data=None, timeout=30):
-            called.append((endpoint, method))
-            if endpoint == "/v1/default/banks" and method == "POST":
-                raise AssertionError("create_bank_api must not POST /v1/default/banks")
-            return {"status": "ok"}
-
         cfg_path = tmp_path / "banks.json"
-        monkeypatch.setattr(banks_api, "_hindsight_request", fail_on_hindsight_create)
         monkeypatch.setattr(retrieval.settings, "banks_config_path", cfg_path)
         monkeypatch.setattr(banks_api.settings, "banks_config_path", cfg_path)
         retrieval.reload_bank_config()
@@ -105,15 +102,17 @@ class TestBanksEndpoints:
             assert data["ok"] is True
             assert data["bank"] == "test_bank"
             assert data["hindsight_bank"] == "kb_test_bank"
-            assert ("/v1/default/banks", "POST") not in called
             assert cfg_path.exists()
+            # Hindsight 退役后检索/建库路径不应再持有 _hindsight_request 符号
+            assert not hasattr(banks_api, "_hindsight_request")
+            assert not hasattr(retrieval, "_hindsight_request")
         finally:
             retrieval.BANKS.pop("test_bank", None)
             if cfg_path.exists():
                 cfg_path.unlink()
             retrieval.reload_bank_config()
 
-    def test_create_existing_bank_returns_409(self, client, mock_hindsight, mock_get_active_banks):
+    def test_create_existing_bank_returns_409(self, client, mock_get_active_banks):
         resp = client.post("/api/banks", data={"key": "general", "label": "综合文件"})
         assert resp.status_code == 409
 
@@ -123,20 +122,20 @@ class TestBanksEndpoints:
 # ═══════════════════════════════════════════════════════
 
 class TestDocumentsEndpoints:
-    def test_list_documents(self, client, mock_hindsight, mock_get_active_banks):
+    def test_list_documents(self, client, mock_get_active_banks):
         resp = client.get("/api/documents")
         assert resp.status_code == 200
         data = resp.json()
         assert "documents" in data
         assert isinstance(data["documents"], list)
 
-    def test_list_documents_empty_by_default(self, client, mock_hindsight, mock_get_active_banks):
+    def test_list_documents_empty_by_default(self, client, mock_get_active_banks):
         resp = client.get("/api/documents")
         data = resp.json()
         # Empty DB → no documents
         assert data["documents"] == []
 
-    def test_list_documents_with_bank_filter(self, client, mock_hindsight, mock_get_active_banks):
+    def test_list_documents_with_bank_filter(self, client, mock_get_active_banks):
         resp = client.get("/api/documents?bank=standards")
         assert resp.status_code == 200
         data = resp.json()
@@ -148,13 +147,13 @@ class TestDocumentsEndpoints:
 # ═══════════════════════════════════════════════════════
 
 class TestSynonymsEndpoints:
-    def test_list_synonyms_empty(self, client, mock_hindsight, mock_get_active_banks):
+    def test_list_synonyms_empty(self, client, mock_get_active_banks):
         resp = client.get("/api/synonyms")
         assert resp.status_code == 200
         data = resp.json()
         assert isinstance(data, list)
 
-    def test_add_synonym(self, client, mock_hindsight, mock_get_active_banks):
+    def test_add_synonym(self, client, mock_get_active_banks):
         resp = client.post(
             "/api/synonyms",
             data={"term": "等保", "expansion": "等级保护", "category": "安全"},
@@ -163,7 +162,7 @@ class TestSynonymsEndpoints:
         data = resp.json()
         assert data["ok"] is True
 
-    def test_add_then_list_synonyms(self, client, mock_hindsight, mock_get_active_banks):
+    def test_add_then_list_synonyms(self, client, mock_get_active_banks):
         # Add
         client.post(
             "/api/synonyms",
@@ -175,7 +174,7 @@ class TestSynonymsEndpoints:
         terms = [s["term"] for s in data]
         assert "密码测评" in terms
 
-    def test_update_synonym(self, client, mock_hindsight, mock_get_active_banks):
+    def test_update_synonym(self, client, mock_get_active_banks):
         # Add first
         client.post(
             "/api/synonyms",
@@ -193,7 +192,7 @@ class TestSynonymsEndpoints:
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
-    def test_delete_synonym(self, client, mock_hindsight, mock_get_active_banks):
+    def test_delete_synonym(self, client, mock_get_active_banks):
         # Add
         client.post(
             "/api/synonyms",
@@ -208,14 +207,14 @@ class TestSynonymsEndpoints:
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
-    def test_update_nonexistent_synonym(self, client, mock_hindsight, mock_get_active_banks):
+    def test_update_nonexistent_synonym(self, client, mock_get_active_banks):
         resp = client.put(
             "/api/synonyms/99999",
             data={"term": "不存在", "expansion": "不存在"},
         )
         assert resp.status_code == 404
 
-    def test_delete_nonexistent_synonym(self, client, mock_hindsight, mock_get_active_banks):
+    def test_delete_nonexistent_synonym(self, client, mock_get_active_banks):
         resp = client.delete("/api/synonyms/99999")
         assert resp.status_code == 404
 
@@ -225,21 +224,21 @@ class TestSynonymsEndpoints:
 # ═══════════════════════════════════════════════════════
 
 class TestAdminEndpoints:
-    def test_admin_health(self, client, mock_hindsight, mock_get_active_banks):
+    def test_admin_health(self, client, mock_get_active_banks):
         resp = client.get("/api/admin/health")
         assert resp.status_code == 200
         data = resp.json()
         assert "status" in data
         assert "db" in data
 
-    def test_admin_banks_config(self, client, mock_hindsight, mock_get_active_banks):
+    def test_admin_banks_config(self, client, mock_get_active_banks):
         resp = client.get("/api/admin/banks/config")
         assert resp.status_code == 200
         data = resp.json()
         assert "banks" in data
         assert isinstance(data["banks"], dict)
 
-    def test_admin_banks_config_has_all_key(self, client, mock_hindsight, mock_get_active_banks):
+    def test_admin_banks_config_has_all_key(self, client, mock_get_active_banks):
         resp = client.get("/api/admin/banks/config")
         banks = resp.json()["banks"]
         assert "all" in banks
@@ -251,12 +250,12 @@ class TestAdminEndpoints:
 # ═══════════════════════════════════════════════════════
 
 class TestAPIRouter:
-    def test_api_prefix_works(self, client, mock_hindsight, mock_get_active_banks):
+    def test_api_prefix_works(self, client, mock_get_active_banks):
         """Verify the /api prefix is mounted."""
         resp = client.get("/api/banks")
         assert resp.status_code == 200
 
-    def test_openapi_docs_closed(self, client, mock_hindsight, mock_get_active_banks):
+    def test_openapi_docs_closed(self, client, mock_get_active_banks):
         """2026-08-13 安全加固：生产关闭 OpenAPI/Swagger 暴露"""
         resp = client.get("/openapi.json")
         assert resp.status_code == 404
