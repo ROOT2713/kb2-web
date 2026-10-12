@@ -260,3 +260,131 @@ class TestReparseSourceUsesCleanPipeline:
         assert "from app.utils.text_cleaning import filename_to_title, clean_watermarks" not in src, (
             "documents.py 仍从 text_cleaning 导入 clean_watermarks（旧 import 形态）"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ④ 缺陷 2：published_date 非空时 reparse 必 500
+#     根因：get_meta() 把日期序列化为 ISO **字符串**（JSON 友好），
+#           而 documents.published_date 是 DATE 列 → SQLAlchemy 拒绝字符串
+#           （TypeError: SQLite Date type only accepts Python date objects）。
+#           upload 路径显式转 date（upload.py L227-236 / L483-490），reparse 未转。
+#     影响面：全库 active 184 篇中 43 篇（23%）published_date 非空 → 全部无法 reparse。
+# ═══════════════════════════════════════════════════════════════════
+
+def _build_reparse_fixture(client, db_session, tmp_path, monkeypatch, with_date: bool):
+    """构造一次 reparse 调用，返回 (响应, db_session, 新 doc_id 或 None)。"""
+    from datetime import date as _date
+
+    from app.api import documents
+
+    upload_dir = tmp_path / "uploads_date"
+    upload_dir.mkdir()
+    filename = "GB_50016-date.pdf"
+    (upload_dir / filename).write_bytes(b"%PDF-1.4 fake content")
+    monkeypatch.setattr(settings, "upload_dir", str(upload_dir))
+
+    kwargs = {}
+    if with_date:
+        kwargs["published_date"] = _date(2021, 1, 1)
+    db_session.add(Document(
+        doc_id="old-reparse-date-1",
+        title="带日期的测试标准",
+        bank="general",
+        hs_bank="kb_general",
+        status="active",
+        searchable=1,
+        filename=filename,
+        category="standard",
+        **kwargs,
+    ))
+    db_session.commit()
+
+    async def _fake_parse(_filename, _content):
+        return "# 测试标准\n\n" + "正文内容若干，用于通过质量门禁，必须超过一百字符。" * 8
+
+    monkeypatch.setattr(documents, "parse_document", _fake_parse)
+
+    class _FakeStore:
+        async def delete(self, *_a, **_k):
+            return 0
+
+        async def upsert(self, _doc_id, items, _bank):
+            return len(items)
+
+    monkeypatch.setattr(documents, "get_vector_store", lambda: _FakeStore())
+
+    async def _noop_verify(*_a, **_k):
+        return True
+
+    monkeypatch.setattr(documents, "_verify_searchable", _noop_verify)
+    monkeypatch.setattr(documents, "invalidate_bm25_cache", lambda **_k: None)
+    monkeypatch.setattr(documents, "invalidate_query_cache_by_bank", lambda *_a, **_k: None)
+    monkeypatch.setattr(settings, "vector_backend", "pgvector")
+
+    resp = client.post("/api/documents/old-reparse-date-1/reparse")
+    return resp, db_session
+
+
+@pytest.fixture()
+def reparse_with_date(client, db_session, tmp_path, monkeypatch):
+    """旧文档带**非空** published_date → 跑 reparse。"""
+    return _build_reparse_fixture(client, db_session, tmp_path, monkeypatch, with_date=True)
+
+
+@pytest.fixture()
+def reparse_without_date(client, db_session, tmp_path, monkeypatch):
+    """旧文档 published_date 为空 → 跑 reparse（阴性对照，旧实现也能过）。"""
+    return _build_reparse_fixture(client, db_session, tmp_path, monkeypatch, with_date=False)
+
+
+class TestReparsePublishedDateCoercion:
+
+    def test_reparse_with_nonnull_date_succeeds(self, reparse_with_date):
+        """published_date 非空时 reparse 必须成功 —— 旧实现抛 500。
+
+        这是缺陷 2 的直接观测点：DATE 列收到 ISO 字符串 → TypeError → 500。
+        """
+        resp, _db = reparse_with_date
+        assert resp.status_code == 200, (
+            f"reparse 对非空 published_date 失败（缺陷 2）: "
+            f"{resp.status_code} {resp.text[:300]}"
+        )
+
+    def test_new_doc_keeps_date_value(self, reparse_with_date):
+        """新文档的 published_date 必须是 date 对象且值不变（不得被静默置空）。
+
+        防「把日期一律置 None」这种绕过式修复：值必须原样保留。
+        """
+        from datetime import date as _date
+
+        resp, db = reparse_with_date
+        new_id = resp.json()["new_doc_id"]
+        db.expire_all()
+        row = db.query(Document).filter_by(doc_id=new_id).one()
+        assert isinstance(row.published_date, _date), (
+            f"published_date 应为 date，实际 {type(row.published_date).__name__}"
+            f"（值 {row.published_date!r}）"
+        )
+        assert row.published_date == _date(2021, 1, 1), (
+            f"日期值被改动: {row.published_date}"
+        )
+
+    def test_reparse_without_date_still_works(self, reparse_without_date):
+        """阴性对照：published_date 为空时也必须成功（不得因新逻辑反而失败）。"""
+        resp, _db = reparse_without_date
+        assert resp.status_code == 200, (
+            f"无日期文档 reparse 失败: {resp.status_code} {resp.text[:300]}"
+        )
+
+    def test_source_has_date_coercion(self):
+        """源码锁：reparse_document 必须把 meta 的字符串日期转成 date 对象。"""
+        import inspect
+
+        from app.api import documents
+
+        body = inspect.getsource(documents.reparse_document)
+        assert "isinstance(_pub_raw, str)" in body or "isinstance(pub_date, str)" in body, (
+            "reparse_document 未对 meta 的字符串日期做类型转换（缺陷 2 会复发）"
+        )
+        assert "date(" in body, "reparse_document 未构造 date 对象"
+

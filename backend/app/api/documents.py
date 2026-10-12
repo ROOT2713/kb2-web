@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 import traceback
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
 from pydantic import BaseModel
@@ -1164,7 +1164,21 @@ async def reparse_document(
 
     content_hash = hashlib.sha256(content).hexdigest()
     source_from_meta = meta.get("source", "manual")
-    pub_date = meta.get("published_date")
+    # get_meta() 把 published_date 序列化为 ISO **字符串**（JSON 友好），而
+    # documents.published_date 是 DATE 列，SQLAlchemy 拒绝字符串输入
+    # （TypeError: SQLite Date type only accepts Python date objects）。
+    # upload 路径显式转 date（upload.py L227-236 / L483-490），此处对齐 ——
+    # 否则任何带日期元数据的文档 reparse 必 500（全库 43/184 篇受影响）。
+    pub_date = None
+    _pub_raw = meta.get("published_date")
+    if isinstance(_pub_raw, date) and not isinstance(_pub_raw, datetime):
+        pub_date = _pub_raw
+    elif isinstance(_pub_raw, str) and _pub_raw.strip():
+        try:
+            _p = _pub_raw.strip()[:10].split("-")
+            pub_date = date(int(_p[0]), int(_p[1]), int(_p[2]))
+        except (ValueError, IndexError):
+            logger.warning("reparse: published_date=%r 无法解析，置空", _pub_raw)
     geo_scope_from_meta = meta.get("geo_scope")
     repo.save(
         doc_id=new_doc_id, title=doc_title, category=doc_category,
