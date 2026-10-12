@@ -5,6 +5,40 @@ from app.models.concept import Concept
 from app.models.document import Document
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_recall(monkeypatch):
+    """本模块只依赖自身夹具数据，不打真实 pg（2026-10-12 实测修复）。
+
+    背景（顺序依赖红/绿的真实成因）：
+      `recall()` 的 dense 路径会真实访问 pgvector，把**生产** doc_id 并入
+      `all_doc_ids`；并且其 BM25 构建段会 `pdb = SessionLocal()` 在测试的
+      **StaticPool 单连接**上开第二个 session（retrieval.py:470，close 于 :492）
+      —— 这会回滚掉本用例**尚未提交**的夹具事务（`_insert_test_data` 的
+      commit 在外层 `conn.begin()` 事务下只是释放 savepoint）。
+
+      而 `/api/articles/extract` 的顺序恰是：
+        Step1 查 Concept（此时数据还在）→ Step2 `await recall(...)`（此处把数据抹掉）
+        → Step3 再查 `Concept.doc_id.in_(all_doc_ids)`（此时已空）→ doc_groups 空
+      ⇒ `total_documents = 0`。
+
+      于是断言结果取决于「前一个测试有没有把 pg 池建在已关闭的事件循环上」：
+      单跑该用例（dense 早失败、不与 SQLite 交互）→ 绿；与
+      `tests/integration/test_checklist_query.py` 同跑 → 红。
+
+    单变量对照（`-p no:randomly -s`，本夹具生效）：
+      recall 真实执行 → total_documents=0 / total_concepts=0
+      recall 固定为空 → total_documents=1 / total_concepts=2  ← 与夹具数据一致
+    """
+    from app.services import retrieval
+
+    async def _empty(*_a, **_k):
+        return []
+
+    monkeypatch.setattr(retrieval, "recall", _empty, raising=False)
+    yield
+
+
+
 # ═══════════════════════════════════════════════════════
 # Helper: insert test data
 # ═══════════════════════════════════════════════════════

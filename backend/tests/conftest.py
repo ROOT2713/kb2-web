@@ -143,3 +143,34 @@ def mock_get_active_banks(monkeypatch):
 
     monkeypatch.setattr(retrieval, "_get_active_banks", _fake)
     return _fake
+
+
+@pytest.fixture(autouse=True)
+def _reset_vector_store_singleton():
+    """每个测试结束后丢弃 PgVectorStore 单例 —— 其 asyncpg 池绑定在「已关闭的事件循环」上。
+
+    根因（2026-10-12 二分定位实测）：
+      `app.repositories.vector_repo.get_vector_store()` 返回**模块级单例**
+      `_store_instance`，其 `_pool` 由**首次调用它的那个 asyncio 事件循环**创建
+      （`PgVectorStore._get_pool()`）。pytest 每个测试跑在独立 loop 上，前一个 loop
+      关闭后单例仍持有**死池** ⇒ 后续任何 `pg recall` 抛 `Event loop is closed`，
+      而 `retrieval.recall()` 用 broad `except Exception` 吞掉并 `return []`
+      ⇒ **静默 merged=0 / 召回为空**，表现为「测试莫名少数据」。
+
+    触发条件：把 `recall` 从「mock 返回 []」改为**真实执行**之后才暴露
+    （此前该文件从不真正触达 pg，单例池从不建立）。生产不受影响 —— uvicorn
+    只有一个长驻 loop，单例语义正确；这是**测试隔离**缺陷。
+
+    对照组（A/B 单变量，`-p no:randomly`）：
+      无本夹具：`tests/integration/test_checklist_query.py` + 目标用例 → 1 failed
+      有本夹具：同一组合 → 1 passed
+    """
+    yield
+    import app.repositories.vector_repo as _vr
+
+    inst = getattr(_vr, "_store_instance", None)
+    _vr._store_instance = None
+    if inst is not None and getattr(inst, "_pool", None) is not None:
+        # 池所属 loop 已关闭，无法 await close()；直接丢弃引用（连接早已失效）
+        inst._pool = None
+
