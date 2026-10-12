@@ -1058,23 +1058,12 @@ async def reparse_document(
     if not text or len(text.strip()) < 10:
         raise HTTPException(400, "Re-parsed content too short")
 
-    try:
-        db.execute(sa_text("DELETE FROM parent_chunks WHERE doc_id = :did"), {"did": doc_id})
-        db.execute(sa_text("DELETE FROM documents WHERE doc_id = :did"), {"did": doc_id})
-        db.commit()
-        logger.info("Deleted old document metadata: %s", doc_id)
-    except Exception as e:
-        logger.warning("Failed to delete old metadata: %s", e)
-
-    # 【F2】hs_bank 已在函数开头解析（早失败，见上）；原此处为
-    # ``bank_cfg.get("hindsight") or "kb"`` 黑洞兜底，且发生在删除之后。
-    if settings.vector_backend == "pgvector":
-        store = get_vector_store()
-        try:
-            await store.delete(doc_id, hs_bank)
-            logger.info("Deleted old vectors via pgvector: %s", doc_id)
-        except Exception as e:
-            logger.warning("Failed to delete old vectors (continuing): %s", e)
+    # 【F3】破坏性步骤（删旧元数据 + 删旧向量）**已下沉到新文档成功落库之后**。
+    # 旧实现顺序为「先删旧、后建新」：中途任何异常（例如 repo.save 的
+    # TypeError: SQLite Date type only accepts Python date objects）都会留下
+    # 「旧文档已删、新文档未建」的空洞 —— 2026-10-12 批量重解析实测丢 3 篇。
+    # 现改为「先建新、再删旧」：失败时旧文档完好，最多残留只读孤儿
+    # parent_chunks（键为未落库的新 doc_id，不影响检索）。
     profile = profile_document(text)
     doc_type = profile.get("doc_type", "generic")
     pc_chunks = []
@@ -1205,6 +1194,24 @@ async def reparse_document(
         except Exception:
             pass
     db.commit()
+
+    # 【F3】新文档（含 parent_chunks）已成功落库 → 现在才删除旧文档。
+    # 顺序颠倒即本缺陷修复的核心：破坏性操作放在最后，失败不丢文档。
+    # documents 表仅以 doc_id 为主键（无 title 唯一约束），故先建后删零冲突。
+    try:
+        db.execute(sa_text("DELETE FROM parent_chunks WHERE doc_id = :did"), {"did": doc_id})
+        db.execute(sa_text("DELETE FROM documents WHERE doc_id = :did"), {"did": doc_id})
+        db.commit()
+        logger.info("Reparse: 旧文档元数据已删除 %s（新文档 %s 已落库）", doc_id, new_doc_id)
+    except Exception as e:
+        logger.warning("Reparse: 删除旧文档元数据失败（不影响新文档）: %s", e)
+    if settings.vector_backend == "pgvector":
+        store = get_vector_store()
+        try:
+            await store.delete(doc_id, hs_bank)
+            logger.info("Reparse: 旧向量已删除 %s", doc_id)
+        except Exception as e:
+            logger.warning("Reparse: 删除旧向量失败（不影响新文档）: %s", e)
 
     # 【R3-3 CC-C2】重解析派生 _verify_searchable 统一走 spawn_bg（_BG_SEM 限流），
     # 与 upload.py 派生任务同水位，防重解析批量触发打爆外部 API。

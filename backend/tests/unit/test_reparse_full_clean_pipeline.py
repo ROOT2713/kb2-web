@@ -388,3 +388,87 @@ class TestReparsePublishedDateCoercion:
         )
         assert "date(" in body, "reparse_document 未构造 date 对象"
 
+
+# ═══════════════════════════════════════════════════════════════════
+# ⑤ 缺陷 3：reparse 非原子 —— 先删旧再建新，中途失败即丢文档
+#     实测：2026-10-12 批量重解析，第 1、2 篇在 repo.save 处 500，
+#           「旧文档已删、新文档未建」→ 3 篇元数据 + 向量永久丢失
+#           （文档总数 627 → 624）。修法：破坏性步骤下沉到新文档落库之后。
+# ═══════════════════════════════════════════════════════════════════
+
+class TestReparseNonAtomicity:
+
+    def test_old_doc_survives_when_new_doc_creation_fails(
+        self, client, db_session, tmp_path, monkeypatch
+    ):
+        """【F3】新建文档失败时旧文档必须完好 —— 旧实现先删旧 → 文档丢失。"""
+        from datetime import date as _date
+
+        from app.api import documents
+        from app.repositories.document_repo import DocumentRepository
+
+        upload_dir = tmp_path / "uploads_f3"
+        upload_dir.mkdir()
+        filename = "GB_50016-f3.pdf"
+        (upload_dir / filename).write_bytes(b"%PDF-1.4 fake")
+        monkeypatch.setattr(settings, "upload_dir", str(upload_dir))
+
+        db_session.add(Document(
+            doc_id="old-f3-1", title="非原子性测试标准", bank="general",
+            hs_bank="kb_general", status="active", searchable=1,
+            filename=filename, category="standard", published_date=_date(2021, 1, 1),
+        ))
+        db_session.commit()
+
+        async def _fake_parse(_fn, _c):
+            return "# 标准\n\n" + "正文内容若干，必须超过一百字符。" * 10
+
+        monkeypatch.setattr(documents, "parse_document", _fake_parse)
+
+        class _FakeStore:
+            async def delete(self, *_a, **_k):
+                return 0
+
+            async def upsert(self, *_a, **_k):
+                return 1
+
+        monkeypatch.setattr(documents, "get_vector_store", lambda: _FakeStore())
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("模拟新建文档失败")
+
+        monkeypatch.setattr(DocumentRepository, "save", _boom)
+
+        # TestClient 默认 raise_server_exceptions=True → 未处理异常会再抛出。
+        # 真实服务由 error_handler 中间件转 500。两种形态都算「失败信号」。
+        try:
+            resp = client.post("/api/documents/old-f3-1/reparse")
+            code = resp.status_code
+        except Exception:
+            code = 500
+        assert code >= 500, f"预期失败，实得 {code}"
+
+        db_session.expire_all()
+        old = db_session.query(Document).filter_by(doc_id="old-f3-1").first()
+        assert old is not None, (
+            "❌ 缺陷 3 复现：新建失败后旧文档被删除（数据永久丢失）"
+        )
+        assert old.status == "active", f"旧文档状态被改动: {old.status}"
+        assert old.searchable == 1, f"旧文档 searchable 被改动: {old.searchable}"
+
+    def test_source_orders_delete_after_save(self):
+        """源码锁【F3】：删除旧文档必须排在新文档落库（repo.save）之后。"""
+        import inspect
+
+        from app.api import documents
+
+        body = inspect.getsource(documents.reparse_document)
+        i_save = body.find("repo.save(")
+        i_del = body.find("DELETE FROM documents WHERE doc_id")
+        assert i_save != -1, "未找到 repo.save 调用"
+        assert i_del != -1, "未找到删除旧文档的 SQL"
+        assert i_save < i_del, (
+            "❌ 删除旧文档排在新建之前（缺陷 3 复发：失败即丢文档）"
+        )
+
+
