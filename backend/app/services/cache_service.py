@@ -205,18 +205,29 @@ def invalidate_for_doc(doc_id: str):
 
 
 def invalidate_query_cache_by_bank(bank: str) -> None:
-    """上传/重解析后失效查询缓存（该 bank + 'all' 的答案缓存都基于旧文档集）。
-    【FIX-R2-7】原只 invalidate_bm25，query_cache 留存旧答案 → 检索不到新文档。
-    删除路径用 invalidate_for_doc（per-doc 精确）；新增/内容变更无 doc_id 可对 → 按 bank 清。
+    """上传/重解析/改库后失效查询缓存 —— **整表清空**（方案A，2026-10-12）。
+
+    旧口径 ``DELETE WHERE bank IN (:bank, 'all')`` 对**聚合库**漏清：
+    上传落到 ``kb_standard`` 时其业务键是 ``standards``，于是只清
+    ``standards``+``all``；但 ``industry`` 的检索范围（vector_banks）
+    **包含** ``kb_standard`` ⇒ 用 industry 问过的问题在重入库后仍命中旧答案。
+    只读实测缺口：上传 standards 时清 1 行、存活 4 行（其中 2 行 industry）。
+
+    query_cache 是纯派生数据、当前仅个位数行，整表清空的代价可忽略
+    （最坏 = 多几次 LLM 重算），换取「不可能漏清」→ 取正确性优先。
+    与 ``clear_all_cache()`` 同口径；``descriptor``: bank 仅用于日志溯源。
+
+    历史：【FIX-R2-7】原只 invalidate_bm25，query_cache 留存旧答案 → 检索不到新文档。
+    删除路径仍用 ``invalidate_for_doc``（per-doc 精确，保留）。
     """
     db = SessionLocal()
     try:
-        result = db.execute(
-            text("DELETE FROM query_cache WHERE bank IN (:b1, :b2)"),
-            {"b1": bank, "b2": "all"},
-        )
+        result = db.execute(text("DELETE FROM query_cache"))
         db.commit()
-        logger.info("[CACHE] query_cache invalidated %d rows for bank=%s(+all)", result.rowcount, bank)
+        logger.info(
+            "[CACHE] query_cache cleared %d rows (full-table; triggered by bank=%s)",
+            result.rowcount, bank,
+        )
     except Exception as e:
         db.rollback()
         logger.warning("[CACHE] invalidate_query_cache_by_bank failed: %s", e)
