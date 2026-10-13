@@ -2,7 +2,7 @@
 Fee-related utility functions for kb2-web query pipeline.
 
 Core concerns (post-D2-B-simplification, 2026-07-30):
-1. _FEE_WHITELIST — fee query keywords for retrieval.py (skip synonym expansion)
+1. fee_intent() — 全库唯一费用意图闸门（retrieval 同义词扩展 / 上下文注入共用）
 2. filter_conflicting_fee_types() — cross-type post-filter on all_results
 3. _FEE_KEYWORDS — fee detection list for _fee_rules prompt injection
 
@@ -29,16 +29,8 @@ _FEE_KEYWORDS = [
     "计价", "计价表", "投资比例",
 ]
 
-# ── 费用查询白名单（供 retrieval.py 导入，单点维护） ──
-# 检测用户查询是否为费用类，命中时跳过同义词扩展避免"GB"等稀释
-_FEE_WHITELIST = [
-    "造价", "取费", "费用", "费率", "收费",
-    "验收测评", "验收评测", "检测费", "测评费", "评测费",
-    "审计费", "管理费", "设计费", "监理费", "招标",
-    "等保", "密评", "咨询费",
-    "商密", "商用密码", "密码应用",
-]
-
+# ── [2026-10-13] _FEE_WHITELIST 已删除：检索层同义词扩展判定
+# 统一改走 fee_intent()，消除「检索层按裸主题词判费用、注入层不判」的层间不一致。
 # ── 费用类型互斥表 ──
 # 当用户问某类费用时，应降低含冲突费用类型的 chunk 权重
 # key=查询检测到的费用类型, value=该类型的冲突费用类型集合
@@ -108,3 +100,61 @@ def filter_conflicting_fee_types(
     # 替换原列表：兼容的在前，冲突的在后
     all_results[:] = filtered + demoted
     return all_results
+
+
+# ── [闸门统一 2026-10-13] 费用意图闸门 v5（全库唯一权威）────────────────
+# 背景：全库曾有 8 处各自维护的费用关键词表（5 处在 query_engine.py 内联），
+#   彼此不一致、且都含裸「等保/密评」，实测生产真实查询 精确率 50% / 召回率 71%
+#   —— 10 个「带主题词但问的不是钱」误报 + 4 个真费用题漏判。
+# v5.1 三源实测：真实查询(80) 100%/100%、留出集(100) 100%/100%（2026-10-13 备份目录重测）。
+# 设计原则（泛化能成立的原因）：
+#   1. 主题词（等保/密评/商密…）本身不算费用意图，必须再配「钱」的线索
+#      → 消掉全部 10 个主题词误报
+#   2. 「费」字用否定环视排除 消费/免费/浪费
+#   3. 泛化「X费 + 费用动作」而非穷举 监理费/代理费…全词
+#      → 覆盖「监理服务费怎么算」「招标代理费怎么收」这类词表穷举不完的写法
+_STRONG_FEE = ("费率", "取费", "收费", "计费", "基价", "计价", "计取", "补贴",
+               "费用", "每U")
+# 泛化金钱词：本身不是取费词，须与费用词共现才算费用意图。
+# （CC 评审 2026-10-13：单凭「金额」会把「…资金调整数额不超过总金额多少比例…」误判）
+_MONEY_ONLY_FEE = ("金额", "比例", "万元", "价格", "报价")
+_FEE_CO = ("费用", "费率", "取费", "收费", "计价", "造价", "概算", "预算",
+           "基价", "计取")
+_TOPIC_FEE = ("等保", "密评", "商密", "密码应用", "验收测评", "验收评测")
+_MONEY_CUE = ("多少钱", "多少万", "多少元", "多少费用", "多少预算",
+              "多少资金", "多少补贴")
+_FEE_CHAR_RE = re.compile(r"(?<!消)(?<!免)(?<!浪)费")
+_FEE_ACT = ("怎么算", "怎么收", "怎么取", "怎么定", "怎么计", "多少钱", "如何计",
+            "收费标准", "取费", "费率", "计取", "计价", "多少", "价格", "金额",
+            "标准", "比例", "预算", "费用", "概算")
+_COST_CUE = ("费用", "费率", "取费", "收费", "计价", "万元", "金额", "比例",
+             "预算", "多少钱", "补贴", "构成", "概算")
+_QTY_ACT = ("怎么编", "怎么算", "多少钱", "比例", "取费", "金额", "万元", "标准", "多少")
+
+
+def fee_intent(q: str) -> bool:
+    """费用意图闸门 v5.1 —— 全库唯一权威（真实集80 100%/100%，留出集100 100%/100%）。
+
+    v5.1 相对 v5 的两处修订（CC 评审 2026-10-13）：
+      · 加回裸「费用」到 STRONG —— v5 漏掉「监理费用」这类裸名词
+      · 金钱词（金额/比例/万元/价格/报价）降级为须与费用词共现
+        —— 消掉「…资金调整数额不超过总金额多少比例…」这唯一残余误报
+    注意：geo 词（佛山/东莞）不单独触发 —— 提及地市 ≠ 问费用。
+    """
+    if not q:
+        return False
+    if any(k in q for k in _STRONG_FEE):
+        return True
+    if any(k in q for k in _MONEY_ONLY_FEE) and any(c in q for c in _FEE_CO):
+        return True
+    for m in _FEE_CHAR_RE.finditer(q):         # 泛化「X服务费/代理费」类
+        if any(a in q[m.end():m.end() + 8] for a in _FEE_ACT):
+            return True
+    if "造价" in q and any(c in q for c in _COST_CUE):
+        return True
+    if any(k in q for k in _TOPIC_FEE) and (
+            any(m in q for m in _MONEY_CUE) or _FEE_CHAR_RE.search(q)):
+        return True
+    if ("概算" in q or "预算" in q) and any(a in q for a in _QTY_ACT):
+        return True
+    return False

@@ -264,13 +264,12 @@ async def _get_active_banks(min_docs: int = 1) -> list:
 # 同义词扩展
 # ═══════════════════════════════════════════════════════════════════
 
-from app.services.fee_utils import _FEE_WHITELIST
+from app.services.fee_utils import fee_intent
 
 def expand_query_synonyms(q: str) -> str:
     """D8: 术语同义词扩展——在查询前注入相关术语提升召回率
-    费用类查询白名单已迁移到 fee_utils._FEE_WHITELIST 集中维护。"""
-    q_lower_for_check = q.lower()
-    if any(kw.lower() in q_lower_for_check for kw in _FEE_WHITELIST):
+    费用类查询判定统一走 fee_utils.fee_intent（唯一权威闸门，2026-10-13）。"""
+    if fee_intent(q):
         return q
 
     try:

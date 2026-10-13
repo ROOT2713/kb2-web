@@ -37,7 +37,8 @@ from app.utils.text_cleaning import (
 )
 from app.utils.tokenizer import extract_keyword_snippet, tokenize
 from app.config import settings
-from app.services.fee_utils import filter_conflicting_fee_types
+from app.services.fee_utils import (filter_conflicting_fee_types,
+                                        fee_intent)
 from app.services.prompt_hardening import build_fee_hint as _build_fee_table_hint
 from app.services.answer_structurer import (
     structure_answer as _structure_answer,
@@ -46,6 +47,76 @@ from app.services.answer_structurer import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ── [修1 2026-10-13] 费率表选表：表单元切分 + 查询相关度排序 ────────────────
+# 实测缺陷（FEE-QUICK，原 query_engine.py:1734-1758）：
+#   ① 排序键不含查询：原 ORDER BY p.parent_idx（= 文档内序号）⇒ 不同问题注入内容
+#      逐字相同（"监理服务费怎么算"与"100万三费"拿到同一批表）。
+#   ② 一个父段只出第一张表：原每父段只取前 12 个管道行 ⇒ 实测 29f901c2
+#      parent_idx=29 装 表5-42~5-48 共 7 张表（49 个管道行），
+#      「表5-47 电子政务信息安全等级保护评测费用表」被整张切掉（切掉 37 行）。
+# 本组函数把父段按 表X-Y 标题切成独立表单元，再按查询相关度排序选表。
+# 注：纯函数、无 I/O、可单测；不改 SQL 的过滤谓词，只改「选哪些表」。
+_FEE_TERM_GROUPS = (
+    (("验收测评", "验收评测"), 30),          # 同一事物的两种写法
+    (("等级保护", "等保"), 30),              # 表中写"等级保护评测"、问题常写"等保测评"
+    (("商密", "商用密码", "密码应用", "密评"), 30),
+    (("监理",), 22),          # ← 单元素组必须写成 1-元组；("监理") 会退化成按「字符」匹配
+    (("采购代理", "招标代理"), 20),
+    (("信创",), 20),
+    (("设计",), 16),
+    (("运维",), 14),
+    (("测评", "评测"), 10),
+    (("费率", "收费"), 6),
+)
+# 表号最多三级（如 表21.2.3）；数字与分隔符间允许空白
+_FEE_CAP_RE = re.compile(r"表\s*(\d+(?:\s*[-–—.]\s*\d+){0,2})\s*([^\n|]{2,44})")
+_FEE_NORM_WS = re.compile(r"[\s\u3000]+")
+
+
+def _fee_split_units(text: str) -> list:
+    """把父段文本按「表X-Y 表名」切成独立表单元 → [(表号, 表名, 管道行列表)]。
+
+    - 无标题的管道行归入前一个单元；
+    - 父段完全无标题时整体作为 "?" 单元（保持原行为：仍能命中无标题表）；
+    - 少于 3 个管道行的单元丢弃（与原 len(_qrows_tbl) >= 3 门槛一致）。
+    """
+    caps = [(m.start(), m.group(1).replace(" ", ""), m.group(2).strip())
+            for m in _FEE_CAP_RE.finditer(text)]
+    units, order, cur, off = {}, [], None, 0
+    for line in text.split("\n"):
+        for cp, num, name in caps:
+            if abs(cp - off) < 3 and not line.strip().startswith("|"):
+                cur = (num, name)
+                if cur not in units:
+                    units[cur] = []
+                    order.append(cur)
+        if line.strip().startswith("|") and len(line) < 200:
+            if cur is None:
+                cur = ("?", line.strip()[:20])
+                if cur not in units:
+                    units[cur] = []
+                    order.append(cur)
+            units[cur].append(line)
+        off += len(line) + 1
+    return [(n, m, units[(n, m)]) for n, m in order if len(units[(n, m)]) >= 3]
+
+
+def _fee_unit_score(num: str, name: str, q_norm: str, q_nums: set) -> int:
+    """表单元与查询的相关度 = 同义词组命中（查询有 ∧ 表名有）+ 表号直查。
+
+    打分只做正向加分：未命中的单元得 0 分，在「相关度降序 + 稳定次级键」排序下
+    仍保留在候选序列中。注意这只保证排序偏好，**不保证入选集合不变**：
+    ① 上限 if _added >= 10 会截断；② 去重键会合并重复副本。两者都会改变集合。
+    """
+    s = 0
+    blob = _FEE_NORM_WS.sub("", name)
+    for group, w in _FEE_TERM_GROUPS:
+        if any(t in q_norm for t in group) and any(t in blob for t in group):
+            s += w
+    if num in q_nums:
+        s += 100                # 问题里写了「表5-49」→ 该表置顶
+    return s
 
 # ── Confidence Rejection Messages ──
 _REJECT_MSG_KNOWLEDGE_GAP = "知识库中未找到与您问题直接相关的信息。请尝试换一种方式提问，或确认您的查询范围。"
@@ -756,14 +827,7 @@ async def _build_search_context(
     # 确保费率表数据在 top results 中。不评分、不注入空表头。
     logger.info("[FEE-DEBUG] entering fee block, q=%s", (q or "")[:50])
     _dq = q
-    _fee_q = any(kw in _dq for kw in [
-        "造价", "取费", "费用", "费率", "收费",
-        "验收测评", "验收评测", "检测费", "测评费", "评测费",
-        "审计费", "管理费", "设计费", "监理费", "招标",
-        "等保", "密评", "咨询费",
-        "概算", "佛山", "东莞", "造价指南", "概算编制",
-        "取费标准", "设计费比例", "计价",
-    ])
+    _fee_q = fee_intent(_dq)
     if _fee_q:
         logger.info("[FEE-RECALL] _fee_q=%s q=%s", _fee_q, q[:60])
         try:
@@ -1714,12 +1778,7 @@ async def _generate_answer(
     # ── [FEE] 费率表速查区块：费表数据独立注入 prompt 顶部（2026-08-03）──
     # 背景：多地市费表并存时，LLM 只看前 2-3 个来源，忽略排后面的东莞表5/表9。
     # 解法：把含费率数字的费表 chunk 压缩成独立区块，插到 context 最前。
-    _fee_q_check = any(kw in q for kw in [
-        "造价", "取费", "费用", "费率", "收费",
-        "验收测评", "验收评测", "检测费", "测评费", "评测费",
-        "设计费", "监理费", "等保", "密评",
-        "概算", "佛山", "东莞", "造价指南", "概算编制",
-    ])
+    _fee_q_check = fee_intent(q)
     if _fee_q_check and doc_facts:
         _fee_quick_lines = ["## 费率表速查（多地市并存，逐表核对）"]
         _added = 0
@@ -1737,25 +1796,41 @@ async def _generate_answer(
                 f"WHERE p.doc_id IN ({_placeholders}) "
                 f"AND (p.parent_text LIKE '%费率表%' OR p.parent_text LIKE '%收费%基价%' "
                 f"OR p.parent_text LIKE '%计算标准%' OR p.parent_text LIKE '%收费基价%' "
-                f"OR (p.parent_text LIKE '%表%' AND p.parent_text LIKE '%速算%')) "
-                f"ORDER BY p.parent_idx"
+                f"OR (p.parent_text LIKE '%表%' AND p.parent_text LIKE '%速算%'))"
             ), _qparams).fetchall()
-            _seen_blocks = set()
+            # [修1] 去掉 ORDER BY p.parent_idx（与查询无关），改为切表单元 + 相关度选表
+            _fee_q_norm = _FEE_NORM_WS.sub("", q)
+            _fee_q_nums = set(re.findall(r"表(\d+(?:[-–—.]\d+)?)", _fee_q_norm))
+            _fee_cands = []
             for _qd, _qtext, _qtitle in _qrows:
-                # 提取表格行（每行 ≤200 字，只取管道符行）
-                _qrows_tbl = [l for l in _qtext.split("\n")
-                              if l.strip().startswith("|") and len(l) < 200]
-                if len(_qrows_tbl) >= 3:
-                    # 表头 = 第一个含 表/费率/收费 的非管道行，或直接用表格首行
-                    _block_key = f"{_qd}:{_qrows_tbl[0][:40]}"
-                    if _block_key in _seen_blocks:
-                        continue  # 跳过重复块（表2-28 有 15 份）
-                    _seen_blocks.add(_block_key)
-                    _snippet = "\n".join(_qrows_tbl[:12])
-                    _fee_quick_lines.append(f"\n[{_qtitle}]\n{_snippet}")
-                    _added += 1
-                    if _added >= 10:
-                        break
+                for _unum, _uname, _upipe in _fee_split_units(_qtext):
+                    _fee_cands.append(
+                        (_fee_unit_score(_unum, _uname, _fee_q_norm, _fee_q_nums),
+                         _qd, _qtitle, _unum, _uname, _upipe))
+            # 相关度降序；同分按 (doc_id, 表号, 表名) 稳定排序，避免同号不同表时抖动
+            _fee_cands.sort(key=lambda _c: (-_c[0], _c[1], _c[3], _c[4]))
+            _seen_blocks = set()
+            _picked = []
+            for _sc, _qd, _qtitle, _unum, _uname, _upipe in _fee_cands:
+                # 去重键含表名：同一文档内存在「同表号、不同表」（实测 512a120f 的表1
+                # 既是「系统集成费费率表」又是「采购代理费收费基价」），仅用表号会误合并、
+                # 把真费率表整张丢掉；加表名后只合并真正重复的副本（如表2-28 的 15 份）。
+                _block_key = f"{_qd}:{_unum}:{_uname}"
+                if _block_key in _seen_blocks:
+                    continue
+                _seen_blocks.add(_block_key)
+                _snippet = "\n".join(_upipe[:14])
+                # 无数字表号的单元（_unum == "?"，名取自表头管道行）不显示「表?」，压平后直接用作标签
+                _uname_clean = _uname.strip().strip("|").strip() if _uname else ""
+                _label = (f"表{_unum} {_uname_clean}".strip() if _unum != "?"
+                          else _uname_clean)
+                _fee_quick_lines.append(f"\n[{_qtitle}] {_label}\n{_snippet}")
+                _picked.append(f"{_qd[:8]}:{_unum}")
+                _added += 1
+                if _added >= 10:
+                    break
+            if _picked:
+                logger.info("[FEE-QUICK] picked %d: %s", len(_picked), ",".join(_picked))
             _quick_db.close()
             _quick_db = None
         except Exception as _qe:
@@ -1885,17 +1960,15 @@ async def _generate_answer(
     # D2-B 已在 _build_search_context 中用评分感知注入 top-8 fee chunk，
     # 此处只作为兜底：检查 context 中是否已被 D2-B 注入（有 %、费率、计费额等特征），
     # 已注入则跳过 T7 避免重复。
-    _has_rate = any(t in p for p in context_parts for t in ["%", "费率", "计费额", "收费基价"])
-    if (_tier_extra or any(kw in q for kw in [
-        "造价", "取费", "费用", "费率", "收费",
-        "验收测评", "验收评测", "检测费", "测评费", "评测费",
-        "审计费", "管理费", "设计费", "监理费", "招标",
-        "等保", "密评", "咨询费",
-        "商密", "商用密码", "密码应用",
-        "概算", "佛山", "东莞", "造价指南", "概算编制",
-        "概算指南", "取费标准", "设计费比例", "比例范围",
-        "计价", "计价表", "投资比例",
-    ])) and not _has_rate:
+    # [2026-10-13] 原判据含裸 "%"（政务文档普遍含百分比）→ 几乎恒真，T7 兜底长期不触发；
+    # 且只查 context_parts（召回块），看不到前面 FEE-QUICK 的注入。
+    # 改为在最终 context 上找费率表特征（含 FEE-QUICK 速查块），避免重复注入。
+    _has_rate = (
+        "费率表速查" in context
+        or any(t in context for t in ["计费额", "收费基价", "取费标准", "费率表"])
+        or bool(re.search(r"(?:费率|取费|计费额|基价)[^\n]{0,24}\d+(?:\.\d+)?\s*[%％]", context))
+    )
+    if (_tier_extra or fee_intent(q)) and not _has_rate:
         _snippet, _dtitle = _find_rate_table_snippet(_tier_extra, bank)
         if _snippet:
             _tier_label = _tier_extra[0]
@@ -1968,16 +2041,7 @@ async def _generate_answer(
     # Note: FastAPI Form() decodes UTF-8 correctly, but the requests library
     # 2026-08-13：入口已统一 _fix_encoding，此处不再需要 latin-1 hack
     _d2q_fee = q
-    if any(kw in _d2q_fee for kw in [
-        "造价", "取费", "费用", "费率", "收费",
-        "验收测评", "验收评测", "检测费", "测评费", "评测费",
-        "审计费", "管理费", "设计费", "监理费", "招标",
-        "等保", "密评", "咨询费",
-        "商密", "商用密码", "密码应用",
-        "概算", "佛山", "东莞", "造价指南", "概算编制",
-        "概算指南", "取费标准", "设计费比例", "比例范围",
-        "计价", "计价表", "投资比例",
-    ]):
+    if fee_intent(_d2q_fee):
         _fee_rules = (
             "**计费类查询强制计算规则**：当「文档内容」中包含费率表（分档百分比/基价表）、计算公式（V=Dxgx(1-Z)/直线内插等）或具体计费数据时，你必须基于文档中的公式和数据执行以下操作：\n"
             "   a. 从文档中找出**名称最匹配**的费率表（如用户问验收测评费 优先找名称含验收测评或验收评测的费率表，不得改用名称不相关的监理费/设计费表）\n"
@@ -2407,13 +2471,7 @@ def _assess_recall_confidence(
     # 费用类查询跳过 L1.5 gate（D2-B注入的表格数据不含"第X条/应符合"等模式但有实际数值）
     # 2026-08-13：入口已统一 _fix_encoding，此处不再需要 latin-1 hack
     _q_check = q
-    _fee_q_check = any(kw in _q_check for kw in [
-        "造价", "取费", "费用", "费率", "收费",
-        "验收测评", "验收评测", "检测费", "测评费", "评测费",
-        "审计费", "管理费", "设计费", "监理费", "招标",
-        "等保", "密评", "咨询费",
-        "商密", "商用密码", "密码应用",
-    ])
+    _fee_q_check = fee_intent(_q_check)
     if source_count > 0 and not _fee_q_check:
         _all_chunk_texts = []
         for doc_fact_list in doc_facts.values():
