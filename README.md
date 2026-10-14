@@ -989,22 +989,100 @@ SELECT doc_id FROM documents WHERE status != 'active' OR searchable != 1
 
 ---
 
+## 🧬 重复 active 文档合并记录（2026-10-14）
+
+### 1. 缺陷定性
+
+同一份标准在库中有**两个 `active` 版本**（早期手工上传的「（文本版）」与后期
+`p1_recover` 恢复版并存），检索时**两份同时进 top-K**。实测（查询
+「软件造价评估实施规程对功能点计数有哪些要求」，`bank=all`）：`c71bf9dd` **1.0** 与
+`d5836331` **0.92** 分列 top-1 / top-2 —— **同一标准的两个版本吃掉两个候选位**。
+
+**为什么管线没拦住**：上传侧的同标题查重是**精确匹配**（`supersede_and_purge`），
+而这两组的 title 差异是**尾部括注**（`（文本版）` vs 无 / `【建】` 前缀 vs `《…》`），
+**不触发** ⇒ 重复 active 长期累积。共 **5 组**（`documents` 归一化去括注后同组）。
+
+### 2. 关键判据：**没有任何一组是干净的包含关系**
+
+用「父段整块 substring + 30 字滑窗」双向测互含率（实测）：
+
+| 组 | 保留（survivor） | 退休（loser） | 退休⊂保留 | 保留⊂退休 |
+|---|---|---|---|---|
+| G1 CECS 182:2005 智能建筑检测规程 | `bd2577e7` 106,362 字 | `bafdd3eb` 95,929 字 | 90.3% | 85.0% |
+| G2 T/EGAG 010-2022 监理服务规范 | `aa4da780` 15,796 字 | `3b00d035` 3,614 字 | 84.2% | **16.7%** |
+| G3 GDZW 0082-2023 验收规范 | `0b38aba2` 6,720 字 | `ab172769` 7,318 字 | 87.7% | **94.7%** |
+| G4 GY/T 383-2023 应急广播总体技术规范 | `b4bdc23d` 8,718 字 | `be2cd9dc` 5,312 字 | 90.3% | 69.0% |
+| G5 软件造价评估实施规程（修订） | `c71bf9dd` 23,955 字 | `d5836331` 18,348 字 | 94.8% | 71.8% |
+
+**每组双方都有 5%~34% 独有内容** ⇒ 直接 `supersede_and_purge`（删向量）**必然丢内容**
+（与上节 GB 50168-2018 同一个坑）。
+
+### 3. 处置：只退休「户口」，不删向量（方案 A）
+
+改退休方 **4 个字段**：`status='superseded'`、`superseded_by`、`stale_at`、
+`stale_reason='duplicate_merge_20261014'`。**不动 pg 向量、不动父段、不改代码。**
+
+**为何改 status 即立刻不可检索（三处代码实证）**：
+- `retrieval.py:509/520`、`query_engine.py:421/450/481/837/1221/1408/1914` ——
+  **每条检索 SQL 都要求 `status='active' AND searchable=1`**；
+- `_filter_invisible` 黑名单含 `status!='active'`（`retrieval.py:337`），补齐向量路径；
+- 生效延迟 ≤30s（黑名单 TTL `_INVISIBLE_TTL=30.0`），**无需重启**。
+
+**为什么不动 survivor 的 `supersedes` 字段**：它是**单值列**，G3/G5 的 survivor
+已各自指向更早版本（`76d97af9` / `08ef23e3`），覆盖会**断链**。
+
+### 4. 执行与验证证据
+
+| 项 | 结果 |
+|---|---|
+| 改前状态分布 | `active=185 · stale=53 · superseded=391`（总 629） |
+| 改后状态分布 | **`active=180 · stale=53 · superseded=396`**（总 629） |
+| 备份 | `/tmp/kb.db.dupmerge.20261014233143.bak`（全量）+ 5 行改前快照 JSON |
+| **零内容损失**（pg 向量仍在） | `bafdd3eb` 25 / `3b00d035` 233 / `ab172769` 52 / `be2cd9dc` 5 / `d5836331` 243 行，**全部保留** |
+| **过滤生效对照**（6/6 通过） | A 退休`3b00d035`→剔除 ✅ · B 保留`aa4da780`→保留 ✅ · C 历史 superseded→剔除 ✅ · D 真孤儿→剔除 ✅ · E 无标签→保留 ✅ · F 保留`c71bf9dd`→保留 ✅ |
+| **端到端**（清缓存 + 等 31s TTL） | G5 复测：`d5836331` **出现 0 次**、`c71bf9dd` 在 top-1；G2 复测：`3b00d035` **出现 0 次**、`aa4da780` 在榜 |
+
+**回滚**（一条 SQL，零风险）：
+```bash
+sqlite3 /home/ubuntu/kb-web/data/kb.db \
+  "UPDATE documents SET status='active', superseded_by=NULL, stale_at=NULL, \
+   stale_reason=NULL WHERE stale_reason='duplicate_merge_20261014';"
+```
+
+### 5. ⚠️ 顺带发现的元数据缺陷（本轮未处理）
+
+1. `ab172769` `original_text_length=0`、`coverage_pct=0.0`（实存 7,318 字）—— **元数据缺失**
+2. `aa4da780` `coverage_pct=303.5%` —— **越界值**；`bd2577e7` `coverage_pct=0.0` 且 `concepts=0`
+3. G2–G5 的 `p1_recover` 版**已各取代过一个 `backfill_0904` 版** ⇒ 这是「**第二代重复**」：
+   `p1_recover` 与 `manual` 再次撞车（第一次是 `backfill_0904`）
+4. G4 两文档 PG 侧 `metadata.bank='kb_standard'`，其余组为 `standards` —— **口径不一致**
+
+### 6. 教训
+
+1. **查重闸门是精确匹配 ⇒ 尾部括注即绕过**。治本要改「归一化后比较」，但那是改生产代码（另立项）。
+2. **判「谁是重复的那份」必须双向测互含率**：只测单向（A⊂B）会得出错误结论
+   —— G3 的保留方 ⊂ 退休方 **94.7%**，单向看会**选错保留对象**。
+3. **「不删数据」也能达成治理目标**：户口层退休（改 status）与向量层清理是**两个独立动作**，
+   前者零风险可回滚，后者代价高。**先做前者**。
+
+---
+
 ## 📊 当前状态（2026-10-14 更新）
 
 > **口径定义**：**可检索文档** = `documents.status='active' AND searchable=1`；**向量覆盖** = pg `vector_chunks` 中 `metadata->>'registry'='1'` 的去重 `doc_id`。下表数字均为当日实测（命令见本节末）。
 
 | 指标 | 数值 |
 |------|------|
-| 代码状态 | HEAD **`572a6d8`**；近期提交 **`f509b8e`**（费用问答根因修复）+ **`5c29a8f`**（LLM 时间预算修复）+ **`572a6d8`**（README docs）；**kb2-web 已重启生效**（MainPID **1833938**，`Application startup complete`，`/api/banks` **401**；文件 mtime `11:07:30` < 进程启动 `17:51:39`）。**注**：孤儿向量修复（`retrieval.py` + conftest + 测试）改动**已落盘、尚未提交/重启**（见上节 §4④） |
+| 代码状态 | HEAD **`f618804`**；近期提交 **`f509b8e`**（费用问答根因修复）+ **`5c29a8f`**（LLM 时间预算修复）+ **`572a6d8`**（README docs）+ **`55822bd`**（孤儿向量过滤）+ **`f618804`**（README docs）；**kb2-web 已重启生效**（MainPID **1874638**，启动 `19:29:11`，`Application startup complete`，`/api/banks` **401**；孤儿修复文件 mtime `19:02:22` < 进程启动 `19:29:11` ⇒ **新过滤逻辑已在进程内**）。**重复 active 合并（2026-10-14）为纯数据操作，改 `status` 即时生效、无需重启** |
 | 服务 | kb2-web `:3027` · kb2-wiki `:3006` · hermes-wiki `:3004` · tianzhi `:3037` 全部 **200**；systemd drop-in `TimeoutStopSec=600` 已装 |
 | 修复验收（2026-10-14） | **LLM 时间预算**：30 断言 + **9 突变全红** + e2e **12/12（零故障）**；**费用闸门 v5.1**：真实 **100%/100%** + 留出 **100%/100%** |
 | 日志健康（近 30 分钟） | `content empty` / `budget exhausted` / `LLM generation failed` = **0 / 0 / 0**（修复前 3 天累计 378 次截断） |
-| 数据规模 | SQLite `documents` **629 总 / 185 active / 53 stale / 391 superseded**；对外**可检索** = active 且 searchable=1 = **185** |
+| 数据规模 | SQLite `documents` **629 总 / 180 active / 53 stale / 396 superseded**；对外**可检索** = active 且 searchable=1 = **180**（2026-10-14 退休 5 条重复 active，见上节） |
 | 上传任务 | `upload_tasks` **done=75 / failed=23 / 非终态残留 0** |
 | pg 向量 | `vector_chunks` **30,564** 行 / **240** 个 doc_id（`registry` 100%）；**孤儿 1 个 doc_id（262 chunk）** —— GB 50168-2018 内容更全版，保留待重传原件（原 33 条已清理，见上节巡检） |
 | 数据治理 | `PRAGMA integrity_check` = **ok**、`foreign_key_check` = **0 违规**；`profile_confidence` 有值 **269** |
 | 治理定时任务 | kb2 两条治理 cron（**3am 置信度重算 / 5am 上传清理**）；**90 天自动 stale 已停用**（改人工 `stale_detect_manual.sh`，避免「单向棘轮」误杀） |
-| 已知未修项 | ① 现役 GB 50168-2018 缺约 9.8K 字（内容回退，**建议重传原件**；保留的 1 条孤儿含 7.1.x 独有条款）② 归一化同名重复 active 合并方案 ③ 4 篇 >50MB 处置 ④ 2 篇纯扫描件（JJF / GB 50339）OCR 路线 ⑤ 答案引用校验告警（模型引用未检索到的标准，如 GB/T 28449-2018） |
+| 已知未修项 | ① 现役 GB 50168-2018 缺约 9.8K 字（内容回退，**建议重传原件**；保留的 1 条孤儿含 7.1.x 独有条款）② **查重闸门精确匹配 ⇒ 尾部括注绕过**（5 组已人工退休。治本需改「归一化比较」，属生产代码变更，另立项）③ 4 篇 >50MB 处置 ④ 2 篇纯扫描件（JJF / GB 50339）OCR 路线 ⑤ 答案引用校验告警（模型引用未检索到的标准，如 GB/T 28449-2018）⑥ 元数据缺陷：`ab172769` 文本长度/覆盖率=0、`aa4da780` 覆盖率 303.5% 越界、G4 bank 口径不一致 |
 
 **本节取数命令（可复现）**：
 ```bash
