@@ -156,6 +156,7 @@ class TestUnknownBankWarning:
 # 5. vector_repo.upsert embedding 失败整批原子(CC-R2 C1 修复后语义)
 # ═══════════════════════════════════════════════════════════════════
 
+@pytest.mark.real_vector_store
 class TestUpsertAtomicFailure:
     def test_partial_embedding_failure_raises_atomic(self, monkeypatch):
         """【CC-R2】任一 chunk embedding 失败 → 整批抛异常,不静默跳库(防切片补插错位)。"""

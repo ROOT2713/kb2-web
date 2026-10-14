@@ -120,3 +120,53 @@ def pytest_sessionfinish(session, exitstatus):
     if failures:
         print(f"\n📝 [错题积累] 已记录 {len(failures)} 条失败用例到 {_ERRORS_FILE}")
         print(f"   查看: python scripts/wrong_answers.py report")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 【FIX-TESTPOLLUTION】单元测试禁止写生产 pg 向量库
+#
+# 根因（2026-10-14 实测）：
+#   test_rejection.py / test_reparse_full_clean_pipeline.py 等用例走**真实上传管线**，
+#   其中 documents / parent_chunks 落在**内存 SQLite**（db_session 覆盖 conftest 夹具），
+#   而 `PgVectorStore` 是**指向生产 pg 的模块级单例**
+#   （`get_vector_store()` → `app.config.settings.pgvector_database_url`）
+#   ⇒ 向量写进**生产 pg**、户口写进**测试库** ⇒ 每次跑单测都在生产库留下孤儿向量。
+#
+# 实测证据：
+#   2026-10-12 02:46~06:30 留下 26 条（title=文档A/文档B/重复检测测试文档，各 1 chunk）；
+#   2026-10-14 19:01/19:03 两次全量单测又各留 1~2 条 —— 与「跑了几次单测」一一对应。
+#
+# 修法：只桩「写」方法（upsert / delete）—— 污染源是写；
+#       **不桩「读」（query）**，以免改变既有用例语义（部分用例依赖真实召回行为）。
+# ═══════════════════════════════════════════════════════════════════
+
+def pytest_configure(config):
+    """注册 opt-out marker：需要真实 upsert/delete 实现的用例豁免全局写桩。"""
+    config.addinivalue_line(
+        "markers",
+        "real_vector_store: 本用例直接测 PgVectorStore.upsert/delete 的真实实现，"
+        "跳过 _block_vector_writes 全局写桩（这些用例用自建 fake pool，不触生产库）",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _block_vector_writes(request, monkeypatch):
+    """禁止单元测试向生产 pg 向量库写入（写方法置为空操作，读不动）。
+
+    豁免：标了 `@pytest.mark.real_vector_store` 的用例（它们直接验证 upsert/delete
+    的实现细节，用自建 fake pool，不写生产库）。
+    """
+    if request.node.get_closest_marker("real_vector_store"):
+        yield
+        return
+    from app.repositories import vector_repo
+
+    async def _noop_upsert(self, doc_id, chunks, bank, append=False, offset=0):
+        return len(chunks or [])
+
+    async def _noop_delete(self, doc_id, bank):
+        return True
+
+    monkeypatch.setattr(vector_repo.PgVectorStore, "upsert", _noop_upsert)
+    monkeypatch.setattr(vector_repo.PgVectorStore, "delete", _noop_delete)
+    yield

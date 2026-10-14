@@ -310,40 +310,73 @@ def expand_query_synonyms(q: str) -> str:
 # registry=1 只证明"SQLite 有行 + pg 有实存"，不反映户口状态。
 # status!='active' 或 searchable!=1 的 doc 即使 registry=1 也不得被语义召回
 # （BM25/SQL 路径本就有 searchable=1 AND status='active' 过滤，此处补齐向量路径）。
+#
+# 【FIX-ORPHAN】黑名单是"从 SQLite 现存行反推"的，对「SQLite 户口已注销但仍持向量」
+# 的孤儿 doc_id **天然无效**（不在现存行 ⇒ 不在黑名单 ⇒ 原样放行，可进 top-K）。
+# 故额外取一份"全量户口集合"known，候选 doc_id 不在 known 即判孤儿并剔除。
 _INVISIBLE_TTL = 30.0
-_invisible_cache = {"ts": 0.0, "ids": frozenset()}
+# known=None ⇒ 未成功取到全量户口集合 ⇒ 孤儿判定关闭（保持 fail-open 放行全部）
+_invisible_cache = {"ts": 0.0, "ids": frozenset(), "known": None}
+
+
+def _refresh_invisible_cache() -> None:
+    """TTL 内复用；刷新 (ids=不可见集合, known=SQLite 全量户口集合)。
+
+    失败 → (空集, None) ⇒ 调用方放行全部（保留原 fail-open 语义，
+    不因一次 DB 抖动把召回整体打空）。
+    """
+    now = _time.monotonic()
+    if now - _invisible_cache["ts"] <= _INVISIBLE_TTL:
+        return
+    ids: set = set()
+    known = None
+    try:
+        db = SessionLocal()
+        try:
+            rows = db.execute(text(
+                "SELECT doc_id FROM documents WHERE status != 'active' OR searchable != 1"
+            )).fetchall()
+            ids = {r[0] for r in rows}
+            # 【FIX-ORPHAN】SQLite 全量户口（含 superseded/stale）——识别孤儿的判据
+            known = {r[0] for r in db.execute(text("SELECT doc_id FROM documents")).fetchall()}
+        finally:
+            db.close()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("_get_invisible_doc_ids: query failed, 放行全部: %s", e)
+        ids, known = set(), None
+    _invisible_cache["ts"] = now
+    _invisible_cache["ids"] = frozenset(ids)
+    _invisible_cache["known"] = frozenset(known) if known is not None else None
 
 
 def _get_invisible_doc_ids() -> frozenset:
-    now = _time.monotonic()
-    if now - _invisible_cache["ts"] > _INVISIBLE_TTL:
-        ids = set()
-        try:
-            db = SessionLocal()
-            try:
-                rows = db.execute(text(
-                    "SELECT doc_id FROM documents WHERE status != 'active' OR searchable != 1"
-                )).fetchall()
-                ids = {r[0] for r in rows}
-            finally:
-                db.close()
-        except Exception as e:  # noqa: BLE001
-            logger.warning("_get_invisible_doc_ids: query failed, 放行全部: %s", e)
-        _invisible_cache["ts"] = now
-        _invisible_cache["ids"] = frozenset(ids)
+    _refresh_invisible_cache()
     return _invisible_cache["ids"]
 
 
 def _filter_invisible(results: list) -> list:
-    """从召回结果中剔除户口不可见（superseded / searchable=0）的 doc chunk。"""
-    invisible = _get_invisible_doc_ids()
-    if not invisible:
-        return results
+    """从召回结果中剔除不可见 doc chunk。两类剔除：
+
+    ① 户口不可见（superseded / stale / searchable=0）—— 原黑名单判定；
+    ② 【FIX-ORPHAN】户口已注销（pg 残留向量）—— 候选 doc_id 不在 SQLite 全量户口集合内。
+    无 doc_id 标签的 chunk 无法归属，保守放行（原行为）。
+    """
+    _refresh_invisible_cache()
+    invisible = _invisible_cache["ids"]
+    known = _invisible_cache["known"]
+    if not invisible and known is None:
+        return results  # 两次查询都没成功 ⇒ 放行全部（fail-open）
     out = []
     for r in results:
         did = next((t[7:] for t in r.get("tags", []) if t.startswith("doc_id:")), None)
-        if did is None or did not in invisible:
+        if did is None:
             out.append(r)
+            continue
+        if known is not None and did not in known:
+            continue  # 【FIX-ORPHAN】SQLite 无此户口 ⇒ pg 残留向量，剔除
+        if did in invisible:
+            continue
+        out.append(r)
     return out
 
 

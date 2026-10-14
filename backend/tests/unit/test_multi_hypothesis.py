@@ -126,7 +126,8 @@ class TestGenerateAnswerBranch:
     async def test_partial_failure_is_not_degraded_and_judges_only_successful(self):
         """部分视角失败 → 判官只看成功候选；元数据标注 failed_count；答案非占位串。"""
         async def fake_gen(perspective, query, context, bank_prompt,
-                           history_context="", _tier_hint="", user_prompt=None):
+                           history_context="", _tier_hint="", user_prompt=None,
+                           budget_s=None):
             if perspective == "structured":
                 return {"perspective": perspective, "answer": "（structured 视角生成失败: boom）",
                         "failed": True}
@@ -134,7 +135,7 @@ class TestGenerateAnswerBranch:
 
         judged = {}
 
-        async def fake_judge(query, context, hypotheses):
+        async def fake_judge(query, context, hypotheses, budget_s=None):
             judged["count"] = len(hypotheses)
             judged["perspectives"] = [h["perspective"] for h in hypotheses]
             return {"best_perspective": "analytical", "best_answer": "真答案-analytical",
@@ -236,11 +237,12 @@ class TestHypothesisPromptReuse:
         seen = []
 
         async def fake_gen(perspective, query, context, bank_prompt,
-                           history_context="", _tier_hint="", user_prompt=None):
+                           history_context="", _tier_hint="", user_prompt=None,
+                           budget_s=None):
             seen.append((perspective, user_prompt))
             return {"perspective": perspective, "answer": f"ans-{perspective}"}
 
-        async def fake_judge(query, context, hypotheses):
+        async def fake_judge(query, context, hypotheses, budget_s=None):
             return {"best_perspective": "conservative", "best_answer": "best",
                     "all_scores": [], "reasoning": ""}
 

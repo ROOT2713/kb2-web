@@ -80,6 +80,7 @@ def _capture_store():
 # ═══════════════════════════════════════════════════════════════════
 # G1 向量删除按 doc_id 全量（不带 bank 条件）
 # ═══════════════════════════════════════════════════════════════════
+@pytest.mark.real_vector_store
 class TestVectorDeleteDocIdOnly:
     def test_delete_sql_has_no_bank_condition(self):
         """delete() 必须是 WHERE doc_id = $1，不得带 AND bank。"""
