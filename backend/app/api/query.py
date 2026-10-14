@@ -215,6 +215,9 @@ async def query(
                 return {
                     "answer": cached["answer"],
                     "sources": cached["sources"],
+                    # 【2026-10-14 · CC-Q1】补齐 degraded 键：缓存写入已拦 degraded=True，
+                    #   命中即非降级。缺键会让消费方 undefined vs false 误判。
+                    "degraded": False,
                     "cache_hit": "exact",
                     "session_id": session_id,
                     "suggestions": _build_persistent_suggestions(q, cached["sources"]),
@@ -233,6 +236,7 @@ async def query(
                 return {
                     "answer": cached["answer"],
                     "sources": cached["sources"],
+                    "degraded": False,  # 【CC-Q1】同上（缓存命中恒非降级）
                     "cache_hit": "semantic",
                     "similarity": cached.get("similarity"),
                     "session_id": session_id,
@@ -519,6 +523,9 @@ async def query(
         return {
             "answer": reject["message"],
             "sources": [],
+            # 【2026-10-14 · CC-Q1】置信拒答是程序化判定（非 LLM 故障）→ degraded=False。
+            #   该路径在 ctx["degraded"] 赋值前返回，故必须显式给键。
+            "degraded": False,
             "confidence_reject": reject["reject_type"],
             "session_id": session_id,
             "suggestions": _generate_query_suggestions(q, bank, bank_prompt, ctx.get("title_map", {})),
@@ -581,7 +588,11 @@ async def query(
     # ── 规范文件元数据 ──
     standard_contents = _assemble_standard_contents_meta(sources, bank=bank)
 
-    result = {"answer": answer, "sources": sources}
+    # 【2026-10-14】透出 degraded：【LLM 故障降级】与【知识库真未找到】文案逐字相同，
+    #   不透出则调用方无法区分（本次排查被误导两次的根因）。纯附加字段，不改文案。
+    #   注：ctx["degraded"] 由 query.py:545 从生成层取得，此处仅透出，不改判定逻辑。
+    result = {"answer": answer, "sources": sources,
+              "degraded": bool(ctx.get("degraded", False))}
     if validation_result and validation_result.get("issues"):
         result["quality_check"] = validation_result
     if suggestions:
@@ -767,7 +778,7 @@ async def web_search_api(
         answer = await chat([
             {"role": "system", "content": bank_prompt},
             {"role": "user", "content": prompt},
-        ], max_tokens=8000)
+        ], max_tokens=32000)
     except Exception as e:
         answer = f"回答失败: {e}"
 

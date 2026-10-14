@@ -1542,6 +1542,12 @@ def _structure_telemetry(answer: str) -> dict:
         return {}
 
 
+def _gen_remaining(deadline: float) -> float:
+    """生成阶段剩余预算（秒）。下限 1s：预算耗尽后让 chat() 快速失败，
+    而不是带着负预算继续空烧 LLM 配额。"""
+    return max(1.0, deadline - time.monotonic())
+
+
 async def _generate_answer(
     q: str,
     bank: str,
@@ -2195,6 +2201,12 @@ async def _generate_answer(
     # ── 【P0-2】多假设对比分支 ──
     # 放在「单路 LLM 调用之前」而非之后：勾选时直接以多假设产出取代单路调用，
     # 避免白跑一次单路生成（R5 交付包把分支放在 answer 之后，多烧一次调用）。
+    # 【2026-10-14 · CC-Q5】生成阶段共享总预算 deadline：本函数内**所有** LLM 调用
+    #   共用同一份预算。此前每次 chat() 各领一份 settings.chat_retry_budget_s(540s)，
+    #   "主调用 + 二次温控重试 + 多假设 3 路 + judge"最坏叠成 1080s+，而前端
+    #   axios timeout=600s(frontend/src/services/api.ts:6) 早已断开 ⇒ 前端拿不到结果、
+    #   后端仍在空烧配额。现整段生成不超过单次 chat 的预算量级。
+    _gen_deadline = time.monotonic() + float(settings.chat_retry_budget_s or 540.0)
     _mh_meta = None
     _mh_done = False
     try:
@@ -2208,6 +2220,7 @@ async def _generate_answer(
                     history_context=history_context or "",
                     _tier_hint=_tier_hint or "",
                     user_prompt=prompt,  # 复用主链路 prompt，保留费率/对比/字数规则
+                    budget_s=_gen_remaining(_gen_deadline),  # 【CC-Q5】共享预算
                 )
                 # 防御：多假设返回空/None 答案时按失败处理并回落单路，
                 # 绝不让空串成为最终答案（否则会被写入缓存并返回给用户）
@@ -2229,7 +2242,7 @@ async def _generate_answer(
             answer = await chat([
                 {"role": "system", "content": bank_prompt},
                 {"role": "user", "content": prompt},
-            ], max_tokens=8000)
+            ], max_tokens=32000, budget_s=_gen_remaining(_gen_deadline))
         degraded = False  # 【R3-1】正常生成路径
     except ValueError as e:
         err_msg = str(e)
@@ -2240,7 +2253,8 @@ async def _generate_answer(
                 answer = await chat([
                     {"role": "system", "content": bank_prompt},
                     {"role": "user", "content": prompt},
-                ], temperature=0.1, max_tokens=8000)
+                ], temperature=0.1, max_tokens=32000,
+                   budget_s=_gen_remaining(_gen_deadline))  # 【CC-Q5】二次调用不再领新预算
                 degraded = False  # 【R3-1】降温重试成功 → 非降级
             except Exception as e2:
                 logger.error("[GEN] Retry also failed: %s", e2)

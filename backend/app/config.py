@@ -53,10 +53,13 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "deepseek-chat"
     llm_max_retries: int = 3
-    llm_timeout: int = 60
-    # 【R3-2】chat() 重试链总预算（秒）：≈ 网关/客户端超时(120s) 的 80%。
-    # 最坏情形 3×60s+退避 ≈283s 会白烧配额且无人收货——总预算钳制在最坏耗时。
-    chat_retry_budget_s: float = 96.0
+    llm_timeout: int = 300
+    # 【R3-2】chat() 重试链总预算（秒）。
+    # 【2026-10-14】96→540：原注释按"客户端 120s"估算，实测前端 axios timeout=600s
+    #   （frontend/src/services/api.ts:6）且 3027 前无 nginx ⇒ 96s 系自设过紧的墙。
+    #   重上下文费率查询在 96s 内 3/4 撞墙拒答；放到 540s 后 0/4 拒答（同一组 4 题实测）。
+    #   预算充足时推理会收敛（平均 46s），反而比紧预算更快。
+    chat_retry_budget_s: float = 540.0
 
     # ── Embedding ──
     embedding_url: str = ""

@@ -108,6 +108,7 @@ async def _generate_hypothesis(
     _tier_hint: str = "",
     temperature: float = 0.3,
     user_prompt: Optional[str] = None,
+    budget_s: Optional[float] = None,
 ) -> Dict:
     """Generate a single hypothesis answer from one perspective.
 
@@ -137,7 +138,7 @@ async def _generate_hypothesis(
     temp = temp_map.get(perspective, temperature)
 
     try:
-        answer = await llm_chat(messages, temperature=temp, max_tokens=8000)
+        answer = await llm_chat(messages, temperature=temp, max_tokens=32000, budget_s=budget_s)
         return {"perspective": perspective, "answer": answer, "failed": False}
     except Exception as e:
         logger.warning("Hypothesis '%s' failed: %s", perspective, e)
@@ -154,6 +155,7 @@ async def _judge_hypotheses(
     query: str,
     context: str,
     hypotheses: List[Dict],
+    budget_s: Optional[float] = None,
 ) -> Dict:
     """Evaluate all hypotheses and select the best one.
 
@@ -184,6 +186,7 @@ async def _judge_hypotheses(
             ],
             temperature=0.1,
             max_tokens=2000,
+            budget_s=budget_s,
         )
 
         # Parse JSON from judge result
@@ -251,6 +254,7 @@ async def multi_hypothesis_answer(
     _tier_hint: str = "",
     perspectives: Optional[List[str]] = None,
     user_prompt: Optional[str] = None,
+    budget_s: Optional[float] = None,
 ) -> Dict:
     """Generate answer using multi-hypothesis comparison.
 
@@ -282,6 +286,7 @@ async def multi_hypothesis_answer(
         _generate_hypothesis(
             p, query, context, bank_prompt, history_context, _tier_hint,
             user_prompt=user_prompt,
+            budget_s=budget_s,
         )
         for p in perspectives
     ]
@@ -299,7 +304,7 @@ async def multi_hypothesis_answer(
         )
 
     # Step 3: Judge and select
-    judge_result = await _judge_hypotheses(query, context, successful)
+    judge_result = await _judge_hypotheses(query, context, successful, budget_s=budget_s)
 
     return {
         "answer": judge_result["best_answer"],

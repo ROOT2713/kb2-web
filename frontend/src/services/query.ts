@@ -47,6 +47,10 @@ export interface StandardContent {
 export interface QueryResponse {
   answer: string
   sources: Source[]
+  /** 【2026-10-14】true = LLM 故障降级（答案非真实检索产物，等同"知识库未找到"文案）。
+   *  主链路恒有该键；L1/L2 缓存命中与置信拒答路径显式给 false。
+   *  消费方请判 `degraded === true`，勿用 `'degraded' in resp`。 */
+  degraded?: boolean
   cache_hit?: string
   quality_check?: unknown
   suggestions?: QuerySuggestions | null

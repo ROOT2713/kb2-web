@@ -172,7 +172,7 @@ async def chat(
             # → 翻倍 max_tokens 重试（带上限保护）；其余空内容走正常重试/报错。
             if not content and finish_reason == "length":
                 if attempt < max_retries - 1:
-                    next_mt = min(max_tokens * 2, 16000)
+                    next_mt = min(max_tokens * 2, 32000)
                     logger.warning(
                         "LLM content empty (finish_reason=length), retrying with max_tokens=%d",
                         next_mt,
