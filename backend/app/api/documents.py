@@ -1103,15 +1103,45 @@ async def reparse_document(
         parent_map[pc["parent_index"]] = pc["parent"]
 
     try:
+        # CC-Q1（建议项）：父段为空是「输入侧」变体，行数回验 `0 != 0` 恒为 False 抓不到，
+        # 必须显式拒绝 —— 否则又产出「有向量、无父段」文档，只是路径不同。
+        if not parent_map:
+            raise RuntimeError("分块未产出任何父段（parent_map 为空）—— 拒绝落库无父段文档")
         for idx, ptext in parent_map.items():
             db.execute(
                 sa_text("INSERT OR REPLACE INTO parent_chunks (doc_id, parent_idx, parent_text) VALUES (:did, :idx, :ptext)"),
                 {"did": new_doc_id, "idx": idx, "ptext": ptext}
             )
         db.commit()
+        # 【F4·静默写入失败缺陷类】写后回验：父段是 **BM25 关键词索引**的主来源（retrieval.py:499）。
+        # 缺失代价 = 条款号/关键词类查询静默漏召回；稠密语义召回（query_engine.py:516-538，
+        # 经 rrf_merge(:560) 与 BM25 融合）仍能命中该文档 ⇒「脱离主检索路径」的说法不成立
+        # （CC 复核修正：retrieval.py:549 的 fallback 是 **Hindsight** 召回，非稠密语义召回）。
+        # 实测缺陷（2026-10-15）：GB 50462-2024 chunk_count=542 但 parent_chunks=0；
+        # 旧代码只 logger.warning 就继续 ⇒ 产出「有向量、无父段」半成品且端点仍返 200。
+        _actual = db.execute(
+            sa_text("SELECT COUNT(*) FROM parent_chunks WHERE doc_id = :did"),
+            {"did": new_doc_id},
+        ).scalar()
+        if _actual != len(parent_map):
+            raise RuntimeError(
+                f"parent_chunks 写入不完整：期望 {len(parent_map)} 行，实得 {_actual} 行"
+            )
         logger.info("Reparse: Saved %d parent_chunks for %s", len(parent_map), new_doc_id)
     except Exception as e:
-        logger.warning("Failed to save parent_chunks: %s", e)
+        # 硬失败：此刻尚未嵌入向量、尚未删除旧文档 ⇒ 中止代价最小（旧文档完好、可重试）。
+        # 禁止降级为 warning —— 静默继续会把「无父段」缺陷带进生产且无告警（历史实证）。
+        db.rollback()
+        # 回验失败时 INSERT 已 commit、rollback 撤不掉 ⇒ 显式清掉这批孤儿行。
+        # （BM25 构建带 `JOIN documents` 兜底、孤儿本不会被检索到；此处只是不留垃圾。）
+        try:
+            db.execute(sa_text("DELETE FROM parent_chunks WHERE doc_id = :did"), {"did": new_doc_id})
+            db.commit()
+        except Exception as _ce:
+            logger.warning("Reparse: 清理孤儿 parent_chunks 失败（不影响检索）: %s", _ce)
+        logger.exception("Reparse: parent_chunks 写入失败，已中止（拒绝产出无父段半成品）: %s", e)
+        # 不回传底层 DB 异常原文（可能含表名/列名）；明细在服务端日志。
+        raise HTTPException(500, "parent_chunks 写入失败，已中止（明细见服务端日志）")
 
     memory_items = []
     for i, pc in enumerate(pc_chunks):
